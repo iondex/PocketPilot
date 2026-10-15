@@ -38,14 +38,14 @@
 - [Telegram Bot FAQ](https://core.telegram.org/bots/faq)：管理员/privacy mode 收消息行为、long polling 与 webhook 互斥、每 chat/群/总体发送建议限制。
 - [Discord Channel resource](https://discord.com/developers/docs/resources/channel)：category/channel 映射、每 category 最多 50 个 channel、命名/parent_id 参考。
 
-Telegram 文档也描述支持 topic 的私聊能力；MVP 选择 forum supergroup，避免把 SDK 对新 Bot API 能力的支持程度变成首版前置条件。Discord privileged intent、interaction 等完整细节在该阶段需要单独查证，当前只是架构预留。
+Telegram 文档描述支持 bot 私聊 topics；MVP 已改为仅私聊，需验证 bot 的 topic 模式及当前 SDK 支持，不创建群作为替代。Discord privileged intent、interaction 等完整细节在该阶段需要单独查证，当前只是架构预留。
 
 ## 4. Rust 生态
 
 - [teloxide](https://docs.rs/teloxide/latest/teloxide/)：Telegram API、long polling、命令、框架与 feature；不假设框架自动满足持久化 inbox。
 - [openssh](https://docs.rs/openssh/latest/openssh/)：Unix-only、OpenSSH 配置复用、ControlMaster、认证限制、远程 shell 转义与错误不确定性。
 - [sqlx](https://docs.rs/sqlx/latest/sqlx/)：数据库访问与 SQLite 支持参考。
-- [crates.io API](https://crates.io/data-access)：逐项读取 `GET /api/v1/crates/{name}` 的版本、downloads、recent_downloads 和更新时间；查询结果见 [crates-snapshot.json](crates-snapshot.json)。该文件不是经过编译验证的 lockfile。
+- [crates.io API](https://crates.io/data-access)：逐项读取 `GET /api/v1/crates/{name}` 的版本、downloads、recent_downloads 和更新时间；历史查询的版本与下载量保留在实施计划表格；当前实际依赖以仓库 Cargo.lock 为准。
 
 研究使用 agent-reach 路由中的 Exa 搜索、GitHub CLI 和通用网页读取方式。环境有 Exa/mcporter 和 gh，但没有 agent-reach 主命令，所以 doctor/check-update 不可执行；没有因此假装做过环境体检或版本更新检查。没有安装或更新技能依赖。
 
@@ -60,7 +60,7 @@ Telegram 文档也描述支持 topic 的私聊能力；MVP 选择 forum supergro
 7. 使用 GitHub API 固定上游 commit 并读取源码。
 8. 获取 Telegram/Discord/库文档和 crates.io 元数据。
 
-匿名机器可读记录：[protocol-observations.json](protocol-observations.json)。仅保留版本、schema 字段/方法与 hash，未提交原始生成 bundle（避免大体积、许可证和版本噪声；实施时生成/筛选受测 fixtures）。
+文档 JSON 快照已移除。官方 schema、只读投影和 Rust DTO 由 build.rs 动态生成到 OUT_DIR，见 [生成说明](../design/protocol-generation.md)；版本、行为边界仍由本文与验收报告说明。
 
 复现实测字段差异的命令：
 
@@ -86,7 +86,7 @@ codex app-server generate-json-schema --out /tmp/pocketpilot-schema
 
 ## 7. 补充需求的资料与静态核对
 
-新增资料对应部署配置、历史投递与后续扩展设计；机器可读的固定版本/审阅范围见 [revision-observations.json](revision-observations.json)。
+新增资料对应部署配置、历史投递与后续扩展设计；固定版本和审阅范围保留在本节的源码链接与后续扩展文档，不再维护 JSON 元数据副本。
 
 ### Codex 与 SSH 配置
 
@@ -111,4 +111,4 @@ codex app-server generate-json-schema --out /tmp/pocketpilot-schema
 - [ACP Rust SDK](https://github.com/agentclientprotocol/rust-sdk/tree/f5c0eef0972bbda8e75a151aeb088642911b3568)：官方 ACP Rust 支持，协议与 Codex wire 有区别。
 - [claude-agent-sdk-rs subprocess](https://github.com/tyrchen/claude-agent-sdk-rs/blob/2af170209806aaa4f3d90651463ced80626fc870/src/internal/transport/subprocess.rs)：Drop/start_kill 和 stdin shutdown；[另一个 Rust SDK](https://github.com/Wally869/claude_agent_sdk_rust/tree/c716c96787f4a3d08650cbb925f08d4f77327beb) 只核对 README/元数据。
 
-候选 SDK 的“production-ready”是作者自述，不作为 PocketPilot 结论；许可证、版本、协议语义与生命周期需采用前审查。新增 crates 元数据已合并到 crates-snapshot.json。未安装、编译或运行这些候选，未升级 CLI，未创建 Lark 资源。
+候选 SDK 的“production-ready”是作者自述，不作为 PocketPilot 结论；许可证、版本、协议语义与生命周期需采用前审查。crate 研究数据见实施计划表格，构建依赖版本以 Cargo.lock 为准。未安装、编译或运行这些候选，未升级 CLI，未创建 Lark 资源。

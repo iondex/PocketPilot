@@ -1,12 +1,12 @@
 # MVP 实施计划
 
-状态：本轮完成文档、crate 命名与任务细化，尚未创建 Rust workspace、运行 bot 或执行行为验收。实现任务 W00–W17 全部未开始；文档审阅通过不能把它们标为完成。
+状态：已开始实现只读基础版。四个平铺源码 crate、配置/凭据读取、tracing、官方 schema 生成 DTO、类型化 RPC、本地/普通 SSH/WS transport、只读 session API 和 SQLite 基础账本已落地。Telegram 当前只有只读账号诊断，没有消息收发；共享实例/断线行为尚未实测，控制能力保持关闭。
 
 ## 1. 范围与当前输入
 
 首版是最新受测 Codex + Telegram，默认本机运行，聚合允许的本地/SSH 实例。具备只读列表/状态/历史、topic 绑定、新建、续轮、steer、输出合并、OTP、热更新与恢复。允许的 provider 业务动作仅创建、用户明确续轮、steer、只读查看。
 
-已有输入：根目录 .env 含 TELEGRAM_BOT_TOKEN，仅核对键名/格式，未联网认证；配置示例显式引用它，不复制 token。仍需在部署时填写允许的 chat/user/topic ID、SSH alias、workspace 和实际控制 endpoint；这些不是要求再次提供 token。
+已有输入：token 已迁入根目录私有 pocketpilot.toml 并通过只读账号验证。配置不 include、不读取 .env；Telegram 仅私聊，经 CLI 配对后可用，无 chat/user 配置列表。host/workspace 和实际 endpoint 仍待部署填写。
 
 硬门禁：同一运行实例、无副作用观察、程序断线/退出不结束 agent。无法通过时只开放相应只读能力，并将完整 MVP 标为未完成。Lark、Discord、Claude shim、旧 Codex 兼容和 agent 生命周期管理不在首版任务中。
 
@@ -34,11 +34,11 @@
 | secrets | secrecy | 0.10.3 | 1.79 亿 | token 不意外 Debug 输出 |
 | Discord 后续 | serenity | 0.12.5 | 756 万 | Gateway、HTTP 与生态整合 |
 
-补充依赖按需加入 dotenvy（仅显式凭据文件）、tokio-util、futures、toml、uuid、time、tracing-appender、directories、fs2、tempfile；没有实际使用就不引入。锁定 Rust 工具链和 Cargo.lock，确认 MSRV、TLS feature、依赖版本冲突后再固定具体版本。Telegram 不需要 Discord/Claude 的 feature 和依赖随 MVP 一起编译。
+补充依赖按需加入 tokio-util、futures、toml、uuid、time、tracing-appender、directories、fs2、tempfile；没有实际使用就不引入。锁定 Rust 工具链和 Cargo.lock，确认 MSRV、TLS feature、依赖版本冲突后再固定具体版本。Telegram 不需要 Discord/Claude 的 feature 和依赖随 MVP 一起编译。
 
 SSH 选型采用双后端：openssh 负责普通 key/agent 和复杂 ssh_config 兼容；配置 OTP 时使用 russh 原生 keyboard-interactive + totp-rs，不能仅依赖 OpenSSH BatchMode。直接读取本机 SSH config/Include 发现 alias，受控 ssh -G 获取有效参数；实际认证链由服务端协商。慢 host 的超时、心跳和认证退避逐台配置，详细规则见 [部署与配置](../design/connections-and-config.md)。
 
-JSON-RPC 不直接套标准 jsonrpsee server/client：Codex wire 省略 jsonrpc 字段且存在双向服务端请求和特殊 transport。使用 serde 的小型、可测试 dispatcher 对接受测方法；不要为了复用框架改变 wire。Codex 源码的内部 workspace crate 不直接作为 git 依赖引入整个 agent 引擎。JSON Schema 用于协议对照和 fixture 校验；实施时检查可用的生成工具能否处理该 schema，不能声称全部 Rust 类型已可无损自动生成。
+JSON-RPC 不直接套标准 jsonrpsee server/client：Codex wire 省略 jsonrpc 字段且存在双向服务端请求和特殊 transport。使用 serde 的小型、可测试 dispatcher 对接受测方法；不要为了复用框架改变 wire。Codex 源码的内部 workspace crate 不直接作为 git 依赖引入整个 agent 引擎。build.rs 调用所选 Codex 导出官方 JSON Schema，在 OUT_DIR 筛选只读投影并用 typify 生成 DTO，不提交 schema/生成代码。provider 访问生成类型；RPC 边界只用不透明 RawValue 保留扩展，不在业务层操作 serde_json::Value。
 
 ## 3. crate 与文件边界
 
@@ -55,38 +55,16 @@ app 的 [[bin]] 名称为 pocketpilot；package 名仍为 app。源码目录、p
 
 ```text
 crates/
-  session/src/
-    model/            # IDs, session, turn, observation, text, operation
-    ports/            # AgentProvider, ChatPlatform, Store, permits
-    service/          # list, bind, create, continue, steer, unbind
-    actor/            # session ordering, epochs, recovery
-    delivery/         # history projection, bundles, batching
-  codex/src/
-    wire/             # version DTOs, permitted requests, error mapping
-    rpc/              # dispatcher, deadlines, bidirectional requests
-    transport/        # local proxy, websocket, openssh, russh
-    provider.rs
-    observe.rs
-    reconcile.rs
-  telegram/src/
-    api.rs
-    polling.rs
-    authorization.rs
-    menus.rs
-    topics.rs
-    rendering.rs
-    scheduler.rs
-  app/src/
-    main.rs
-    cli.rs
-    config/           # loader, secret source, snapshot, writer, reload
-    storage/          # sqlx Store implementation
-    telemetry.rs
-    bootstrap.rs
+  session/src/     lib.rs model.rs provider.rs operation.rs delivery.rs
+  codex/src/       lib.rs protocol.rs rpc.rs transport.rs ssh.rs provider.rs
+  telegram/src/    lib.rs
+  app/src/         lib.rs main.rs cli.rs config.rs credentials.rs storage.rs telemetry.rs pairing.rs
 migrations/
-tests/fixtures/       # only synthetic or anonymized protocol data
-config/pocketpilot.example.toml
+crates/codex/build.rs  导出 schema、筛选与生成 DTO
+# 所有生成物写入 Cargo OUT_DIR，不在源码目录中
 ```
+
+源码保持 src/ 下单层文件；新增功能按职责增加平铺文件，不预建 model/ports/service/runtime/transport 等多层目录。生成的协议代码仅写到 Cargo OUT_DIR。
 
 Store 暴露应用事务，不为每张表建立泛型 repository。共享 SSH transport 初期留在 codex；只有实际新增第二个 provider 后才评估抽成独立库，避免提前搭插件框架。
 
@@ -94,11 +72,11 @@ Store 暴露应用事务，不为每张表建立泛型 repository。共享 SSH t
 
 | 阶段 | 工作 | 放行条件 | 当前状态 |
 | --- | --- | --- | --- |
-| P0 | W00–W03：最小基础、RPC 与只读兼容探针 | G0：共享实例/只读观察/连接生命周期的基础证据；不代表写路径或 Telegram 场景通过 | 待实施 |
-| P1 | W04–W07：远程、持久化、只读 provider、动作许可 | G1：本地与目标 SSH 可只读浏览，后台不能获得写许可 | 待实施 |
-| P2 | W08–W11：Telegram 接入、绑定、历史与投递 | G2：测试群可完整只读使用，重复更新/投递未知可恢复 | 待实施 |
-| P3 | W12–W14：OTP、热更新、创建/续轮/steer | G3：目标 G0 + fake 规则 + W14 隔离任务的写语义/三端证据均通过，才打开真实控制 | 待实施 |
-| P4 | W15–W17：故障恢复、打包与完整验收 | G4：A01–A48 均有结果；核心失败不得带病发布 | 待实施 |
+| P0 | W00–W03：骨架、配置、类型化 RPC 与只读兼容探针 | W00–W02 已落地；G0 真实共享/断线证据待执行 | 进行中 |
+| P1 | W04–W07：远程、持久化、只读 provider、动作许可 | 普通连接、读取和账本为部分实现，actor/许可待完成 | 部分实现 |
+| P2 | W08–W11：Telegram 接入、绑定、历史与投递 | 账号/webhook 只读检查与配对账本/CLI 已实现；poller/topic/outbox 未接通 | 未完成 |
+| P3 | W12–W14：OTP、热更新、创建/续轮/steer | 需 G0 + 隔离任务写语义证据形成 G3，才打开控制 | 未实施 |
+| P4 | W15–W17：故障恢复、打包与完整验收 | fake 规则测试不是 A01–A52 实际端到端验收 | 未实施 |
 
 W00–W02 是制作 P0 探针必需的最小骨架，不代表先做完整产品再验证共享能力。可独立实现 fake/持久化/渲染，但 G0 未通过时不对真实任务启用写入。
 
@@ -119,19 +97,19 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 - 产物：可编译 workspace 与职责一致的空骨架，不拉入 Lark/Discord/Claude 依赖。
 - 验证：workspace build、依赖方向检查、CLI help；无网络/agent 子进程副作用。覆盖 A23/A46 的初始结构约束。
 
-### W01 · TOML、显式凭据源与 tracing
+### W01 · 单根配置、内联 token 与 tracing
 
-依赖：W00。归属：app/src/config、telemetry、session 的 config/authorization 模型。
+依赖：W00。归属：app/src/config.rs、credentials.rs、telemetry.rs、session 的 config/authorization 模型。
 
-- 实现完整候选快照验证、相对路径、稳定 ID/引用、include 循环/重复声明检查。include 是组成配置，不是任意覆盖源；同 ID 的完整对象重复定义报错。
-- Telegram secret source 支持显式 dotenv 或私有 inline，两者互斥；dotenv 只取 TELEGRAM_BOT_TOKEN，拒绝展开/重复 key/空值，不修改全局环境。
+- 实现根目录单一 TOML、相对路径和稳定 ID/引用校验。include 与 chat/user 允许列表字段明确拒绝；不存在配置合并优先级。
+- Telegram token 直接在 [telegram].token，格式校验与 Debug/错误脱敏，不从 .env 或环境变量回退。
 - 日志 filter 来自 TOML；错误、URL、Debug、解析失败统一脱敏；不依赖 RUST_LOG 自动覆盖。
-- 产物：公开示例可解析；真实 .env 保持原样；缺凭据只让 Telegram 不 Ready，不伪报认证成功。
-- 验证：临时假 secret 文件、路径解析、错误脱敏、公开文件不含秘密；A48。真实 token 不进入 fixture/输出。
+- 产物：根目录公开示例可解析；真实 pocketpilot.toml 不提交；空/坏 token 不伪报认证成功。
+- 验证：临时单根配置、路径解析、禁用 include/允许列表、错误脱敏、公开文件不含秘密；A48。真实 token 不进入 fixture/输出。
 
 ### W02 · Codex wire、RPC 与只读连接
 
-依赖：W01。归属：codex/src/wire、rpc、transport 的本地 proxy/WS。
+依赖：W01。归属：codex/src/protocol.rs、rpc.rs、transport.rs 的本地 proxy/WS。
 
 - 按目标 binary schema 选择必要 DTO；initialize → initialized 严格握手，区分双向 request/response/notification。
 - 支持 string/integer RPC ID、pending map、连接 epoch、deadline、迟到响应和未知 enum；限制缓冲与 frame 大小。
@@ -151,7 +129,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 ### W04 · SSH config 发现与普通连接
 
-依赖：W01/W02。归属：codex transport/SSH resolver，app host registry。
+依赖：W01/W02。归属：codex/transport.rs、ssh.rs，app host registry。
 
 - 从本机 Host/Include 发现明确 alias；按 allowlist 选择。默认 ssh -G alias，显式 -F 与实际连接必须一致。
 - 解析有效 user/port/key/agent/jump/known_hosts；kbd=yes 只是候选，不证明 OTP 必需。
@@ -161,7 +139,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 ### W05 · SQLite 迁移与操作账本
 
-依赖：W01。归属：app/src/storage、migrations、session::Store。
+依赖：W01。归属：app/src/storage.rs、migrations、session::Store。
 
 - 创建 bindings、operations、inbox/offset、text_items、deliveries、requests observation、provisionings；配置表只存派生索引。
 - 实现 ingest+offset、操作预留/Dispatching、item+outbox 等短事务；W11 再补批次表迁移。
@@ -181,7 +159,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 ### W07 · Actor、动作许可与不确定结果
 
-依赖：W05/W06。归属：session/model、ports、service、actor，codex 发送许可检查。
+依赖：W05/W06。归属：session/model.rs、provider.rs、operation.rs，codex 发送许可检查。
 
 - 按 session 串行化本应用输入；ObserverPermit 与显式用户 operation 的 MutationPermit 分离，后台不能构造写许可。
 - 输入带 binding/config revision、epoch、平台时间、expectedTurnId；过期/离线草稿重新确认。
@@ -193,11 +171,12 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 依赖：W01/W05。归属：telegram/api、polling、authorization；app 装配凭据。
 
-- getMe 确认 bot ID；getChat/getChatMember 检查配置目标。getWebhookInfo 只读检查，发现 webhook 不自动删除。
+- getMe 确认 bot ID；getWebhookInfo 只读检查，发现 webhook 不自动删除。
 - 接收批次后先 durable inbox+offset，再确认更新；支持长期空闲随机 update ID 的 polling epoch 重建。
-- 真实 token 只在本地内存，接入不自动搜集/信任任意 chat；用户授权按数值 ID，不按用户名。
-- 产物：测试群 update 的可靠入口与 Ready/degraded 状态；尚不向 Codex 写入。
-- 验证：A10/A18/A28/A48；bot identity 变化不得沿用旧 offset。
+- 真实 token 从根 TOML 载入；接入严格检查 private chat 与 sender 数值 ID 一致，不按用户名授权。
+- 未配对私聊 /start 创建十分钟一次性码；只有本机 CLI approve 能授权。pending/list/revoke 与服务并行运行，不触碰执行账本恢复；申请/配对按 bot ID 隔离，禁止群聊申请。
+- 产物：测试私聊 update 的可靠入口与 Ready/degraded 状态；尚不向 Codex 写入。
+- 验证：A10/A18/A28/A48/A49/A50/A51；bot identity 变化不得沿用旧 offset。
 
 ### W09 · 菜单、工作区与 Topic 绑定
 
@@ -211,7 +190,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 ### W10 · 最近交互与完整历史集合
 
-依赖：W06/W09。归属：session/delivery、telegram/rendering。
+依赖：W06/W09。归属：session/delivery.rs、telegram/rendering。
 
 - 识别最后 user/对应 final，缺 final/缺 phase 明确标示；不拿上一轮输出冒充本轮回答。
 - 活跃会话分页取全部可读文本，保存范围、revision 和完整性；超限一次 Markdown 附件，仍过大提供主动分片入口。
@@ -221,10 +200,10 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 ### W11 · 合并、Outbox 与平台调度
 
-依赖：W05/W08/W10。归属：session/delivery、telegram/scheduler、批次迁移。
+依赖：W05/W08/W10。归属：session/delivery.rs、telegram/scheduler、批次迁移。
 
 - 保存 item 原边界；窗口/阈值/max delay 生成同 session/地址/config generation 的 MessageBatch。
-- batch/member/outbox 同事务；Sender 单独限速，群内 topics 共享预算、遵守 retry_after，状态更新可合并。
+- batch/member/outbox 同事务；Sender 单独限速，同一私聊内 topics 共享预算、遵守 retry_after，状态更新可合并。
 - clientId 回声关联；工具/推理过滤；partial 在异常结束后保留。平台未知投递不自动重发。
 - 产物：单消息/附件投递、已知 message ID、未知回执和积压状态。
 - 验证：A12/A14/A15/A16/A24/A31/A44/A45；使用受控时钟和 fake HTTP 测限速/公平性。
@@ -243,7 +222,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 依赖：W01/W04/W07/W09/W11。归属：app config/snapshot/writer/reload，所有 dispatch/deliver admission。
 
-- notify + periodic rescan 监听 TOML/include/SSH config/显式凭据源；完整候选验证后原子替换。
+- notify + periodic rescan 监听根 TOML/SSH config；完整候选验证后原子替换。
 - 发送许可与配置撤销共用短临界区；未开始的旧队列重新授权，已在途不能伪称撤回。
 - endpoint/user/socket 更换使用新实例身份；同 bot token 轮换保留资源并交接 poller，不同 bot 冻结旧绑定/积压/nonce/provisioning、重新核验并建新状态卡；不重启 Codex。
 - 产物：新增/删除 host/workspace、授权变更、显示与限速热更新及 requires_restart 报告。
@@ -254,10 +233,10 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 依赖：W03 的目标 profile 通过、W07/W09/W11/W12/W13。归属：session service/actor、codex write mapping、telegram command handling。
 
 - thread/start 与首条 turn 分别记账；已知 thread ID 不重复创建；首条结果未知只核对。
-- 先通过 fake 行为规则，再在显式限定的测试群/workspace/session profile 开启隔离写实验；确认写语义、三端可见和断线后执行存活后形成 G3。G3 前不允许普通真实任务借测试入口控制；W03 的 G0 不是写路径认证。
+- 先通过 fake 行为规则，再在显式限定的测试私聊/workspace/session profile 开启隔离写实验；确认写语义、三端可见和断线后执行存活后形成 G3。G3 前不允许普通真实任务借测试入口控制；W03 的 G0 不是写路径认证。
 - 空闲续轮只在明确用户动作内必要时 resume，再 turn/start；不得修改 model/cwd/审批/sandbox。
 - active 使用 turn/steer + expectedTurnId；冲突保留原文本供重新确认，不自动跨轮转投；审批仅显示。
-- 产物：测试群创建/继续/steer 的完整回执与三端可见结果。
+- 产物：测试私聊创建/继续/steer 的完整回执与三端可见结果。
 - 验证：A02–A06/A09/A11/A17/A21/A22/A23/A27/A33，真实验收仅使用独立测试 session。
 
 ### W15 · 故障与重启恢复
@@ -284,7 +263,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 依赖：W16。归属：测试报告、受测 profile 清单、发布说明。
 
-- 在专用群/workspace 执行 A01–A48，覆盖本地、普通 SSH、OTP、慢 host、多端并发、热更新与故障。
+- 在专用私聊/workspace 执行 A01–A52，覆盖本地、普通 SSH、OTP、慢 host、多端并发、热更新与故障。
 - 每条报告记录 binary/schema/profile、操作、预期/实际和证据；测试数据匿名化，真实 token/seed 不入库。
 - 未通过关键条件的组合明确限制，完整 MVP 不冒充完成；回归失败先修对应 W，不通过取消任务绕过。
 - 产物：可审阅验收报告与最终支持范围；发布行为另按用户授权执行。
@@ -293,10 +272,10 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 建议每个 W 至少一个清晰提交，标题描述最终行为；禁止把大量骨架、UI、未知写重试和远端生命周期改动混在一个提交。任务完成必须有产物和验证，不能只看代码数量。
 
-完整 [A01–A48 清单](acceptance.md) 是验收条件唯一来源。报告格式与测试层次见清单；W03 先证明协议能力，W17 汇总行为验收。任何任务中的测试编号不代表已经执行。
+完整 [A01–A52 清单](acceptance.md) 是验收条件唯一来源。报告格式与测试层次见清单；W03 先证明协议能力，W17 汇总行为验收。任何任务中的测试编号不代表已经执行。
 
-实现开始时按本计划更新 W 状态和证据链接，不再复制一份容易过期的 TODO 文件。当前全部 W 为待实施。第一轮具体产物是 W00–W03：四个 crates、配置/凭据读取、最小只读 RPC 和共享/生命周期报告。
+实现开始时按本计划更新 W 状态和证据链接，不再复制一份容易过期的 TODO 文件。当前 W00/W01/W02 的基础实现已完成；W04/W05/W06 为部分实现；W08 已有只读账号与私聊访问/CLI 配对基础，poller 待接入；其余任务未完成。W03 的真实共享/生命周期证据待实际 endpoint 与独立测试环境，不得把 mock 测试当成通过。后续先完成该门禁，再接 durable poller、topic 和用户写操作。
 
 ## 7. 不随本轮实施的内容
 
-Lark/Discord/Claude 的能力和候选库保留在 [后续扩展](../future/integrations.md)，不进入首版依赖。研究来源和匿名快照保留在 [研究记录](../research/sources.md)。文档检查已做；没有实际 bot 认证、远端探针、版本升级或 session 写操作。
+Lark/Discord/Claude 的能力和候选库保留在 [后续扩展](../future/integrations.md)，不进入首版依赖。研究来源和匿名快照保留在 [研究记录](../research/sources.md)。文档检查已做；没有进行 session 写操作或服务升级；真实多端/SSH/OTP 行为仍须独立验收。

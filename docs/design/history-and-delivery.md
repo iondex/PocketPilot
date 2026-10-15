@@ -33,7 +33,7 @@ Telegram sendMessage 上限是 4096 字符，不能保证任意长度的全部�
 
 附件与短文本保存相同 HistoryBundle ID、内容 hash、included item IDs、读取区间、完整性标志和 delivery receipt。上传失败/超时结果未知沿用 DeliveryUnknown；不能再用一条“成功”消息掩盖未知结果。
 
-所有附件按允许用户和平台目标重新授权；本地临时文件权限受控，保留未成功投递的必要产物，成功后按清理策略处理。历史查询只调用 provider 的只读 API，不向 agent 发送“总结历史”的提示词。
+所有附件按当前配对状态和私聊目标重新授权；本地临时文件权限受控，保留未成功投递的必要产物，成功后按清理策略处理。历史查询只调用 provider 的只读 API，不向 agent 发送“总结历史”的提示词。
 
 ## 3. 活跃会话历史集合的边界
 
@@ -85,7 +85,7 @@ MVP 就加入 `DeliveryAggregator`，位于权威 text_items/outbox 之间。它
 
 ## 6. 限速和公平性
 
-合并与限速同时存在。Telegram 一群的多个 topics 共享 chat 预算，起点为群每分钟 18 条，再叠加 per-bot、per-chat 的实际 API 限制和 retry_after。发送、编辑和标题操作统一调度；附件也占预算，不能用附件绕过限速。
+合并与限速同时存在。Telegram 同一私聊的多个 topics 共享 chat 预算，默认保守设为每分钟 18 条，再叠加 per-bot、per-chat 的实际 API 限制和 retry_after。发送、编辑和标题操作统一调度；附件也占预算，不能用附件绕过限速。
 
 按绑定公平调度，优先级只提升重要交互，不能无限饿死慢 session 的文本。窗口、阈值、max delay、每平台预算全部来自 config，可热更新。平台积压只影响投递，不减少状态核对、阻塞 SSH 读循环或停止任务。
 

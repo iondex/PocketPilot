@@ -59,7 +59,7 @@
 | `thread/turns/list`、`thread/items/list` | 未暴露 | 有 |
 | 通用 `project/list`、`workspace/list` | 未发现 | 未发现 |
 
-因此示例中的新字段不能无条件发送给所有版本。官网页面也不能当成某个本机二进制的契约。完整字段名和 schema SHA-256 见 [protocol-observations.json](protocol-observations.json)。
+因此示例中的新字段不能无条件发送给所有版本。官网页面也不能当成某个本机二进制的契约。实现采用 [动态 schema 生成说明](../design/protocol-generation.md)，不在 docs 中保存 JSON 快照。
 
 MVP 只支持实施时最新、通过验收的 Codex profile，不做旧版 legacy history 兼容。用户允许必要的 CLI 升级；升级和服务切换是维护步骤，PocketPilot 不在自身生命周期中自动重启活跃 daemon。
 

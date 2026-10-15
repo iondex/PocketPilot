@@ -1,0 +1,5 @@
+Protocol definitions are generated at build time from OpenAI Codex:
+https://github.com/openai/codex
+
+Upstream Codex is licensed under Apache-2.0. See LICENSE-APACHE.
+Generated schema and Rust DTOs are build artifacts and are not stored in this repository.

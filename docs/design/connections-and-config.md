@@ -28,35 +28,27 @@ SSH 的共享条件是：相同远程用户、相同有效 CODEX_HOME/控制 soc
 
 MVP 以实施时最新、通过测试的 Codex 版本为唯一基线，不投入旧版 legacy history 兼容。PATH CLI、桌面内置 runtime、远程 CLI/daemon 需要核对实际运行版本；升级安装文件不代表已运行 daemon 自动变成新版。
 
-允许在专门维护步骤升级所需 CLI，但 PocketPilot 不在连接、重连、配置 reload 或自身启动时执行升级/daemon restart。涉及活跃服务的版本切换安排在任务自然完成后的维护窗口，不能为满足新版本要求中断会话。本次只修改设计，没有执行升级。
+允许在专门维护步骤升级所需 CLI，但 PocketPilot 不在连接、重连、配置 reload 或自身启动时执行升级/daemon restart。涉及活跃服务的版本切换安排在任务自然完成后的维护窗口，不能为满足新版本要求中断会话。当前实现未执行 CLI 或服务升级。
 
 验收记录版本号、schema hash、实际 daemon 版本与 runtime identity；较新的未验证版本可先只读，不能因为“只支持最新”就省掉行为验证。
 
-## 3. 所有设置来自 config
+## 3. 根目录单一配置
 
-采用 `pocketpilot.toml` 管理普通设置，支持显式 include 的 TOML。CLI 只选择 config 路径，不通过环境变量覆盖 host/workspace、权限、速率或日志设置。Codex/Claude 已有的登录配置不由 PocketPilot 复制或改写。
+默认读取仓库根目录 pocketpilot.toml。普通设置、Telegram token、TOTP seed/密码都直接在这一个 TOML 文件中；不支持 include，不读取 .env，不允许环境变量覆盖运行时设置。公开示例是根目录 [pocketpilot.example.toml](../../pocketpilot.example.toml)。真实配置已被 Git 忽略并使用仅当前用户可读写的权限。
 
-用户现有仓库根目录 .env 已含 TELEGRAM_BOT_TOKEN；本次只验证了键名、非空和 token 格式，没有打印值或联网验证。它是 bot token，不是群 ID、用户 ID 或数值 bot ID。bot ID 在实施阶段通过只读 getMe 确认；允许的 chat/user/topic ID 仍在 TOML 配置。
+Telegram 配置只有 `[telegram].token`，没有 allowed_chat_ids、allowed_user_ids 或控制群 topic ID。程序只接受用户本人的私聊；未配对用户必须经 CLI 批准，配对状态属于 SQLite 管理数据。详见 [配对交互](telegram.md)。
 
-为沿用已有凭据，允许 config 显式指定 Telegram secret source：`kind=dotenv`、path、key。只读取所选 key，不执行 shell、不导入整份文件到进程环境、不自动搜索当前目录，也不让 .env 中其他设置覆盖 TOML。路径相对声明该字段的配置文件解析；public example 位于 config/，故使用 ../.env。后续也支持 `kind=inline` 的私有 TOML token；两种来源互斥，不隐式 fallback 到宿主环境。
+原 .env 的 token 已迁入本机根目录私有配置，未显示或提交；原文件保留，但运行程序不再读取。getMe 确认 bot 身份，配置中的 token 字符串不会充当 bot/user/chat ID。
 
-实现使用 dotenvy 的只读解析接口，取值后立即封装为 secrecy 类型；不调用会修改全局环境的 dotenv 加载函数。token 必须为直接字面值，拒绝 $VAR/${VAR} 展开，避免凭据来自未声明环境。缺文件、缺 key、重复 key、空值、非法格式时 Telegram adapter 不进入 Ready，错误只含类别和 key 名，不含值或原始解析行。有效 token 仍需 getMe 确认账号，不能从字符串格式宣告认证成功。
+token/TOTP 的 Debug 与错误均脱敏。ConfigWriter 只修改非秘密 workspace 字段，原子写回同一根配置，不导出第二份配置或复制秘密到 SQLite/示例。构建用的 CODEX_SCHEMA_BIN 仅选择编译期工具，不属于运行时配置或 .env 入口。
 
-除 Telegram 的显式凭据源外，TOTP seed/密码可放私有 TOML include；所有秘密文件权限受控并被 Git 忽略。读取 token 的路径不出现在公开状态卡，ConfigWriter 不写秘密文件、不复制令牌进入 SQLite/公开示例。凭据文件纳入显式 watcher，token 轮换只重建 Telegram 客户端，不影响 Codex；重新验证 bot 身份，身份变化要求新 bot_instance 命名空间，不沿用旧 polling offset。
+同一 bot token 轮换保持配对、绑定并交接 poller；换成不同 bot 时资源按 bot_id 隔离并重新配对，不能沿用旧账号的 offset、nonce、状态卡或待处理输入。CLI 配对管理连接可与持锁服务并行，只操作授权数据，不执行远程操作或账本恢复。
 
-同一 getMe.id 的 token 轮换保留 bot_instance 和既有绑定，旧 poller 完成已落盘交接后再启新 poller，避免同账号双消费者。getMe.id 改变则冻结旧账号 inbox 待处理操作、outbox、nonce、provisioning 与状态卡引用，标 suspended_account_change；新账号重新核验群/用户/权限，不自动执行旧输入或投递旧积压。重新绑定原 session 时需明确确认并建立新账号的投递上下文和状态卡，不能尝试编辑旧 bot 的消息。远端 session 不因此变化。
-
-配置是 hosts、workspaces、允许用户、平台账号、速率和 SSH 策略的唯一权威。SQLite 保留绑定、投递、操作结果和 config 派生索引，不作为另一份可独立修改的授权源。
-
-Telegram 的“添加工作区”和本地 `workspace add` 通过统一 ConfigWriter 更新配置，再走同一热更新流程；不能只写 DB。ConfigWriter 只改非秘密的 workspace 段，验证允许根路径与 user 权限，使用配置 revision 比较、文件锁、同目录临时文件 + 原子 rename，保留文件权限；并发编辑冲突时拒绝覆盖。管理员手工编辑仍受支持。配置中的 host 不能由聊天输入任意 shell 命令创建。
-
-完整且唯一维护的公开 schema 草案见 [配置示例](../../config/pocketpilot.example.toml)。它只引用 TELEGRAM_BOT_TOKEN 键名，不含真实凭据；示例 host、socket、chat/user/topic ID 必须按部署填写。
-
-SSH 只写 ssh_alias，继承本机 SSH config 的有效 hostname/user/port/identityfile/known_hosts；backend=auto，配置 TOTP 后选择 russh。prompt pattern 用 TOML 单引号 literal string，正则空白符只写一个反斜杠，不额外转义。方法候选顺序仍须遵循服务器 remaining_methods/partial_success。
+hosts/workspaces/速率和 SSH 策略由单个 TOML 管理。配对用户/申请不写入配置列表；CLI approve/revoke 更新 SQLite，dispatch/deliver 时再次检查授权。SSH 仍继承用户已有的 OpenSSH config；其原生 Include 由 OpenSSH 语义处理，与 PocketPilot 配置 include（不支持）不同。
 
 ## 4. 配置热更新
 
-`notify` 监听主文件、include 文件、显式 Telegram 凭据文件、SSH config 及其 Include 文件和父目录的原子替换事件；debounce 后解析完整文件集合，周期 rescan 修复丢失事件。`arc-swap` 原子替换已验证的 immutable ConfigSnapshot，每个操作捕获 config_generation。include 循环、ID 冲突、缺失引用、非法路径/速率/OTP 配置均拒绝整份候选，继续使用最后有效配置。
+`notify` 监听根 TOML、SSH config 及其原生 Include 文件和父目录的原子替换事件；debounce 后解析候选配置，周期 rescan 修复丢失事件。`arc-swap` 原子替换已验证的 immutable ConfigSnapshot，每个操作捕获 config_generation。不支持的 include 字段、ID 冲突、缺失引用、非法路径/速率/OTP 配置均拒绝整份候选，继续使用最后有效配置。
 
 两阶段：先完整解析/静态验证/建立变更计划，再原子提交配置与授权快照；外部 SSH 建连失败只让该 host degraded，不撤销已经生效的授权撤销，也不影响其他 host。
 
@@ -65,7 +57,7 @@ SSH 只写 ssh_alias，继承本机 SSH config 的有效 hostname/user/port/iden
 | 添加 host/workspace | 菜单更新；后台仅连接既有服务并只读探测 | 不启动会话、不启动 Codex 服务 |
 | 改显示名、合并窗口、速率 | 立即应用；已有 batch 采用明确 revision | 不改 thread 名称/配置 |
 | 删除/禁用 host/workspace | 立即禁止新输入和投递；隐藏菜单、binding 标 suspended_config | 原任务继续；不发 unsubscribe/stop |
-| 允许用户/群减少 | 立即撤销；队列投递前重新授权 | 已撤销目标不再收到敏感积压 |
+| CLI 撤销配对 | 立即禁用对应绑定；投递/执行前重查配对 | 不再向已撤销私聊投递积压 |
 | SSH 密钥/TOTP seed 轮换 | 后续认证用新值；有效连接无需主动断开 | 不因轮换重启 agent |
 | endpoint、远程用户、控制 socket 变化 | 不能原地视作相同实例；新 provider ID，旧 binding 保留待核对 | 禁止把旧 thread ID 发给新服务 |
 | 删除后恢复同 ID | 验证相同 runtime identity，用户确认恢复绑定 | 不自动发送旧草稿/积压指令 |

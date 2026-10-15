@@ -57,7 +57,7 @@ Telegram 平台资源增加 BotInstanceId（由 getMe.id 确认账号，不用 t
 
 MVP 禁止同一平台容器地址改绑到不同 SessionRef：解绑后保留地址墓碑，只能重新连接原 session；更换 session 必须创建新 topic/channel。这样迟到的普通消息不能落入另一个会话。binding revision 仍用于同一 session 的解绑/恢复操作和旧按钮失效。
 
-MVP 允许同一 session 在每个已授权平台目标中各有一个绑定；同一 Telegram 群内重复绑定直接返回已有 topic。会话执行锁跨这些绑定共享。后续跨平台输入只转发一次，并保留来源；不让机器人回声重新进入 agent。
+MVP 允许同一 session 在每个已授权平台目标中各有一个绑定；同一 Telegram 私聊内重复绑定直接返回已有 topic。会话执行锁跨这些绑定共享。后续跨平台输入只转发一次，并保留来源；不让机器人回声重新进入 agent。
 
 Workspace 主路径只在对应 host 上解析，不能在 PocketPilot 机器上 canonicalize 远程路径。保存用户录入值和经目标端确认的规范值；没有可靠的只读路径验证接口时要求显式路径配置。执行工作区关联的增改时不调用 agent 任意命令工具。
 
@@ -205,7 +205,7 @@ Freshness 保存 observed_at 和连接 epoch。推荐新鲜状态窗口 15 秒�
 
 ## 6. 持久化
 
-SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署。迁移由 sqlx 管理；数据只存 PocketPilot 目录，不修改 Codex DB/rollout。TOML 是普通设置、host/workspace、授权和凭据源引用的权威；DB 管派生注册索引、绑定与投递，不能另存独立授权。配置 ID 是稳定 UUID。新增 ConfigSnapshot/ConfigWriter、notify + arc-swap 热更新及原子授权检查见 [部署与配置](connections-and-config.md)。
+SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署。迁移由 sqlx 管理；数据只存 PocketPilot 目录，不修改 Codex DB/rollout。根目录单一 TOML 管普通设置、host/workspace 和内联 token，不支持 include。配对/撤销由 CLI 管理 SQLite；没有 chat/user 配置允许列表。DB 管配对、派生索引、绑定与投递。配置 ID 是稳定 UUID。新增 ConfigSnapshot/ConfigWriter、notify + arc-swap 热更新及原子授权检查见 [部署与配置](connections-and-config.md)。
 
 建议表：
 
@@ -296,7 +296,7 @@ Lark adapter 使用 region/tenant/chat/thread/root-message 地址、根状态卡
 
 ## 11. 日志与诊断
 
-统一 tracing，tracing-subscriber JSON 输出，config 的 logging.filter 控制级别和热更新，不依赖 RUST_LOG；Telegram .env 仅作为配置显式引用的凭据源；第三方 log 桥接到 tracing。span 字段含 operation_id、instance_id、内部 workspace_id、thread/turn/item ID、epoch、config_generation、method、耗时、结果分类。用户/平台 ID 可哈希化。TOTP seed、动态 code、密码、secret config 路径/正文和实际展开认证响应不进入日志。
+统一 tracing，tracing-subscriber JSON 输出，config 的 logging.filter 控制级别和热更新，不依赖 RUST_LOG；token 仅从根 TOML 读取；第三方 log 桥接到 tracing。span 字段含 operation_id、instance_id、内部 workspace_id、thread/turn/item ID、epoch、config_generation、method、耗时、结果分类。用户/平台 ID 可哈希化。TOTP seed、动态 code、密码、secret config 路径/正文和实际展开认证响应不进入日志。
 
 禁止默认记录 token、Authorization、完整 URL（Telegram token 在 URL path）、SSH 命令展开后的秘密、全文、配置内容、原始 RPC body、工具输出。错误显示结构化错误码和经清理摘要，不直接打印 reqwest/teloxide 的含 token URL。DEBUG 也必须脱敏。
 

@@ -1,0 +1,18 @@
+[package]
+name = "telegram"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+session = { path = "../session" }
+secrecy.workspace = true
+serde.workspace = true
+teloxide.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

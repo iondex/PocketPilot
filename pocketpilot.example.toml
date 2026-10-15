@@ -1,25 +1,18 @@
-# 配置 schema 草案；当前仓库尚无运行程序。
-# 文件路径以本配置文件所在目录为基准。仅变量名，不包含真实令牌。
-include = []
+# 只读基础版配置示例；真实 endpoint 和 workspace 需要按部署填写。
+# 运行时只读取根目录 pocketpilot.toml；不支持 include 或 .env。
+# 文件路径以本配置文件所在目录为基准。公开示例不包含真实令牌。
 
 [service]
-data_dir = "../var/data"
+data_dir = "var/data"
 
 [logging]
 format = "json"
 filter = "info,app=debug,codex=info,telegram=info,session=info"
-directory = "../var/logs"
+directory = "var/logs"
 
 [telegram]
-# 这些 ID 是示例，必须替换为实际允许的群和用户。
-allowed_chat_ids = [-1001234567890]
-allowed_user_ids = [123456789]
-control_topic_id = 100
-
-[telegram.credentials]
-kind = "dotenv"
-path = "../.env"
-key = "TELEGRAM_BOT_TOKEN"
+# 只接受私聊；用户必须通过 CLI 完成一次性配对。
+token = "REPLACE_WITH_BOT_TOKEN"
 
 [[hosts]]
 id = "00000000-0000-4000-8000-000000000001"
@@ -79,7 +72,7 @@ burst_window_ms = 2000
 burst_threshold = 3
 max_flush_delay_ms = 5000
 history_barrier_timeout_seconds = 60
-telegram_group_messages_per_minute = 18
+telegram_messages_per_minute = 18
 history_active = "full_bundle"
 history_idle = "last_user_and_final"
 overflow = "single_document"
