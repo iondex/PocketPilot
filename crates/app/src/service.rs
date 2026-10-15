@@ -62,9 +62,25 @@ pub enum Error {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Action {
-    Workspace { id: String, cursor: Option<String> },
-    Open { workspace: String, thread: String },
-    Create { workspace: String, text: String },
+    Workspace {
+        id: String,
+        cursor: Option<String>,
+    },
+    Open {
+        workspace: String,
+        thread: String,
+    },
+    Create {
+        workspace: String,
+        text: String,
+    },
+    SubmitDraft {
+        text: String,
+        steer_only: bool,
+        instance: String,
+        thread: String,
+        revision: i64,
+    },
 }
 
 pub struct Service {
@@ -76,6 +92,7 @@ pub struct Service {
     topics_enabled: bool,
     pair_attempts: Mutex<HashMap<(u64, bool), Instant>>,
     history_slots: Semaphore,
+    started_at: i64,
 }
 
 pub fn now() -> i64 {
@@ -85,6 +102,9 @@ pub fn now() -> i64 {
 }
 
 pub async fn run(path: PathBuf) -> Result<(), Error> {
+    // Telegram timestamps have one-second precision. Treat the start second
+    // conservatively so a pre-start message from that second cannot be replayed.
+    let started_at = now().saturating_add(1);
     let config = Arc::new(ConfigFile::open(path)?);
     let snapshot = config.snapshot();
     if snapshot.config.telegram.is_none() && snapshot.config.discord.is_none() {
@@ -121,6 +141,7 @@ pub async fn run(path: PathBuf) -> Result<(), Error> {
             topics_enabled: identity.topics_enabled,
             pair_attempts: Mutex::new(HashMap::new()),
             history_slots: Semaphore::new(4),
+            started_at,
         });
         tasks.spawn(service.clone().poll(receiver.clone()));
         tasks.spawn(service.clone().work(receiver.clone()));
@@ -193,7 +214,15 @@ impl Service {
                 Ok(updates) => {
                     let updates = updates
                         .iter()
-                        .map(|u| (u.id.0, telegram::api::input(u)))
+                        .map(|u| {
+                            let mut input = telegram::api::input(u);
+                            if failures > 0
+                                && let Some(input) = input.as_mut()
+                            {
+                                input.requires_confirmation = true;
+                            }
+                            (u.id.0, input)
+                        })
                         .collect::<Vec<_>>();
                     if self
                         .store
@@ -331,6 +360,9 @@ impl Service {
         scoped.config_hash = Some(snapshot.hash.clone());
         let input = &scoped;
         if input.callback.is_some() {
+            if input.requires_confirmation {
+                return Err(Error::Expired);
+            }
             let body = self
                 .store
                 .consume_callback(self.bot, input, &snapshot.hash, now())
@@ -346,6 +378,22 @@ impl Service {
                 }
                 Action::Create { workspace, text } => {
                     self.create(input, &snapshot, &workspace, &text).await
+                }
+                Action::SubmitDraft {
+                    text,
+                    steer_only,
+                    instance,
+                    thread,
+                    revision,
+                } => {
+                    let binding = self.bound(input).await?;
+                    if binding.instance_id != instance
+                        || binding.thread_id != thread
+                        || binding.revision != revision
+                    {
+                        return Err(Error::Expired);
+                    }
+                    self.submit(input, &snapshot, &text, steer_only).await
                 }
             };
         }
@@ -396,10 +444,56 @@ impl Service {
                 body.topic_title=Some(title);
                 self.respond(input,&input.event_key,body).await
             }
-            "/ask"|"/steer"=>self.submit(input,&snapshot,args.trim(),command=="/steer").await,
+            "/ask"|"/steer"=>{
+                if self.delayed(input) {self.draft(input,&snapshot,args.trim(),command=="/steer").await}
+                else {self.submit(input,&snapshot,args.trim(),command=="/steer").await}
+            },
             text if text.starts_with('/')=>self.respond(input,&input.event_key,Outbound::text("未知命令。使用 /help；如需把斜杠文本发送给 agent，使用 /ask 文本。")).await,
-            _=>self.submit(input,&snapshot,input.text.trim(),false).await,
+            _=>{
+                if self.delayed(input) {self.draft(input,&snapshot,input.text.trim(),false).await}
+                else {self.submit(input,&snapshot,input.text.trim(),false).await}
+            },
         }
+    }
+
+    fn delayed(&self, input: &Input) -> bool {
+        input.requires_confirmation
+            || input.date < self.started_at
+            || !(0..=300).contains(&now().saturating_sub(input.date))
+    }
+    async fn draft(
+        &self,
+        input: &Input,
+        snapshot: &Snapshot,
+        text: &str,
+        steer_only: bool,
+    ) -> Result<(), Error> {
+        if text.trim().is_empty() {
+            return Err(Error::Stale);
+        }
+        let binding = self.bound(input).await?;
+        let workspace = self.binding_workspace(&snapshot.config, &binding)?;
+        let button = self
+            .button(
+                input,
+                snapshot,
+                "确认发送草稿",
+                Action::SubmitDraft {
+                    text: text.into(),
+                    steer_only,
+                    instance: binding.instance_id,
+                    thread: binding.thread_id.clone(),
+                    revision: binding.revision,
+                },
+            )
+            .await?;
+        let mut body = Outbound::text(format!(
+            "这条消息尚未发送，需要重新确认（离线恢复、排队过期或会话状态已变化）。\n工作区：{}\n会话：{}\n\n{}\n\n请先 /status 核对，再确认发送。确认时按此会话的最新状态续轮或 steer；仅 steer 的消息不会改为续轮。",
+            workspace.name, binding.thread_id, text
+        ));
+        body.buttons = vec![vec![button]];
+        self.respond(input, &format!("draft:{}", input.event_key), body)
+            .await
     }
 
     fn workspace<'a>(&self, config: &'a Config, id: &str) -> Result<&'a Workspace, Error> {
@@ -733,7 +827,7 @@ impl Service {
         mutation: Mutation,
     ) -> Result<Receipt, Error> {
         self.authorize(input, &snapshot.hash).await?;
-        if input.callback.is_none() && !(0..=300).contains(&now().saturating_sub(input.date)) {
+        if input.callback.is_none() && self.delayed(input) {
             return Err(Error::Stale);
         }
         let provider = self.connections.get(&snapshot.config, workspace).await?;
@@ -760,7 +854,7 @@ impl Service {
             .await?;
         // Recheck after a potentially slow SSH connect and immediately before dispatch.
         self.authorize(input, &snapshot.hash).await?;
-        if input.callback.is_none() && !(0..=300).contains(&now().saturating_sub(input.date)) {
+        if input.callback.is_none() && self.delayed(input) {
             return Err(Error::Stale);
         }
         let binding = if matches!(key, "resume" | "input") {
@@ -885,10 +979,10 @@ impl Service {
             } => {
                 let expected = match current.active_turn {
                     Some(turn) => turn,
-                    None => provider
-                        .active_turn(&binding.thread_id)
-                        .await?
-                        .ok_or(ProviderError::Conflict)?,
+                    None => match provider.active_turn(&binding.thread_id).await? {
+                        Some(turn) => turn,
+                        None => return self.draft(input, snapshot, text, steer_only).await,
+                    },
                 };
                 (
                     Mutation::Steer {
@@ -933,9 +1027,9 @@ impl Service {
                     "已继续会话",
                 )
             }
-            _ => return Err(ProviderError::Conflict.into()),
+            _ => return self.draft(input, snapshot, text, steer_only).await,
         };
-        let receipt = self
+        let result = self
             .mutate(
                 input,
                 snapshot,
@@ -944,7 +1038,14 @@ impl Service {
                 &binding.thread_id,
                 mutation,
             )
-            .await?;
+            .await;
+        let receipt = match result {
+            Ok(receipt) => receipt,
+            Err(Error::Provider(ProviderError::Conflict)) => {
+                return self.draft(input, snapshot, text, steer_only).await;
+            }
+            Err(error) => return Err(error),
+        };
         self.respond(
             input,
             &format!("accepted:{}", input.event_key),

@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 开始测试 | [测试入口](testing.md) | 启动、CLI 配对、共享实例准备、测试顺序与当前限制 |
 | 开始实现 | [实施计划](planning/implementation.md) | crate 边界、任务依赖、提交粒度、阶段门禁与当前状态 |
-| 确认验收 | [验收清单](planning/acceptance.md) | A01–A52 的行为条件、执行记录格式与证据要求 |
+| 确认验收 | [验收清单](planning/acceptance.md)、[逐项审计](research/acceptance-audit.md) | A01–A52 的行为条件、当前证据与未验证项 |
 | 协议生成 | [构建时生成](design/protocol-generation.md) | build.rs、Codex binary 选择与生成物边界 |
 | 理解接口 | [架构](design/architecture.md) | 领域模型、provider/platform 接口、操作许可、数据与恢复 |
 | 做 Telegram 交互 | [Telegram](design/telegram.md) | 菜单、topic、绑定、新建、状态与用户可见异常 |

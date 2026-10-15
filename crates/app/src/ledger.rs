@@ -239,6 +239,26 @@ impl Store {
         Ok(())
     }
     pub async fn recover_inbox(&self, bot: i64) -> Result<(), Error> {
+        // A process restart does not authorize still-pending agent input. Keep
+        // its original timestamp/text and require a new interaction to send it.
+        let pending=sqlx::query("SELECT polling_epoch,update_id,payload FROM inbound_updates WHERE bot_id=? AND processed=0")
+            .bind(bot).fetch_all(&self.pool).await.map_err(|_|Error::Database)?;
+        for row in pending {
+            let mut input: Input =
+                serde_json::from_str(row.get("payload")).map_err(|_| Error::Database)?;
+            input.requires_confirmation = true;
+            sqlx::query("UPDATE inbound_updates SET payload=? WHERE bot_id=? AND polling_epoch=? AND update_id=? AND processed=0")
+                .bind(serde_json::to_string(&input).map_err(|_|Error::Database)?).bind(bot)
+                .bind(row.get::<i64,_>("polling_epoch")).bind(row.get::<i64,_>("update_id"))
+                .execute(&self.pool).await.map_err(|_|Error::Database)?;
+        }
+        // Callback queries have no click timestamp. Invalidating the previous
+        // process's nonces prevents queued old clicks from authorizing writes.
+        sqlx::query("UPDATE callbacks SET consumed=1 WHERE bot_id=? AND consumed=0")
+            .bind(bot)
+            .execute(&self.pool)
+            .await
+            .map_err(|_| Error::Database)?;
         let rows = sqlx::query("SELECT polling_epoch,update_id,payload FROM inbound_updates WHERE bot_id=? AND processed=2")
             .bind(bot).fetch_all(&self.pool).await.map_err(|_| Error::Database)?;
         for row in rows {
@@ -701,6 +721,7 @@ mod tests {
             callback_id: None,
             message_id: id as i32,
             config_hash: None,
+            requires_confirmation: false,
         }
     }
     #[tokio::test]

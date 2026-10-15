@@ -24,7 +24,7 @@
 
 ## 自动与隔离验证
 
-全功能测试共 57 项通过。完整命令为 cargo fmt --all -- --check、cargo clippy --workspace --all-targets --all-features --locked -- -D warnings、cargo test --workspace --all-features --locked。
+全功能测试共 61 项通过。完整命令为 cargo fmt --all -- --check、cargo clippy --workspace --all-targets --all-features --locked -- -D warnings、cargo test --workspace --all-features --locked。
 
 行为测试覆盖私聊配对/topic/历史/创建/续轮/steer、重复与丢回执、按 peer 顺序 dispatch、撤销授权/配置与绑定校验、批次重启/固定截止、bot 私聊账号隔离；Discord mock 覆盖 owner 授权、category/channel、共享 provider 与重复/未知写不重发、解绑不结束任务。构建与测试没有真实聊天平台写入。
 
@@ -43,3 +43,9 @@ Telegram getMe/getWebhookInfo 已通过：私聊 Topics 已开启，无 webhook�
 实际启动发现 teloxide 默认 HTTP timeout 为 17 秒，短于 30 秒 getUpdates 长轮询。现使用明确配置的 50 秒 HTTP/总请求预算，并加入 18 秒延迟响应行为测试。桥接进程已独立运行，正式轮询健康以自有 polling_cursors.last_poll_at 推进核对，不额外启动第二个 getUpdates 消费者。
 
 GitHub Actions 在任何构建步骤开始前被平台拒绝；官方 annotation 为账户近期付款失败或 spending limit 需提高。此状态不是编译/测试失败，需仓库账户管理员处理 Billing & plans 后重新运行。当前验证结果来自本机完整检查。
+
+## 恢复与轮次竞争补充
+
+补充测试证明：重启时仍 pending 的消息保存原始正文/时间并标为待确认；旧 nonce 作废；本次进程启动前的消息与 poll 故障后补收消息不会直接发给 agent。草稿按钮绑定 instance/thread/映射 revision，解绑后旧确认不能执行。
+
+原生 turn/steer 明确返回“无 active turn/expected turn 不匹配”时归类 Conflict，保留未接受的文本为新确认草稿，不自动转 turn/start。结果未知仍不重发，也不会当作明确冲突重试。完整 A01–A52 当前证明范围见 [逐项审计](acceptance-audit.md)。

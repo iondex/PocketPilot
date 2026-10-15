@@ -49,7 +49,7 @@ cargo build --workspace --locked
 4. /new WORKSPACE_ID 任务，点击“创建并发送”后才创建 thread 和首轮；没有停止、取消、重启或审批代答命令。
 5. 连续产生几条可见文本，检查合并与私聊共享速率预算；多个 topic 不应各自突破预算。429 按 retry_after 等待。
 6. 修改根 TOML 增删允许的 host/workspace 或调节速率；有效配置自动生效，非法配置保留最后有效版本。已撤销配对、已解除映射或已移除 workspace 的排队动作/投递不得继续执行。
-7. 停掉并重启 PocketPilot，确认原端任务继续运行，桥接不自动 resume/start/steer，也不重发结果未知的请求。断网时状态卡应显示连接未知。
+7. 停掉并重启 PocketPilot，确认原端任务继续运行，桥接不自动 resume/start/steer，也不重发结果未知的请求。重启前的 pending 消息及轮询故障后补收的输入应显示草稿，点击新的确认按钮前不得进入 agent；解绑后旧草稿按钮失效。断网时状态卡应显示连接未知。
 8. /rename 只改平台显示名；/unbind 只解除映射。关闭/删除 topic 后再次添加应创建新容器，原容器不能被换绑到另一个 session。
 
 正常退出使用 Ctrl-C 或 SIGTERM。data_dir、Telegram/Discord token 和 Discord guild 修改需要重启桥接；host/workspace、SSH 认证策略和 delivery 设置支持热更新。日志输出位置/过滤器在启动时装配。

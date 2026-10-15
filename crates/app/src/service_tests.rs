@@ -48,6 +48,7 @@ struct State {
     requests: Vec<&'static str>,
     drop_write: bool,
     legacy: bool,
+    turn_changed_on_steer: bool,
 }
 impl State {
     fn thread(&self) -> p::Thread {
@@ -148,7 +149,7 @@ telegram_messages_per_minute=60000
             serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"original question"}]}"#).unwrap(),
             serde_json::from_str(r#"{"type":"agentMessage","id":"a","text":"original answer","phase":"final_answer"}"#).unwrap(),
             serde_json::from_str(r#"{"type":"reasoning","id":"r","summary":["must never appear in Telegram"]}"#).unwrap(),
-        ],requests:vec![],drop_write:false,legacy:false}));
+        ],requests:vec![],drop_write:false,legacy:false,turn_changed_on_steer:false}));
         let server_state = state.clone();
         let server = tokio::spawn(async move {
             loop {
@@ -276,6 +277,35 @@ telegram_messages_per_minute=60000
                             Method::Steer(params) => {
                                 assert_eq!(params.expected_turn_id, "turn");
                                 state.requests.push("turn/steer");
+                                if state.turn_changed_on_steer {
+                                    state.turn_changed_on_steer = false;
+                                    state.status = p::ThreadStatus::Idle;
+                                    #[derive(Serialize)]
+                                    struct Rejection {
+                                        id: p::RequestId,
+                                        error: WireError,
+                                    }
+                                    #[derive(Serialize)]
+                                    struct WireError {
+                                        code: i64,
+                                        message: &'static str,
+                                    }
+                                    socket
+                                        .send(Message::Text(
+                                            serde_json::to_string(&Rejection {
+                                                id: frame.id.unwrap(),
+                                                error: WireError {
+                                                    code: -32600,
+                                                    message: "no active turn to steer",
+                                                },
+                                            })
+                                            .unwrap()
+                                            .into(),
+                                        ))
+                                        .await
+                                        .unwrap();
+                                    continue;
+                                }
                                 let id = format!("u{}", state.items.len());
                                 state.items.push(p::ThreadItem::UserMessage {
                                     id,
@@ -308,6 +338,7 @@ telegram_messages_per_minute=60000
             topics_enabled: true,
             pair_attempts: Mutex::new(HashMap::new()),
             history_slots: Semaphore::new(4),
+            started_at: 0,
         });
         Mock::given(method("POST")).and(path_regex("(?i).*/createforumtopic$")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":{"message_thread_id":11,"name":"fixture","icon_color":7322096}}"#)).mount(&telegram).await;
         Mock::given(method("POST")).and(path_regex("(?i).*/(sendmessage|senddocument|editmessagetext)$")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":{"message_id":700,"date":100,"chat":{"id":10,"type":"private","first_name":"Fixture"},"text":"fixture"}}"#)).mount(&telegram).await;
@@ -364,7 +395,216 @@ fn input(id: u32, topic: i32, text: &str) -> Input {
         callback_id: None,
         message_id: id as i32,
         config_hash: None,
+        requires_confirmation: false,
     }
+}
+
+#[tokio::test]
+async fn queued_input_after_restart_requires_a_fresh_binding_scoped_confirmation() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    store.set_workspace(1, 10, 11, "workspace").await.unwrap();
+    let queued = input(70, 11, "queued while offline");
+    let old_button = store
+        .callback(
+            1,
+            &queued,
+            &fixture.service.config.snapshot().hash,
+            "old action",
+            now(),
+        )
+        .await
+        .unwrap();
+    let (epoch, _) = store.cursor(1, now()).await.unwrap();
+    store
+        .ingest(1, epoch, &[(70, Some(queued.clone()))], now())
+        .await
+        .unwrap();
+    store.recover_inbox(1).await.unwrap();
+    let recovered = store.claim_input(1).await.unwrap().unwrap();
+    assert!(recovered.input.requires_confirmation);
+    assert_eq!(recovered.input.date, queued.date);
+    fixture.service.handle(&recovered.input).await.unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    let mut old_click = input(71, 11, "");
+    old_click.callback = Some(old_button);
+    assert!(matches!(
+        fixture.service.handle(&old_click).await,
+        Err(Error::Expired)
+    ));
+    let draft = fixture
+        .outputs()
+        .await
+        .into_iter()
+        .find(|b| b.text.contains("尚未发送"))
+        .unwrap();
+    assert!(draft.text.contains("queued while offline"));
+    let mut confirm = input(72, 11, "");
+    confirm.callback = Some(draft.buttons[0][0].data.clone());
+    fixture.service.handle(&confirm).await.unwrap();
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/steer")
+            .count(),
+        1
+    );
+    // A still-visible draft cannot be sent after unbinding/rebinding the topic.
+    let mut delayed = input(73, 11, "second queued draft");
+    delayed.requires_confirmation = true;
+    fixture.service.handle(&delayed).await.unwrap();
+    let draft = fixture
+        .outputs()
+        .await
+        .into_iter()
+        .find(|b| b.text.contains("second queued draft"))
+        .unwrap();
+    store.unbind(1, 10, 11).await.unwrap();
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    let mut confirm = input(74, 11, "");
+    confirm.callback = Some(draft.buttons[0][0].data.clone());
+    assert!(matches!(
+        fixture.service.handle(&confirm).await,
+        Err(Error::Expired)
+    ));
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/steer")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_message_older_than_the_new_process_is_a_draft_even_within_five_minutes() {
+    let mut fixture = Fixture::new().await;
+    let boot = now();
+    Arc::get_mut(&mut fixture.service).unwrap().started_at = boot;
+    fixture.pair().await;
+    fixture
+        .service
+        .store
+        .bind(1, 10, 11, "instance", "thread")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .set_workspace(1, 10, 11, "workspace")
+        .await
+        .unwrap();
+    let mut queued = input(80, 11, "offline before boot");
+    queued.date = boot - 1;
+    assert!((0..=300).contains(&now().saturating_sub(queued.date)));
+    fixture.service.handle(&queued).await.unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .iter()
+            .any(|b| b.text.contains("offline before boot"))
+    );
+}
+
+#[tokio::test]
+async fn updates_fetched_after_a_poll_outage_are_drafts_without_replaying_agent_input() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let fixture = Fixture::new().await;
+    let attempts = AtomicUsize::new(0);
+    Mock::given(method("POST")).and(path_regex("(?i).*/getupdates$"))
+        .respond_with(move |_:&wiremock::Request| match attempts.fetch_add(1,Ordering::SeqCst) {
+            0=>ResponseTemplate::new(500).set_body_string(r#"{"ok":false,"error_code":500,"description":"fixture outage"}"#),
+            1=>ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":[{"update_id":90,"message":{"message_id":90,"message_thread_id":11,"date":100,"from":{"id":10,"is_bot":false,"first_name":"Fixture"},"chat":{"id":10,"type":"private","first_name":"Fixture"},"text":"offline input","is_topic_message":true}}]}"#),
+            _=>ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":[]}"#).set_delay(Duration::from_millis(50)),
+        }).mount(&fixture.telegram).await;
+    let (stop, receiver) = watch::channel(false);
+    let poll = tokio::spawn(fixture.service.clone().poll(receiver));
+    let deadline = Instant::now() + Duration::from_secs(6);
+    let recovered = loop {
+        if let Some(input) = fixture.service.store.claim_input(1).await.unwrap() {
+            break input;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fixture recovery update was not received"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    stop.send(true).unwrap();
+    poll.await.unwrap();
+    assert!(recovered.input.requires_confirmation);
+    assert_eq!(recovered.input.text, "offline input");
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn a_steer_race_preserves_text_and_waits_for_confirmation_before_starting_another_turn() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .store
+        .bind(1, 10, 11, "instance", "thread")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .set_workspace(1, 10, 11, "workspace")
+        .await
+        .unwrap();
+    fixture.state.lock().await.turn_changed_on_steer = true;
+    fixture
+        .service
+        .handle(&input(94, 11, "preserve this race input"))
+        .await
+        .unwrap();
+    {
+        let state = fixture.state.lock().await;
+        assert_eq!(
+            state
+                .requests
+                .iter()
+                .filter(|r| **r == "turn/steer")
+                .count(),
+            1
+        );
+        assert!(!state.requests.contains(&"turn/start"));
+        assert!(!state.items.iter().any(|i|matches!(i,p::ThreadItem::UserMessage{content,..} if content.iter().any(|c|matches!(c,p::UserInput::TextUserInput{text,..} if text=="preserve this race input")))));
+    }
+    let draft = fixture
+        .outputs()
+        .await
+        .into_iter()
+        .find(|b| b.text.contains("preserve this race input"))
+        .unwrap();
+    assert!(draft.text.contains("尚未发送"));
+    let mut confirm = input(95, 11, "");
+    confirm.callback = Some(draft.buttons[0][0].data.clone());
+    fixture.service.handle(&confirm).await.unwrap();
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/start")
+            .count(),
+        1
+    );
 }
 
 #[cfg(feature = "discord")]

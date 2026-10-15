@@ -1,6 +1,6 @@
 # MVP 验收清单
 
-状态：所有行为场景均待执行；文档检查通过不等于机器人或三端集成已验收。执行任务见 [实施计划](implementation.md)。场景 ID 保持稳定，后续只追加，不因文档重组重新编号。
+状态：已有规则测试、隔离原生实验与授权 SSH 共享实例证据；真实 Telegram 用户交互、本地既有 Desktop 和 OTP 组合仍未完成验收。逐项证据及缺口见 [A01–A52 审计](../research/acceptance-audit.md)。执行任务见 [实施计划](implementation.md)。场景 ID 保持稳定，后续只追加，不因文档重组重新编号。
 
 ## 执行范围
 
@@ -16,7 +16,7 @@
 
 ## 行为场景
 
-这些是实施时需要执行的测试/实测；当前文档任务没有运行它们。
+这些标准保持不变；规则测试不能自动替代标准中要求的真实平台/多端验证。
 
 | ID | 场景 | 通过标准 |
 | --- | --- | --- |
@@ -88,4 +88,6 @@
 
 ## 当前验证
 
-当前已执行 Rust 单元/合成 RPC/SQLite 测试、CLI 配置诊断和 Telegram 账号/webhook 只读检查。未执行真实多端/SSH/OTP/session 控制场景；没有读取 Telegram 聊天消息或修改 session。实际范围见 [实现验证记录](../research/implementation-checks.md)。
+当前已执行 Rust 规则/合成 RPC/SQLite/Bot API 测试、本机隔离 Codex 0.161.0/0.162.1 生命周期实验、授权 SSH 的共享实例与专用新会话控制探针，以及真实 Telegram 长轮询运行检查。原生既有任务未收到测试输入。
+
+未把这些证据记作 A01–A52 全部通过。当前每项结果、还需什么证据、哪些条件属于外部阻塞，见 [验收审计](../research/acceptance-audit.md)；完整运行记录见 [实现验证记录](../research/implementation-checks.md)。

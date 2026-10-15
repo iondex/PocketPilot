@@ -32,6 +32,9 @@ pub struct Input {
     /// Application snapshot captured when dispatching; absent on Telegram updates.
     #[serde(default)]
     pub config_hash: Option<String>,
+    /// Local recovery marker, never populated from a Telegram message body.
+    #[serde(default)]
+    pub requires_confirmation: bool,
 }
 
 pub fn input(update: &Update) -> Option<Input> {
@@ -83,6 +86,7 @@ pub fn input(update: &Update) -> Option<Input> {
         callback_id,
         message_id: message.id.0,
         config_hash: None,
+        requires_confirmation: false,
     })
 }
 

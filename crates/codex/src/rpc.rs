@@ -76,6 +76,8 @@ pub enum Error {
     Rejected(i64),
     #[error("app-server history is not materialized yet; refresh shortly")]
     HistoryPending,
+    #[error("the active turn changed before the input was accepted")]
+    TurnChanged,
     #[error("endpoint is missing or does not satisfy connection policy")]
     Endpoint,
     #[error("connection profile is not supported yet")]
@@ -327,6 +329,7 @@ async fn run(
                             let terms=["legacy","paginated","materialized","not found","active","summary","experimental","history","persisted","rollout","empty","unavailable","database","turn","read","before","partial"].into_iter().filter(|term|lower.contains(term)).collect::<Vec<_>>();
                             tracing::warn!(rpc_method=method,code=error.code,?terms,"app-server rejected typed request");
                             if history_pending(method, &error) { Err(Error::HistoryPending) }
+                            else if turn_changed(method,&error) {Err(Error::TurnChanged)}
                             else { Err(Error::Rejected(error.code)) }
                         },
                         None => value.result.ok_or(Error::Protocol),
@@ -346,6 +349,13 @@ async fn run(
     for (_, (_, reply, _)) in pending {
         let _ = reply.send(Err(Error::Disconnected));
     }
+}
+
+fn turn_changed(method: &str, error: &Failure) -> bool {
+    method == "turn/steer"
+        && error.code == -32600
+        && (error.message == "no active turn to steer"
+            || error.message.starts_with("expected active turn id `"))
 }
 
 fn history_pending(method: &str, error: &Failure) -> bool {

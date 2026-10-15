@@ -44,6 +44,7 @@ impl From<Error> for ProviderError {
         match error {
             Error::Timeout => Self::Timeout,
             Error::Rejected(code) => Self::Rejected(code),
+            Error::TurnChanged => Self::Conflict,
             Error::Protocol => Self::Incompatible,
             Error::Unsupported => Self::Unsupported,
             _ => Self::Disconnected,
