@@ -23,7 +23,7 @@ pub enum RuntimeStatus {
 impl RuntimeStatus {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::NotLoaded => "历史未加载",
+            Self::NotLoaded => "待继续",
             Self::Idle => "空闲",
             Self::Active {
                 waiting_on_approval: true,

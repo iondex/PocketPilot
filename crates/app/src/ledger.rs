@@ -63,6 +63,7 @@ pub struct Binding {
     pub display_name: Option<String>,
     pub status_message_id: Option<i32>,
     pub status_text: Option<String>,
+    pub topic_title: Option<String>,
     pub observed_items: String,
     pub history_ready: bool,
 }
@@ -239,6 +240,41 @@ impl Store {
         Ok(())
     }
     pub async fn recover_inbox(&self, bot: i64) -> Result<(), Error> {
+        sqlx::query("UPDATE management_topics SET state='outcome_unknown' WHERE bot_id=? AND state='dispatching'")
+            .bind(bot).execute(&self.pool).await.map_err(|_|Error::Database)?;
+        // Old queued status updates may still contain the previous name/status
+        // coupling. Do not replay those renames after an upgrade. Old keyboard
+        // nonces are invalidated below, so their unsent menus must be refreshed.
+        let queued = sqlx::query(
+            "SELECT id,source_key,payload FROM deliveries WHERE bot_id=? AND state='pending'",
+        )
+        .bind(bot)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
+        for row in queued {
+            let mut body: Outbound =
+                serde_json::from_str(row.get("payload")).map_err(|_| Error::Database)?;
+            let id: String = row.get("id");
+            if !body.buttons.is_empty() {
+                sqlx::query(
+                    "UPDATE deliveries SET state='rejected' WHERE id=? AND state='pending'",
+                )
+                .bind(&id)
+                .execute(&self.pool)
+                .await
+                .map_err(|_| Error::Database)?;
+            } else if row.get::<String, _>("source_key").starts_with("status:")
+                && body.topic_title.take().is_some()
+            {
+                sqlx::query("UPDATE deliveries SET payload=? WHERE id=? AND state='pending'")
+                    .bind(serde_json::to_string(&body).map_err(|_| Error::Database)?)
+                    .bind(&id)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|_| Error::Database)?;
+            }
+        }
         // A process restart does not authorize still-pending agent input. Keep
         // its original timestamp/text and require a new interaction to send it.
         let pending=sqlx::query("SELECT polling_epoch,update_id,payload FROM inbound_updates WHERE bot_id=? AND processed=0")
@@ -415,6 +451,10 @@ impl Store {
             .bind(bot).bind(chat).bind(topic).execute(&mut *tx).await.map_err(|_|Error::Database)?;
         sqlx::query("UPDATE topic_requests SET state='rejected',topic_id=NULL WHERE bot_id=? AND chat_id=? AND topic_id=? AND state='accepted'")
             .bind(bot).bind(chat).bind(topic).execute(&mut *tx).await.map_err(|_|Error::Database)?;
+        sqlx::query("UPDATE management_topics SET state='rejected',topic_id=NULL WHERE bot_id=? AND chat_id=? AND topic_id=? AND state='accepted'")
+            .bind(bot).bind(chat).bind(topic).execute(&mut *tx).await.map_err(|_|Error::Database)?;
+        sqlx::query("UPDATE deliveries SET state='rejected' WHERE bot_id=? AND chat_id=? AND topic_id=? AND state='pending'")
+            .bind(bot).bind(chat).bind(topic).execute(&mut *tx).await.map_err(|_|Error::Database)?;
         tx.commit().await.map_err(|_| Error::Database)
     }
     pub async fn rename(&self, bot: i64, chat: i64, topic: i32, title: &str) -> Result<(), Error> {
@@ -527,6 +567,12 @@ impl Store {
         sqlx::query("UPDATE bindings SET status_message_id=?,status_text=? WHERE bot_id=? AND chat_id=? AND topic_id=? AND active=1")
             .bind(message).bind(text).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id)
             .execute(&self.pool).await.map_err(|_| Error::Database)?;
+        Ok(())
+    }
+    pub async fn topic_title_receipt(&self, binding: &Binding, title: &str) -> Result<(), Error> {
+        sqlx::query("UPDATE bindings SET topic_title=? WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1")
+            .bind(title).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision)
+            .execute(&self.pool).await.map_err(|_|Error::Database)?;
         Ok(())
     }
     pub async fn callback(

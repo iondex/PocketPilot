@@ -146,6 +146,7 @@ impl Api {
             username: me.username,
             webhook_enabled: webhook.url.is_some(),
             topics_enabled: me.has_topics_enabled,
+            user_topic_creation_enabled: me.allows_users_to_create_topics,
         })
     }
     pub async fn updates(&self, offset: Option<i32>) -> Result<Vec<Update>, Error> {
@@ -175,10 +176,13 @@ impl Api {
                 .map(|b| InlineKeyboardButton::callback(b.label, b.data))
         }));
         if text.encode_utf16().count() > 3800 {
-            let mut request = self.bot.send_document(
-                ChatId(chat),
-                InputFile::memory(text.as_bytes().to_vec()).file_name("session.md"),
-            );
+            let mut request = self
+                .bot
+                .send_document(
+                    ChatId(chat),
+                    InputFile::memory(text.as_bytes().to_vec()).file_name("session.md"),
+                )
+                .reply_markup(markup);
             if topic > 0 {
                 request = request.message_thread_id(ThreadId(MessageId(topic)));
             }
@@ -194,11 +198,24 @@ impl Api {
         Ok(self.call(request).await?.id.0)
     }
     pub async fn edit(&self, chat: i64, message: i32, text: &str) -> Result<(), Error> {
+        self.edit_buttons(chat, message, text, Vec::new()).await
+    }
+    pub async fn edit_buttons(
+        &self,
+        chat: i64,
+        message: i32,
+        text: &str,
+        buttons: Vec<Vec<Button>>,
+    ) -> Result<(), Error> {
+        let markup = InlineKeyboardMarkup::new(buttons.into_iter().map(|row| {
+            row.into_iter()
+                .map(|b| InlineKeyboardButton::callback(b.label, b.data))
+        }));
         match self
             .call(
                 self.bot
                     .edit_message_text(ChatId(chat), MessageId(message), text)
-                    .reply_markup(InlineKeyboardMarkup::default()),
+                    .reply_markup(markup),
             )
             .await
         {
@@ -254,6 +271,8 @@ pub(crate) struct Account {
     pub username: Option<String>,
     #[serde(default)]
     pub has_topics_enabled: bool,
+    #[serde(default)]
+    pub allows_users_to_create_topics: bool,
 }
 #[derive(Deserialize)]
 struct AccountResponse {
@@ -327,7 +346,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(path_regex("(?i).*/getme$"))
             .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{"ok":true,"result":{"id":1,"username":"fixture","has_topics_enabled":true}}"#,
+                r#"{"ok":true,"result":{"id":1,"username":"fixture","has_topics_enabled":true,"allows_users_to_create_topics":true}}"#,
             ))
             .expect(1)
             .mount(&server)
@@ -336,6 +355,7 @@ mod tests {
         let api = Api::local_fixture("1:abcdefghijklmnopqrstuvwxyz".into(), &server.uri()).unwrap();
         let identity = api.identity().await.unwrap();
         assert!(identity.topics_enabled);
+        assert!(identity.user_topic_creation_enabled);
         assert!(!identity.webhook_enabled);
         assert_eq!(identity.bot_id, 1);
     }

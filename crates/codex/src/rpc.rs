@@ -260,7 +260,20 @@ impl Client {
             .await
             .map_err(|_| Error::Timeout)?
             .map_err(|_| Error::Disconnected)??;
-        serde_json::from_str(body.get()).map_err(|_| Error::Protocol)
+        let mut decoder = serde_json::Deserializer::from_str(body.get());
+        serde_path_to_error::deserialize(&mut decoder).map_err(|error| {
+            // Only schema field names/array indexes, never the response or error
+            // text (which can include message content), reach diagnostics.
+            let path=error.path().iter().take(12).map(|segment| match segment {
+                serde_path_to_error::Segment::Seq{..}=>"[]",
+                serde_path_to_error::Segment::Map{key} if matches!(key.as_str(),"data"|"thread"|"turns"|"items"|"content"|"status"|"phase"|"type"|"result"|"output"|"arguments"|"tool"|"name"|"text"|"error"|"itemsView")=>key.as_str(),
+                _=>"?",
+            }).collect::<Vec<_>>().join(".");
+            let message=error.inner().to_string();
+            let category=if message.contains("unknown variant") {"unknown_variant"}else if message.contains("missing field") {"missing_field"}else if message.contains("did not match any variant") {"union_mismatch"}else{"invalid_shape"};
+            tracing::warn!(rpc_method=method,schema_path=%path,category,"typed response could not be decoded");
+            Error::Protocol
+        })
     }
 }
 

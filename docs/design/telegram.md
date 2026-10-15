@@ -15,7 +15,7 @@ Telegram 只接收私聊业务，不支持群、supergroup、channel 或在群�
 1. 验证消息是用户本人的私聊；群聊静默忽略，不创建配对申请、不泄漏 workspace 信息。
 2. 未配对用户只获得一个短期一次性码和“请在运行 PocketPilot 的机器上批准”的提示；此时不能列会话或触发 agent。
 3. 管理员在本机执行 `pocketpilot pair approve CODE`。只有 CLI 管理入口可以批准，Telegram 按钮/消息不能自助批准。
-4. 成功后 bot 重新读取配对状态，开放正常菜单。
+4. 成功后再次 /start，复用固定的「PocketPilot · 管理」topic，在其中显示管理菜单；不创建 Codex session。
 
 当前 CLI：
 
@@ -34,26 +34,30 @@ CLI 使用独立的配对管理数据库连接，不获取服务主锁、不执�
 
 ## 3. 私聊中的 Session Topic
 
-每个已配对用户在与 bot 的私聊内选择 workspace/session，一个具体 thread 对应一个 topic；控制菜单位于私聊入口。使用 Telegram 支持的 bot 私聊 topic 模式，不创建群聊作为替代。
+每个已配对用户有一个固定的「PocketPilot · 管理」topic，只用于管理。/start、/workspaces、/sessions、/new、/open 和 /help 都路由到这里；一个具体 Codex thread 对应另一个 session topic。管理 topic 通过数据库约束禁止绑定 agent。使用 Telegram 支持的 bot 私聊 topic 模式，不创建群聊作为替代。
 
 getMe 的 has_topics_enabled 必须为 true，当前 SDK 已通过私聊 thread_id 保留测试。未启用时明确提示需开启相应 bot topic 模式；不能声称所有普通私聊 bot 默认都可创建 topic。SDK 必须保留正确的 message_thread_id/thread_id 类型。
 
 ```text
 PocketPilot 私聊
-  控制菜单：工作区 / 会话 / 连接状态
-  🟢 PP 调查测试失败 · a13f5b
-  ⚪ WEB 登录回归 · d8e271
+  PocketPilot · 管理：工作区 / 会话 / 新建确认 / 提示
+  PP · 调查测试失败 · a13f5b
+  WEB · 登录回归 · d8e271
 ```
 
-完整标题在状态卡，topic 使用短名、短 ID 和缓存状态。状态卡复用一条 bot 消息，不依赖私聊置顶能力；标题/卡片更新进入同一平台调度器，不刷屏。
+topic 名只包含稳定短名和短 ID，不包含运行/连接状态。状态显示在一条复用的状态卡中；标题按成功回执缓存，只有名称确实变化时才改名。升级后的旧标题至多同步一次，避免 Telegram 为每次改名生成服务通知。
+
+未绑定 topic、General 入口或管理 topic 的普通消息进入管理提示，明确没有发送给 agent；已绑定 session topic 中的普通文本只发给该 session。首次从未绑定入口进入时提示管理消息去向，不把默认输入猜测成“最近会话”。
+
+Telegram 的「允许用户创建 topic」开关开启时，客户端会先为入口消息（包括 /start）创建 topic，再把消息发给 bot，这是平台行为。固定入口需要在 BotFather 开启 **Disallow users to create new threads**，保留 bot 的 Topics 功能。程序通过 getMe.allows_users_to_create_topics 诊断此设置，但 Bot API 不提供本项目可调用的对应设置方法；不会自动删除用户已有 topic。官方说明见 [Bot forums](https://core.telegram.org/api/forum#bot-forums)。
 
 ## 4. 菜单与绑定
 
-`/workspaces` 显示当前配置的 host/workspace；选择工作区后提供已有会话、新建、已绑定与诊断。按精确 cwd 和显式关联 worktree 分页查询，不能把同目录历史视作同一个执行实例。
+`/workspaces` 在管理 topic 中以两列按钮显示实际工作区。选择、下一页和返回都在原菜单消息中编辑，不为每次点击新发一张菜单；按钮只按实际条目生成，不添加空白占位。会话页过滤由本地专用探针创建回执明确识别的开发 session，不根据标题猜测，不远端归档/删除它们。按精确 cwd 和显式关联 worktree 分页查询，不能把同目录历史视作同一个执行实例。
 
 选择已有会话先显示完整信息与状态新鲜度；进入和绑定只读，不 resume。topic 创建用 provisioning saga，保存返回 ID；结果未知不再次自动创建。重复绑定返回原 topic。同一 bot 私聊中的容器解绑后只可回连原 thread，更换 session 必须新容器。不同 bot 的私聊按 account 隔离。
 
-工作区增改仍通过 ConfigWriter 原子更新根目录单一 TOML；配对用户可使用允许根路径下的 workspace，不可从聊天指定任意 SSH 命令、binary 或参数。
+工作区增改通过人工编辑根目录单一 TOML 和自动热更新；配对用户可使用允许根路径下的 workspace，不可从聊天指定任意 SSH 命令、binary 或参数。
 
 ## 5. 新建、继续和状态
 
@@ -74,6 +78,8 @@ PocketPilot 私聊
 ## 6. 历史、合并与速率
 
 新绑定空闲会话显示最后用户输入和对应 final；进入 active 会话输出全部可读历史的单条集合，超长一条 Markdown 附件。历史只读，不向 agent 发总结任务。配对/授权、完整性、异常 partial、投递屏障和未知结果规则见 [历史与投递](history-and-delivery.md)。
+
+「待继续」表示当前 app-server 未加载该会话；不是历史丢失或读取失败。该状态仍可只读查看历史，明确发送新输入时才 resume。历史读取失败独立提示且按绑定版本去重，不把已成功读取的运行状态改成“连接未知”。
 
 实时可见 user/agent 文本保留 item 边界，工具/推理过滤；同 session/peer/topic 的短时输出合并。不同用户私聊不能合并，不能将一个用户的历史集合发到另一个 peer。
 

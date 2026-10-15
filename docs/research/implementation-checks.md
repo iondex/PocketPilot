@@ -24,7 +24,7 @@
 
 ## 自动与隔离验证
 
-全功能测试共 61 项通过。完整命令为 cargo fmt --all -- --check、cargo clippy --workspace --all-targets --all-features --locked -- -D warnings、cargo test --workspace --all-features --locked。
+全功能测试共 69 项通过。完整命令为 cargo fmt --all -- --check、cargo clippy --workspace --all-targets --all-features --locked -- -D warnings、cargo test --workspace --all-features --locked。
 
 行为测试覆盖私聊配对/topic/历史/创建/续轮/steer、重复与丢回执、按 peer 顺序 dispatch、撤销授权/配置与绑定校验、批次重启/固定截止、bot 私聊账号隔离；Discord mock 覆盖 owner 授权、category/channel、共享 provider 与重复/未知写不重发、解绑不结束任务。构建与测试没有真实聊天平台写入。
 
@@ -49,3 +49,15 @@ GitHub Actions 在任何构建步骤开始前被平台拒绝；官方 annotation
 补充测试证明：重启时仍 pending 的消息保存原始正文/时间并标为待确认；旧 nonce 作废；本次进程启动前的消息与 poll 故障后补收消息不会直接发给 agent。草稿按钮绑定 instance/thread/映射 revision，解绑后旧确认不能执行。
 
 原生 turn/steer 明确返回“无 active turn/expected turn 不匹配”时归类 Conflict，保留未接受的文本为新确认草稿，不自动转 turn/start。结果未知仍不重发，也不会当作明确冲突重试。完整 A01–A52 当前证明范围见 [逐项审计](acceptance-audit.md)。
+
+## 真实用户测试后的修复
+
+用户报告 /start 自动出现新 Telegram topic、工作区按钮过长、探针会话混入列表、历史未加载文案、协议错误及标题循环。桥接已按用户请求停止，未自动重启；现有 Codex daemon 和会话未收到停止信号。
+
+复现：元数据成功而历史失败时，原有 observer 把同一 topic 在正常标题和“连接未知”之间切换。回归测试在修复前捕获三次重复改名。实际旧会话读取失败的字段是 TurnError.codexErrorInfo：typify 把开放 anyOf 生成为 flatten struct，无法解码官方字符串错误。类型生成修复后同一真实旧会话只读历史查询成功；没有 resume 或发送输入，临时诊断正文不提交。
+
+修复：历史失败不覆盖独立观察的运行状态，历史错误提示按绑定版本去重；状态移入固定卡，topic 稳定短名按回执缓存；历史 NotLoaded 文案改为“待继续”。工作区两列按钮，选择/分页/返回在原消息中编辑，只渲染实际条目；专用探针由本地 create 回执过滤，不按内容猜测，不归档原生 thread。固定管理 topic 负责默认入口、菜单、新建确认和未绑定输入提示，数据库禁止它关联 agent。
+
+Telegram 官方文档证实：允许用户建 topic 时，客户端会在发送 topic-less 消息之前自动创建 topic。要消除此 /start topic，需在 BotFather 开启 Disallow users to create new threads；getMe 的 allows_users_to_create_topics 用于只读诊断，不由 PocketPilot 擅自改变 BotFather 设置或删除已有聊天。
+
+新增模拟测试覆盖重复历史失败不反复改名、管理/session 隔离、默认输入不发 agent、原消息编辑保留按钮、探针过滤、旧队列标题/按钮恢复，以及管理 topic 创建丢回执不重试。上述新交互仍待用户显式重启后实测。

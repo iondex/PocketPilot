@@ -282,9 +282,10 @@ impl Service {
                     .get(&snapshot.config, ws)
                     .await
                     .map_err(error)?;
-                let page = connections::list_workspace(provider.as_ref(), ws, cursor.clone(), 8)
-                    .await
-                    .map_err(error)?;
+                let page =
+                    connections::list_picker(&self.store, provider.as_ref(), ws, cursor.clone(), 8)
+                        .await
+                        .map_err(error)?;
                 let mut text = page
                     .data
                     .iter()

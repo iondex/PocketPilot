@@ -138,7 +138,19 @@ fn generate() -> Result<()> {
     let mut settings = typify::TypeSpaceSettings::default();
     settings.with_struct_builder(true);
     let mut types = typify::TypeSpace::new(&settings);
-    types.add_root_schema(schema)?;
+    let mut generator_schema = schema;
+    // CodexErrorInfo is an open scalar-or-object anyOf. typify 0.5 treats
+    // overlapping anyOf branches as a flattened struct, which cannot decode
+    // official string errors such as "other". Ask for an ordered untagged Rust
+    // union while retaining every exported branch (including open fallbacks).
+    // The saved projection above retains the original anyOf validation schema.
+    if let Some(Schema::Object(error)) = generator_schema.definitions.get_mut("CodexErrorInfo")
+        && let Some(subschemas) = error.subschemas.as_mut()
+        && let Some(branches) = subschemas.any_of.take()
+    {
+        subschemas.one_of = Some(branches);
+    }
+    types.add_root_schema(generator_schema)?;
     let syntax = syn::parse2(types.to_stream())?;
     fs::write(output.join("protocol.rs"), prettyplease::unparse(&syntax))?;
     Ok(())

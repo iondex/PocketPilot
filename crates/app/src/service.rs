@@ -24,6 +24,8 @@ use tokio::{
     task::JoinSet,
     time::Instant,
 };
+#[path = "management.rs"]
+mod management;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -62,6 +64,7 @@ pub enum Error {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Action {
+    Home,
     Workspace {
         id: String,
         cursor: Option<String>,
@@ -131,6 +134,11 @@ pub async fn run(path: PathBuf) -> Result<(), Error> {
     tasks.spawn(config.clone().watch(receiver.clone()));
     if let Some((api, identity)) = telegram {
         let bot = i64::try_from(identity.bot_id).map_err(|_| Error::ReadOnly)?;
+        if identity.user_topic_creation_enabled {
+            tracing::warn!(
+                "Telegram clients can auto-create topics for /start; enable Disallow users to create new threads in BotFather to keep a fixed management entrance"
+            );
+        }
         store.recover_inbox(bot).await?;
         let service = Arc::new(Service {
             config: config.clone(),
@@ -269,9 +277,24 @@ impl Service {
                             let result = service.handle(input).await;
                             if let Err(error) = result {
                                 tracing::warn!(%error,"input failed without replay");
+                                let mut response_input = input.clone();
+                                if service
+                                    .store
+                                    .binding(service.bot, input.chat, input.topic)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .is_none()
+                                    && let Ok(Some(topic)) = service
+                                        .store
+                                        .management_topic(service.bot, input.chat)
+                                        .await
+                                {
+                                    response_input.topic = topic;
+                                }
                                 let _ = service
                                     .respond(
-                                        input,
+                                        &response_input,
                                         &format!("error:{}", input.event_key),
                                         Outbound::text(error.to_string()),
                                     )
@@ -370,6 +393,7 @@ impl Service {
                 .ok_or(Error::Expired)?;
             let action: Action = serde_json::from_str(&body).map_err(|_| Error::Expired)?;
             return match action {
+                Action::Home => self.workspaces(input, &snapshot).await,
                 Action::Workspace { id, cursor } => {
                     self.sessions(input, &snapshot, &id, cursor).await
                 }
@@ -403,6 +427,28 @@ impl Service {
             .split_once(char::is_whitespace)
             .unwrap_or((input.text.trim(), ""));
         let command = command.split('@').next().unwrap_or(command);
+        let management;
+        let input = if matches!(
+            command,
+            "/start" | "/workspaces" | "/sessions" | "/open" | "/new" | "/help"
+        ) {
+            management = self.management_input(input, &snapshot).await?;
+            &management
+        } else {
+            input
+        };
+        if self
+            .store
+            .binding(self.bot, input.chat, input.topic)
+            .await?
+            .is_none()
+            && !matches!(
+                command,
+                "/start" | "/workspaces" | "/sessions" | "/open" | "/new" | "/help"
+            )
+        {
+            return self.default_message(input, &snapshot).await;
+        }
         match command {
             "/start"|"/workspaces"=>self.workspaces(input,&snapshot).await,
             "/help"=>self.respond(input,&input.event_key,Outbound::text("/workspaces 选择工作区\n/sessions WORKSPACE_ID 查看会话\n/new WORKSPACE_ID 任务 新建（需确认）\n/status 状态\n/history 完整历史\n/info 会话信息\n/ask 文本 继续或 steer\n/steer 文本 仅追加当前轮\n/rename 标题 仅改 topic 名\n/unbind 解除映射\n\n在会话 topic 内直接发文本也可继续或 steer。审批和用户问答请在原 Codex 客户端处理。没有停止会话入口。")).await,
@@ -419,7 +465,7 @@ impl Service {
                 let button=self.button(input,&snapshot,"创建并发送",action).await?;
                 let mut body=Outbound::text(format!("将在 {} 创建会话并发送：\n\n{}",workspace.name,text.trim()));
                 body.buttons=vec![vec![button]];
-                self.respond(input,&input.event_key,body).await
+                self.menu_response(input,&input.event_key,body).await
             }
             "/status"|"/info"|"/history"=>{
                 let binding=self.bound(input).await?;
@@ -437,11 +483,12 @@ impl Service {
                 self.respond(input,&input.event_key,Outbound::text("已解除此 topic 的映射，会话继续运行。此 topic 只能重新连接原会话。" )).await
             }
             "/rename"=>{
-                self.bound(input).await?;
+                let binding=self.bound(input).await?;
+                let workspace=self.binding_workspace(&snapshot.config,&binding)?;
                 let title=session::delivery::short_title(args,40);
                 self.store.rename(self.bot,input.chat,input.topic,&title).await?;
                 let mut body=Outbound::text(format!("显示名已设为 {title}"));
-                body.topic_title=Some(title);
+                body.topic_title=Some(topic_title(workspace,&title,&binding.thread_id));
                 self.respond(input,&input.event_key,body).await
             }
             "/ask"|"/steer"=>{
@@ -558,11 +605,20 @@ impl Service {
         Ok(())
     }
     async fn workspaces(&self, input: &Input, snapshot: &Snapshot) -> Result<(), Error> {
-        let mut body = Outbound::text(
-            "选择工作区；会话会添加到独立 topic。新建可发送 /new WORKSPACE_ID 任务。",
-        );
-        for workspace in &snapshot.config.workspaces {
-            body.buttons.push(vec![
+        self.workspaces_text(input,snapshot,"管理 · 选择工作区\n此 topic 只用于管理，不发送任务。添加会话后，请到对应会话 topic 发送消息。新建：/new 工作区短名 任务").await
+    }
+    async fn workspaces_text(
+        &self,
+        input: &Input,
+        snapshot: &Snapshot,
+        text: &str,
+    ) -> Result<(), Error> {
+        let mut body = Outbound::text(text);
+        for (index, workspace) in snapshot.config.workspaces.iter().enumerate() {
+            if index % 2 == 0 {
+                body.buttons.push(Vec::new());
+            }
+            body.buttons.last_mut().unwrap().push(
                 self.button(
                     input,
                     snapshot,
@@ -573,12 +629,12 @@ impl Service {
                     },
                 )
                 .await?,
-            ]);
+            );
         }
         if body.buttons.is_empty() {
             body.text="尚无工作区。请在根目录 pocketpilot.toml 配置 host/provider/workspace，保存后会自动加载。".into();
         }
-        self.respond(input, &input.event_key, body).await
+        self.menu_response(input, &input.event_key, body).await
     }
     async fn sessions(
         &self,
@@ -589,7 +645,8 @@ impl Service {
     ) -> Result<(), Error> {
         let workspace = self.workspace(&snapshot.config, id)?;
         let provider = self.connections.get(&snapshot.config, workspace).await?;
-        let page = connections::list_workspace(provider.as_ref(), workspace, cursor, 8).await?;
+        let page =
+            connections::list_picker(&self.store, provider.as_ref(), workspace, cursor, 8).await?;
         let mut body = Outbound::text(format!(
             "{} · 选择已有会话\n新建：/new {} 任务",
             workspace.name, workspace.short_name
@@ -626,7 +683,11 @@ impl Service {
                 .await?,
             ]);
         }
-        self.respond(input, &input.event_key, body).await
+        body.buttons.push(vec![
+            self.button(input, snapshot, "返回工作区", Action::Home)
+                .await?,
+        ]);
+        self.menu_response(input, &input.event_key, body).await
     }
     async fn open(
         &self,
@@ -657,7 +718,7 @@ impl Service {
                 {
                     return Err(Error::Unknown);
                 }
-                let title = topic_title(workspace, &current.title, current.status.label(), thread);
+                let title = topic_title(workspace, &current.title, thread);
                 match self.api.create_topic(input.chat, &title).await {
                     Ok(topic) => {
                         self.store
@@ -721,7 +782,17 @@ impl Service {
         let _binding_guard = binding_actor.lock().await;
         let history = self
             .history(provider.as_ref(), workspace, thread, snapshot)
-            .await?;
+            .await;
+        let history = match history {
+            Ok(history) => history,
+            Err(error) => {
+                self.history_unavailable(&binding, workspace, &current.cwd, &error, snapshot)
+                    .await?;
+                self.refresh_status(&binding, workspace, &current, snapshot)
+                    .await?;
+                return self.opened(input, snapshot, workspace, topic).await;
+            }
+        };
         let after = provider.read(thread).await?;
         connections::require_workspace(&after.cwd, workspace)?;
         let text = if matches!(current.status, RuntimeStatus::Active { .. })
@@ -750,14 +821,8 @@ impl Service {
         ));
         card.scope = Some(self.output_scope(&snapshot.config, workspace, &after.cwd)?);
         card.binding_revision = Some(binding.revision);
-        card.topic_title = Some(topic_title(
-            workspace,
-            binding.display_name.as_deref().unwrap_or(&after.title),
-            after.status.label(),
-            thread,
-        ));
         self.store.enqueue_status(&binding, &card).await?;
-        Ok(())
+        self.opened(input, snapshot, workspace, topic).await
     }
     async fn authorize(&self, input: &Input, hash: &str) -> Result<(), Error> {
         if self.config.snapshot().hash != hash {
@@ -1126,9 +1191,20 @@ impl Service {
                         self.api
                             .rename_topic(row.chat_id, row.topic_id, title)
                             .await?;
+                        if let Some(binding) = self
+                            .store
+                            .binding(self.bot, row.chat_id, row.topic_id)
+                            .await
+                            .ok()
+                            .flatten()
+                        {
+                            let _ = self.store.topic_title_receipt(&binding, title).await;
+                        }
                     }
                     if let Some(message) = body.edit_message {
-                        self.api.edit(row.chat_id, message, &body.text).await?;
+                        self.api
+                            .edit_buttons(row.chat_id, message, &body.text, body.buttons.clone())
+                            .await?;
                         Ok(message)
                     } else {
                         self.api
@@ -1164,13 +1240,22 @@ impl Service {
                     Err(error) => {
                         tracing::warn!(%error,"Telegram delivery failed");
                         if matches!(error, telegram::Error::TopicUnavailable) {
+                            let management = self
+                                .store
+                                .management_topic(self.bot, row.chat_id)
+                                .await
+                                .ok()
+                                .flatten()
+                                == Some(row.topic_id);
                             let _ = self
                                 .store
                                 .unavailable_topic(self.bot, row.chat_id, row.topic_id)
                                 .await;
-                            let mut notice = Outbound::text(
-                                "会话 topic 已关闭或删除；Codex 会话继续运行。请从 /sessions 重新添加，会创建一个新 topic。",
-                            );
+                            let mut notice = Outbound::text(if management {
+                                "管理 topic 已关闭或删除。下次发送 /start 将重新创建管理入口；Codex 会话不受影响。"
+                            } else {
+                                "会话 topic 已关闭或删除；Codex 会话继续运行。请从 /sessions 重新添加，会创建一个新 topic。"
+                            });
                             notice.scope = body.scope.clone();
                             let _ = self
                                 .store
@@ -1327,13 +1412,68 @@ impl Service {
         body.edit_message = binding.status_message_id;
         body.binding_revision = Some(binding.revision);
         body.scope = Some(self.output_scope(&snapshot.config, workspace, &workspace.cwd)?);
-        body.topic_title = Some(topic_title(
-            workspace,
-            binding.display_name.as_deref().unwrap_or("会话"),
-            "连接未知",
-            &binding.thread_id,
-        ));
         self.store.enqueue_status(&binding, &body).await?;
+        Ok(())
+    }
+    async fn history_unavailable(
+        &self,
+        binding: &Binding,
+        workspace: &Workspace,
+        cwd: &str,
+        error: &Error,
+        snapshot: &Snapshot,
+    ) -> Result<(), Error> {
+        tracing::warn!(%error,"session history unavailable; keeping independently observed runtime");
+        let mut body = Outbound::text(
+            "历史暂时无法读取，已知会话运行状态仍显示在状态卡中。没有停止、重启或自动恢复会话；可稍后 /history 重试。",
+        );
+        body.scope = Some(self.output_scope(&snapshot.config, workspace, cwd)?);
+        body.binding_revision = Some(binding.revision);
+        self.store
+            .enqueue(
+                self.bot,
+                binding.chat_id,
+                binding.topic_id,
+                &format!(
+                    "history-unavailable:{}:{}",
+                    binding.thread_id, binding.revision
+                ),
+                &body,
+            )
+            .await?;
+        Ok(())
+    }
+    async fn refresh_status(
+        &self,
+        binding: &Binding,
+        workspace: &Workspace,
+        current: &session::Session,
+        snapshot: &Snapshot,
+    ) -> Result<(), Error> {
+        let status = status_text(
+            workspace,
+            binding.display_name.as_deref().unwrap_or(&current.title),
+            current.status.label(),
+            &binding.thread_id,
+        );
+        let title = topic_title(
+            workspace,
+            binding.display_name.as_deref().unwrap_or(&current.title),
+            &binding.thread_id,
+        );
+        let title_changed = binding.topic_title.as_deref() != Some(&title);
+        if binding.status_text.as_deref() != Some(&status) || title_changed {
+            let mut body = Outbound::text(status);
+            body.edit_message = binding.status_message_id;
+            body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
+            body.binding_revision = Some(binding.revision);
+            if title_changed {
+                body.topic_title = Some(title);
+            }
+            // Frequent runtime changes edit one card; Telegram emits a service
+            // message for every topic rename, so status never belongs in its name.
+            self.store.enqueue_status(binding, &body).await?;
+        }
         Ok(())
     }
     async fn refresh_binding(&self, binding: &Binding) -> Result<(), Error> {
@@ -1365,28 +1505,19 @@ impl Service {
         let provider = self.connections.get(&snapshot.config, workspace).await?;
         let current = provider.read(&binding.thread_id).await?;
         connections::require_workspace(&current.cwd, workspace)?;
-        let status = status_text(
-            workspace,
-            binding.display_name.as_deref().unwrap_or(&current.title),
-            current.status.label(),
-            &binding.thread_id,
-        );
-        if binding.status_text.as_deref() != Some(&status) {
-            let mut body = Outbound::text(status.clone());
-            body.edit_message = binding.status_message_id;
-            body.topic_title = Some(topic_title(
-                workspace,
-                binding.display_name.as_deref().unwrap_or(&current.title),
-                current.status.label(),
-                &binding.thread_id,
-            ));
-            body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
-            body.binding_revision = Some(binding.revision);
-            self.store.enqueue_status(binding, &body).await?;
-        }
+        self.refresh_status(binding, workspace, &current, &snapshot)
+            .await?;
         let history = self
             .history(provider.as_ref(), workspace, &binding.thread_id, &snapshot)
-            .await?;
+            .await;
+        let history = match history {
+            Ok(history) => history,
+            Err(error) => {
+                return self
+                    .history_unavailable(binding, workspace, &current.cwd, &error, &snapshot)
+                    .await;
+            }
+        };
         if !binding.history_ready {
             let text = if matches!(current.status, RuntimeStatus::Active { .. }) {
                 session::delivery::full_history(&history)
@@ -1455,14 +1586,18 @@ impl Service {
     }
 }
 
-fn topic_title(workspace: &Workspace, title: &str, status: &str, thread: &str) -> String {
+fn topic_title(workspace: &Workspace, title: &str, thread: &str) -> String {
     format!(
         "{} · {}",
-        session::delivery::short_title(
-            &format!("{} {} · {}", workspace.short_name, title, status),
-            40
-        ),
-        thread.chars().take(6).collect::<String>()
+        session::delivery::short_title(&format!("{} · {}", workspace.short_name, title), 32),
+        thread
+            .chars()
+            .rev()
+            .take(6)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>()
     )
 }
 fn status_text(workspace: &Workspace, title: &str, status: &str, thread: &str) -> String {

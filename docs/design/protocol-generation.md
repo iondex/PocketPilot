@@ -23,3 +23,9 @@ Cargo 监听 build.rs、PATH、CODEX_SCHEMA_BIN 和实际 executable 的变化�
 schema 兼容仅证明类型可编译；共享实例、实时观察和断线语义仍需行为验收。RPC 的未知扩展参数只作为不透明 RawValue 保留，由明确 DTO 解码，不做业务字段猜测。
 
 协议定义来自 OpenAI Codex（Apache-2.0）；许可证保留在 crates/codex/LICENSE-APACHE。
+
+## 开放错误联合类型
+
+CodexErrorInfo 的官方 schema 是包含字符串、结构化错误和开放分支的 anyOf。typify 0.5 遇到重叠分支时默认生成 flatten struct，会拒绝合法的字符串错误（例如 other），使包含失败轮次的历史无法读取。build.rs 仅在传给生成器时将该类型建模为按顺序匹配的 untagged union，保留所有官方分支；保存在 OUT_DIR 的投影保持原始 anyOf。错误码仍由 schema 生成，不改成业务 raw JSON。回归测试覆盖已知字符串/对象、未知开放字符串/对象与非法数字。
+
+RPC 解码失败只记录白名单 schema 路径与固定错误类别，不记录响应正文或 serde 错误文本。

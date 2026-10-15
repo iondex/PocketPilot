@@ -276,8 +276,4 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 完整 [A01–A52 清单](acceptance.md) 是验收条件唯一来源。报告格式与测试层次见清单；W03 先证明协议能力，W17 汇总行为验收。任何任务中的测试编号不代表已经执行。
 
-实现开始时按本计划更新 W 状态和证据链接，不再复制一份容易过期的 TODO 文件。当前 W00/W01/W02 的基础实现已完成；W04/W05/W06 为部分实现；W08 已有只读账号与私聊访问/CLI 配对基础，poller 待接入；其余任务未完成。W03 的真实共享/生命周期证据待实际 endpoint 与独立测试环境，不得把 mock 测试当成通过。后续先完成该门禁，再接 durable poller、topic 和用户写操作。
-
-## 7. 不随本轮实施的内容
-
-Lark/Discord/Claude 的能力和候选库保留在 [后续扩展](../future/integrations.md)，不进入首版依赖。研究来源和匿名快照保留在 [研究记录](../research/sources.md)。文档检查已做；没有进行 session 写操作或服务升级；真实多端/SSH/OTP 行为仍须独立验收。
+当前实现和真实验收以本文开头的阶段表、[实现记录](../research/implementation-checks.md) 和 [逐项审计](../research/acceptance-audit.md) 为准。真实用户已开始测试并反馈问题，修复后桥接保持停止，等待显式重启复测；不以 mock 测试替代真实交付证据。

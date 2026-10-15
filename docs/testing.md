@@ -37,15 +37,15 @@ cargo build --workspace --locked
 ./target/debug/pocketpilot pair approve CODE
 ```
 
-批准后再次 /start。管理员 CLI 可与服务同时运行，不获取执行账本的服务锁、不恢复执行中操作。其他人必须完成同样的本机批准。群聊输入、群内按钮和错误 private peer 均不能进入业务流程。
+批准后再次 /start，进入固定的「PocketPilot · 管理」topic。这里的普通消息只提示，不发送给 agent；选择已有会话后去对应 session topic 发送任务。管理员 CLI 可与服务同时运行，不获取执行账本的服务锁、不恢复执行中操作。其他人必须完成同样的本机批准。群聊输入、群内按钮和错误 private peer 均不能进入业务流程。
 
 已配置 bot 的只读账号检查已通过，私聊 Topics 已开启；初始检查未发送测试消息或消费 updates，正式 serve 启动后才处理私聊请求。其他 bot 需要先在 BotFather 开启私聊 Topics。发现 webhook 时 serve 拒绝启动，不自动删除 webhook。
 
 ## 建议测试顺序
 
-1. /workspaces 选择工作区；已有会话可分页选择。新建且尚未进入历史索引的已加载会话也应可见。
+1. 管理 topic 内 /workspaces 选择工作区，工作区按钮两列并排；已有会话可分页选择，点击/翻页/返回应编辑同一菜单消息，无空白占位或开发探针条目。新建且尚未进入历史索引的已加载会话也应可见。
 2. 进入空闲会话，确认只显示最后用户输入和对应 final；进入运行中会话，确认全部可读 user/agent 文本在一个历史集合内，长内容为单个 Markdown 附件。工具和推理内容不发送。
-3. /status 和 /info 对比原端状态；直接发送文本，空闲时续轮，运行中使用带 expectedTurnId 的 steer。等待审批时也可追加 steer，审批和结构化问答继续在原端处理。
+3. /status 和 /info 对比原端状态；topic 名应保持稳定，状态变化只编辑状态卡。「待继续」表示未在该执行实例加载，不是历史读取失败；直接发送文本，空闲时续轮，运行中使用带 expectedTurnId 的 steer。等待审批时也可追加 steer，审批和结构化问答继续在原端处理。
 4. /new WORKSPACE_ID 任务，点击“创建并发送”后才创建 thread 和首轮；没有停止、取消、重启或审批代答命令。
 5. 连续产生几条可见文本，检查合并与私聊共享速率预算；多个 topic 不应各自突破预算。429 按 retry_after 等待。
 6. 修改根 TOML 增删允许的 host/workspace 或调节速率；有效配置自动生效，非法配置保留最后有效版本。已撤销配对、已解除映射或已移除 workspace 的排队动作/投递不得继续执行。
@@ -70,4 +70,8 @@ cargo build --workspace --locked
 
 ## 当前本机桥接
 
-桥接已在本机后台启动，进程号保存在被忽略的 var/data/bridge.pid。停止桥接时仅向该进程发送 SIGTERM；不对 Codex daemon 或其进程组发送信号。日志位于 var/logs，配对 CLI 可同时运行。电脑休眠/退出登录等本机环境变化可能使桥接离线，原生任务生命周期仍由其 daemon 管理。
+桥接已按用户请求停止，修复完成后不会自动重启。需要继续测试时在仓库目录显式运行 ./target/debug/pocketpilot serve；不要依赖旧的 var/data/bridge.pid 判断进程是否存活。停止桥接时仅向该进程发送 SIGTERM；不对 Codex daemon 或其进程组发送信号。日志位于 var/logs，配对 CLI 可同时运行。电脑休眠/退出登录等本机环境变化可能使桥接离线，原生任务生命周期仍由其 daemon 管理。
+
+## /start 不再自动产生 Telegram topic 的设置
+
+在 BotFather 为此 bot 开启 **Disallow users to create new threads**，保留 Topics 模式。该设置关闭用户建 topic 的能力，bot 仍可创建管理与 session topics。设置开启前，Telegram 客户端可能在 bot 收到 /start 前就自动创建同名 topic，代码无法撤销这一步；不会自动删除这些已有聊天。telegram-check 会显示 user_topic_creation_enabled 供核对，应为 false。

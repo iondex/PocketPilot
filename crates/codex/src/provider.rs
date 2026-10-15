@@ -674,4 +674,34 @@ mod tests {
         .unwrap();
         assert!(text_item("turn", false, final_item).unwrap().complete);
     }
+
+    #[test]
+    fn failed_turn_error_codes_accept_official_string_and_structured_shapes() {
+        let string_error = r#"{"message":"fixture failed","codexErrorInfo":"other"}"#;
+        let structured_error = r#"{"message":"fixture failed","codexErrorInfo":{"httpConnectionFailed":{"httpStatusCode":502}}}"#;
+        assert!(
+            serde_json::from_str::<p::TurnError>(string_error).is_ok(),
+            "official string error shape must not prevent reading history"
+        );
+        assert!(
+            serde_json::from_str::<p::TurnError>(structured_error).is_ok(),
+            "official structured error shape must not prevent reading history"
+        );
+        assert!(
+            serde_json::from_str::<p::TurnError>(
+                r#"{"message":"fixture","codexErrorInfo":"futureError"}"#
+            )
+            .is_ok()
+        );
+        assert!(
+            serde_json::from_str::<p::TurnError>(
+                r#"{"message":"fixture","codexErrorInfo":{"futureError":{"code":42}}}"#
+            )
+            .is_ok()
+        );
+        assert!(
+            serde_json::from_str::<p::TurnError>(r#"{"message":"fixture","codexErrorInfo":123}"#)
+                .is_err()
+        );
+    }
 }

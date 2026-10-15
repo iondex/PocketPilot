@@ -49,6 +49,7 @@ struct State {
     drop_write: bool,
     legacy: bool,
     turn_changed_on_steer: bool,
+    incompatible_history: bool,
 }
 impl State {
     fn thread(&self) -> p::Thread {
@@ -149,7 +150,7 @@ telegram_messages_per_minute=60000
             serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"original question"}]}"#).unwrap(),
             serde_json::from_str(r#"{"type":"agentMessage","id":"a","text":"original answer","phase":"final_answer"}"#).unwrap(),
             serde_json::from_str(r#"{"type":"reasoning","id":"r","summary":["must never appear in Telegram"]}"#).unwrap(),
-        ],requests:vec![],drop_write:false,legacy:false,turn_changed_on_steer:false}));
+        ],requests:vec![],drop_write:false,legacy:false,turn_changed_on_steer:false,incompatible_history:false}));
         let server_state = state.clone();
         let server = tokio::spawn(async move {
             loop {
@@ -214,11 +215,17 @@ telegram_messages_per_minute=60000
                             Method::Turns(params) => {
                                 assert_eq!(params.thread_id, "thread");
                                 state.requests.push("thread/turns/list");
+                                let mut turn = state.turn();
+                                if state.incompatible_history
+                                    && matches!(params.items_view, Some(p::TurnItemsView::Full))
+                                {
+                                    turn.items_view = p::TurnItemsView::Summary;
+                                }
                                 reply(
                                     &mut socket,
                                     frame.id.unwrap(),
                                     p::ThreadTurnsListResponse {
-                                        data: vec![state.turn()],
+                                        data: vec![turn],
                                         next_cursor: None,
                                         backwards_cursor: None,
                                     },
@@ -340,7 +347,12 @@ telegram_messages_per_minute=60000
             history_slots: Semaphore::new(4),
             started_at: 0,
         });
-        Mock::given(method("POST")).and(path_regex("(?i).*/createforumtopic$")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":{"message_thread_id":11,"name":"fixture","icon_color":7322096}}"#)).mount(&telegram).await;
+        Mock::given(method("POST")).and(path_regex("(?i).*/createforumtopic$")).respond_with(|request:&wiremock::Request| {
+            #[derive(Deserialize)] struct Topic {name:String}
+            let topic:Topic=serde_json::from_slice(&request.body).unwrap();
+            let id=if topic.name=="PocketPilot · 管理" {9}else{11};
+            ResponseTemplate::new(200).set_body_string(format!(r#"{{"ok":true,"result":{{"message_thread_id":{id},"name":"fixture","icon_color":7322096}}}}"#))
+        }).mount(&telegram).await;
         Mock::given(method("POST")).and(path_regex("(?i).*/(sendmessage|senddocument|editmessagetext)$")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":{"message_id":700,"date":100,"chat":{"id":10,"type":"private","first_name":"Fixture"},"text":"fixture"}}"#)).mount(&telegram).await;
         Mock::given(method("POST"))
             .and(path_regex("(?i).*/(editforumtopic|answercallbackquery)$"))
@@ -397,6 +409,433 @@ fn input(id: u32, topic: i32, text: &str) -> Input {
         config_hash: None,
         requires_confirmation: false,
     }
+}
+
+#[tokio::test]
+async fn failed_history_does_not_flip_a_known_runtime_or_repeatedly_rename_the_topic() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .store
+        .bind(1, 10, 11, "instance", "thread")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .set_workspace(1, 10, 11, "workspace")
+        .await
+        .unwrap();
+    fixture.state.lock().await.incompatible_history = true;
+    let (stop, receiver) = watch::channel(false);
+    let delivery = tokio::spawn(fixture.service.clone().deliver(receiver));
+    for _ in 0..3 {
+        let binding = fixture
+            .service
+            .store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .unwrap();
+        if let Err(error) = fixture.service.refresh_binding(&binding).await {
+            fixture
+                .service
+                .offline_status(&binding, &error)
+                .await
+                .unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let pending: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM deliveries WHERE state IN ('pending','dispatching')",
+            )
+            .fetch_one(&fixture.service.store.pool)
+            .await
+            .unwrap();
+            if pending == 0 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "fixture delivery did not settle");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    stop.send(true).unwrap();
+    delivery.await.unwrap();
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    let renames = requests
+        .iter()
+        .filter(|r| {
+            r.url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/editforumtopic")
+        })
+        .count();
+    let binding = fixture
+        .service
+        .store
+        .binding(1, 10, 11)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        renames <= 1,
+        "history failure caused {renames} repeated topic renames"
+    );
+    assert!(
+        binding.status_text.unwrap().contains("运行中"),
+        "readable runtime was replaced by unknown"
+    );
+}
+
+#[tokio::test]
+async fn management_topic_is_separate_and_unbound_messages_never_reach_an_agent() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(200, 0, "/start"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.service.store.management_topic(1, 10).await.unwrap(),
+        Some(9)
+    );
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 9)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .service
+            .store
+            .bind(1, 10, 9, "instance", "thread")
+            .await
+            .is_err()
+    );
+    fixture
+        .service
+        .handle(&input(201, 0, "default user message"))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(202, 9, "management user message"))
+        .await
+        .unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    let rows = sqlx::query("SELECT topic_id,payload FROM deliveries ORDER BY rowid")
+        .fetch_all(&fixture.service.store.pool)
+        .await
+        .unwrap();
+    use sqlx::Row;
+    for row in rows {
+        let body: Outbound = serde_json::from_str(row.get("payload")).unwrap();
+        if body.text.contains("default user message")
+            || body.text.contains("management user message")
+        {
+            assert_eq!(row.get::<i32, _>("topic_id"), 9);
+            assert!(body.text.contains("未发送给 agent"));
+        }
+    }
+    fixture
+        .service
+        .store
+        .bind(1, 10, 11, "instance", "thread")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .set_workspace(1, 10, 11, "workspace")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(203, 11, "only this session input"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/steer")
+            .count(),
+        1
+    );
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r
+                .url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/createforumtopic"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn picker_navigation_edits_the_same_management_message_and_keeps_its_buttons() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(210, 0, "/workspaces"))
+        .await
+        .unwrap();
+    let button = fixture
+        .outputs()
+        .await
+        .into_iter()
+        .find(|b| b.text.starts_with("管理 ·"))
+        .unwrap()
+        .buttons[0][0]
+        .data
+        .clone();
+    let mut click = input(211, 9, "");
+    click.message_id = 777;
+    click.callback = Some(button);
+    fixture.service.handle(&click).await.unwrap();
+    let sessions = fixture
+        .outputs()
+        .await
+        .into_iter()
+        .find(|b| b.text.contains("选择已有会话"))
+        .unwrap();
+    assert_eq!(sessions.edit_message, Some(777));
+    let back = sessions.buttons.last().unwrap()[0].data.clone();
+    let (stop, receiver) = watch::channel(false);
+    let deliver = tokio::spawn(fixture.service.clone().deliver(receiver));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let requests = fixture.telegram.received_requests().await.unwrap();
+        if requests.iter().any(|r| {
+            r.url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/editmessagetext")
+        }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "inline menu was not edited");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    stop.send(true).unwrap();
+    deliver.await.unwrap();
+    #[derive(Deserialize)]
+    struct Edit {
+        message_id: i32,
+        reply_markup: Markup,
+    }
+    #[derive(Deserialize)]
+    struct Markup {
+        inline_keyboard: Vec<Vec<serde::de::IgnoredAny>>,
+    }
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    let edit: Edit = serde_json::from_slice(
+        &requests
+            .iter()
+            .find(|r| {
+                r.url
+                    .path()
+                    .to_ascii_lowercase()
+                    .ends_with("/editmessagetext")
+            })
+            .unwrap()
+            .body,
+    )
+    .unwrap();
+    assert_eq!(edit.message_id, 777);
+    assert!(!edit.reply_markup.inline_keyboard.is_empty());
+    let mut click = input(212, 9, "");
+    click.message_id = 777;
+    click.callback = Some(back);
+    fixture.service.handle(&click).await.unwrap();
+    let outputs = fixture.outputs().await;
+    assert_eq!(outputs.last().unwrap().edit_message, Some(777));
+}
+
+#[tokio::test]
+async fn workspace_buttons_use_two_columns_without_padding_small_session_lists() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let file = &fixture.service.config.path;
+    let mut text = std::fs::read_to_string(file).unwrap();
+    for (id, name) in [("second", "Second"), ("third", "Third")] {
+        text.push_str(&format!("\n[[workspaces]]\nid='{id}'\nprovider_id='instance'\nname='{name}'\nshort_name='{id}'\ncwd='/workspace/{id}'\n"));
+    }
+    std::fs::write(file, text).unwrap();
+    fixture.service.config.reload().unwrap();
+    fixture
+        .service
+        .handle(&input(215, 0, "/workspaces"))
+        .await
+        .unwrap();
+    let menu = fixture
+        .outputs()
+        .await
+        .into_iter()
+        .find(|b| b.text.starts_with("管理 ·"))
+        .unwrap();
+    assert_eq!(
+        menu.buttons.iter().map(Vec::len).collect::<Vec<_>>(),
+        vec![2, 1]
+    );
+    fixture
+        .service
+        .handle(&input(216, 9, "/sessions workspace"))
+        .await
+        .unwrap();
+    let menu = fixture
+        .outputs()
+        .await
+        .into_iter()
+        .find(|b| b.text.contains("选择已有会话"))
+        .unwrap();
+    assert_eq!(
+        menu.buttons.len(),
+        2,
+        "one real session and one back button, with no padded rows"
+    );
+    assert!(
+        menu.buttons
+            .iter()
+            .all(|row| !row.is_empty() && row.iter().all(|b| !b.label.trim().is_empty()))
+    );
+}
+
+#[tokio::test]
+async fn picker_hides_only_sessions_proven_to_be_local_operator_probes() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    let id = store
+        .reserve_operation("probe:fixture:create", "instance", "__new")
+        .await
+        .unwrap();
+    store
+        .transition(
+            &id,
+            session::operation::OperationState::Received,
+            session::operation::OperationState::Prepared,
+        )
+        .await
+        .unwrap();
+    store
+        .transition(
+            &id,
+            session::operation::OperationState::Prepared,
+            session::operation::OperationState::Dispatching,
+        )
+        .await
+        .unwrap();
+    store
+        .accept_receipt(
+            &id,
+            &Receipt {
+                thread: "thread".into(),
+                turn: None,
+            },
+        )
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(220, 0, "/sessions workspace"))
+        .await
+        .unwrap();
+    let menu = fixture
+        .outputs()
+        .await
+        .into_iter()
+        .find(|b| b.text.contains("选择已有会话"))
+        .unwrap();
+    assert_eq!(
+        menu.buttons.len(),
+        1,
+        "dedicated probe leaked into session buttons"
+    );
+    assert_eq!(menu.buttons[0][0].label, "返回工作区");
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .any(|r| matches!(*r, "thread/resume" | "turn/start" | "turn/steer"))
+    );
+}
+
+#[tokio::test]
+async fn old_queued_title_updates_and_stale_keyboards_are_not_replayed_after_restart() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    let mut status = Outbound::text("old status");
+    status.topic_title = Some("old state in title".into());
+    store.enqueue_status(&binding, &status).await.unwrap();
+    let mut menu = Outbound::text("stale menu");
+    menu.buttons = vec![vec![telegram::api::Button {
+        label: "stale".into(),
+        data: "stale".into(),
+    }]];
+    store.enqueue(1, 10, 0, "stale menu", &menu).await.unwrap();
+    store.recover_inbox(1).await.unwrap();
+    let pending = store.pending_deliveries(1, now()).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    let body: Outbound = serde_json::from_str(&pending[0].payload).unwrap();
+    assert!(body.topic_title.is_none());
+    assert_eq!(body.text, "old status");
+}
+
+#[tokio::test]
+async fn a_management_creation_with_a_lost_reply_is_not_retried_or_bound_to_an_agent() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture.telegram.reset().await;
+    Mock::given(method("POST"))
+        .and(path_regex("(?i).*/createforumtopic$"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("incompatible fixture response"))
+        .expect(1)
+        .mount(&fixture.telegram)
+        .await;
+    assert!(
+        fixture
+            .service
+            .handle(&input(230, 0, "/start"))
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        fixture.service.handle(&input(231, 0, "/start")).await,
+        Err(Error::Unknown)
+    ));
+    assert!(
+        fixture
+            .service
+            .store
+            .management_topic(1, 10)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(fixture.service.store.bindings(1).await.unwrap().is_empty());
+    assert!(fixture.state.lock().await.requests.is_empty());
 }
 
 #[tokio::test]
@@ -798,7 +1237,7 @@ async fn private_pairing_topic_history_and_steer_form_a_durable_workflow() {
         .unwrap()
         .data
         .clone();
-    let mut click = input(4, 0, "");
+    let mut click = input(4, 9, "");
     click.callback = Some(button);
     fixture.service.handle(&click).await.unwrap();
     assert!(
@@ -916,7 +1355,7 @@ async fn new_session_requires_confirmation_and_an_unloaded_session_resumes_only_
             .requests
             .contains(&"thread/start")
     );
-    let mut click = input(2, 0, "");
+    let mut click = input(2, 9, "");
     click.callback = Some(
         fixture.outputs().await.last().unwrap().buttons[0][0]
             .data

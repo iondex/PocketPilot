@@ -67,6 +67,7 @@ pub struct Identity {
     pub username: Option<String>,
     pub webhook_enabled: bool,
     pub topics_enabled: bool,
+    pub user_topic_creation_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +111,7 @@ impl Inspector {
             username: me.username,
             webhook_enabled: hook.url.is_some(),
             topics_enabled: me.has_topics_enabled,
+            user_topic_creation_enabled: me.allows_users_to_create_topics,
         })
     }
 }

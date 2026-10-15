@@ -299,6 +299,43 @@ pub async fn list_workspace(
     Ok(session::Page { data, next_cursor })
 }
 
+/// Hide only dedicated probes proven by this bridge's durable create receipts.
+/// Never infer a test session from its title or mutate/archive it remotely.
+pub async fn list_picker(
+    store: &crate::storage::Store,
+    provider: &dyn AgentProvider,
+    workspace: &Workspace,
+    mut cursor: Option<String>,
+    limit: u32,
+) -> Result<session::Page<session::Session>, session::ProviderError> {
+    let hidden = store
+        .probe_threads(&workspace.provider_id)
+        .await
+        .map_err(|_| session::ProviderError::Disconnected)?;
+    let mut data = Vec::new();
+    let limit = limit.clamp(1, 100) as usize;
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        if !seen.insert(cursor.clone()) {
+            return Err(session::ProviderError::Incompatible);
+        }
+        let page = list_workspace(provider, workspace, cursor, (limit - data.len()) as u32).await?;
+        data.extend(
+            page.data
+                .into_iter()
+                .filter(|s| !hidden.contains(&s.reference.thread)),
+        );
+        cursor = page.next_cursor;
+        if data.len() >= limit || cursor.is_none() {
+            break;
+        }
+    }
+    Ok(session::Page {
+        data,
+        next_cursor: cursor,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
