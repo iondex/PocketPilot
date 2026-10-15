@@ -1,4 +1,4 @@
-# 03 · Telegram 交互设计
+# Telegram 交互设计
 
 ## 1. 信息结构
 
@@ -100,7 +100,7 @@ Codex 当前没有原子 loaded-only resume，所以进入、绑定和重连使�
 
 绑定是外部资源 saga：先预留 operation/唯一键，创建未绑定 topic，保存返回 ID，再只读验证 session，成功后建立 binding。失败时 topic 显示“尚未连接”，用户可重试**已知未执行步骤**或清理空 topic；不删除/归档 Codex thread。某步超时未知时暂停核对，不再自动创建第二个 topic。
 
-新绑定空闲会话显示最后用户输入和对应 agent 最终输出，忽略中间说明；进入活跃会话时，全部可读历史合成一个集合。短集合一条纯文本，超长用一条完整 Markdown 附件，不逐条刷历史。真正新 thread 无历史时明确提示。最终输出识别、当前轮无 final 和分页快照边界见 [08](08-history-and-delivery.md)。
+新绑定空闲会话显示最后用户输入和对应 agent 最终输出，忽略中间说明；进入活跃会话时，全部可读历史合成一个集合。短集合一条纯文本，超长用一条完整 Markdown 附件，不逐条刷历史。真正新 thread 无历史时明确提示。最终输出识别、当前轮无 final 和分页快照边界见 [历史与投递](history-and-delivery.md)。
 
 ## 6. 新建会话
 
@@ -217,7 +217,7 @@ topic 标题：工作区短名 + 清理空白后的原名称/本地 alias + 会�
 
 Telegram 原输入与 provider 返回的 userMessage 通过 clientId/operation 关联，只做送达确认；其他客户端的用户输入标“Codex 用户（其他客户端）”。不靠文本字符串相同推断来自 Telegram，不把 bot message 送回 provider。
 
-默认纯文本，避免 MarkdownV2 转义错误。短时同 session 文本按配置窗口和阈值合并，保留 role/阶段边界；默认 2 秒窗口、3 条阈值、最长等待 5 秒。历史集合和合并结果超长时用一条完整 Markdown 附件，不能截断或只发摘要。精确分片是用户显式选择的备用方式，详见 [08](08-history-and-delivery.md)。
+默认纯文本，避免 MarkdownV2 转义错误。短时同 session 文本按配置窗口和阈值合并，保留 role/阶段边界；默认 2 秒窗口、3 条阈值、最长等待 5 秒。历史集合和合并结果超长时用一条完整 Markdown 附件，不能截断或只发摘要。精确分片是用户显式选择的备用方式，详见 [历史与投递](history-and-delivery.md)。
 
 Telegram 官方建议限制包括每 chat 约每秒 1 条、群每分钟 20 条、总体约每秒 30 条。**同一 supergroup 的不同 topics 共享群级预算**。采用 per-bot + per-chat 限速，初值保守为群每分钟 18 条，真实 429 按 retry_after；编辑与发送、标题/状态更新也进入受控调度，不假定编辑无限额。
 

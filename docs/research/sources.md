@@ -1,4 +1,4 @@
-# 05 · 资料与研究记录
+# 资料与研究记录
 
 调研日期：2026-10-15（Asia/Shanghai）。链接可能更新；涉及具体源码行为的结论以固定 commit 为准。
 
@@ -45,7 +45,7 @@ Telegram 文档也描述支持 topic 的私聊能力；MVP 选择 forum supergro
 - [teloxide](https://docs.rs/teloxide/latest/teloxide/)：Telegram API、long polling、命令、框架与 feature；不假设框架自动满足持久化 inbox。
 - [openssh](https://docs.rs/openssh/latest/openssh/)：Unix-only、OpenSSH 配置复用、ControlMaster、认证限制、远程 shell 转义与错误不确定性。
 - [sqlx](https://docs.rs/sqlx/latest/sqlx/)：数据库访问与 SQLite 支持参考。
-- [crates.io API](https://crates.io/data-access)：逐项读取 `GET /api/v1/crates/{name}` 的版本、downloads、recent_downloads 和更新时间；查询结果见 [crates-snapshot.json](research/crates-snapshot.json)。该文件不是经过编译验证的 lockfile。
+- [crates.io API](https://crates.io/data-access)：逐项读取 `GET /api/v1/crates/{name}` 的版本、downloads、recent_downloads 和更新时间；查询结果见 [crates-snapshot.json](crates-snapshot.json)。该文件不是经过编译验证的 lockfile。
 
 研究使用 agent-reach 路由中的 Exa 搜索、GitHub CLI 和通用网页读取方式。环境有 Exa/mcporter 和 gh，但没有 agent-reach 主命令，所以 doctor/check-update 不可执行；没有因此假装做过环境体检或版本更新检查。没有安装或更新技能依赖。
 
@@ -60,7 +60,7 @@ Telegram 文档也描述支持 topic 的私聊能力；MVP 选择 forum supergro
 7. 使用 GitHub API 固定上游 commit 并读取源码。
 8. 获取 Telegram/Discord/库文档和 crates.io 元数据。
 
-匿名机器可读记录：[protocol-observations.json](research/protocol-observations.json)。仅保留版本、schema 字段/方法与 hash，未提交原始生成 bundle（避免大体积、许可证和版本噪声；实施时生成/筛选受测 fixtures）。
+匿名机器可读记录：[protocol-observations.json](protocol-observations.json)。仅保留版本、schema 字段/方法与 hash，未提交原始生成 bundle（避免大体积、许可证和版本噪声；实施时生成/筛选受测 fixtures）。
 
 复现实测字段差异的命令：
 
@@ -82,11 +82,11 @@ codex app-server generate-json-schema --out /tmp/pocketpilot-schema
 - 没有完成三端同实例、断线不取消、跨端审批和历史补偿的行为验收。
 - 没有为 Claude 宣称具体支持能力。
 
-上述事项被转化为 [实施计划](04-mvp-plan.md) 中的 P0 门禁和验收矩阵。设计完成不等于这些行为已经被证明。
+上述事项被转化为 [实施计划](../planning/implementation.md) 中的 P0 门禁和验收矩阵。设计完成不等于这些行为已经被证明。
 
 ## 7. 补充需求的资料与静态核对
 
-新增资料对应 06–08 文档；机器可读的固定版本/审阅范围见 [revision-observations.json](research/revision-observations.json)。
+新增资料对应部署配置、历史投递与后续扩展设计；机器可读的固定版本/审阅范围见 [revision-observations.json](revision-observations.json)。
 
 ### Codex 与 SSH 配置
 

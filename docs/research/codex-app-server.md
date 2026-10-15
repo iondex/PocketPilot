@@ -1,8 +1,8 @@
-# 01 · 探索结论与可行性边界
+# 探索结论与可行性边界
 
 日期：2026-10-15。本文把「官方协议支持」「本机静态验证」「源码行为」「尚待实际验证」分开。研究范围是 Rust 实现的 Telegram + Codex MVP，不在本阶段实现机器人。
 
-修订部署前提：本机已有管理本地和 SSH 任务的 Codex 体系，PocketPilot 默认本机启动；它聚合允许实例，不假定一个本地 RPC endpoint 代理所有远程任务。SSH 的 desktop/CLI/PocketPilot 应连相同远端 daemon。详见 [部署与生命周期契约](06-deployment-config-ssh.md)。
+修订部署前提：本机已有管理本地和 SSH 任务的 Codex 体系，PocketPilot 默认本机启动；它聚合允许实例，不假定一个本地 RPC endpoint 代理所有远程任务。SSH 的 desktop/CLI/PocketPilot 应连相同远端 daemon。详见 [部署与生命周期契约](../design/connections-and-config.md)。
 
 ## 1. 结论
 
@@ -59,7 +59,7 @@
 | `thread/turns/list`、`thread/items/list` | 未暴露 | 有 |
 | 通用 `project/list`、`workspace/list` | 未发现 | 未发现 |
 
-因此示例中的新字段不能无条件发送给所有版本。官网页面也不能当成某个本机二进制的契约。完整字段名和 schema SHA-256 见 [protocol-observations.json](research/protocol-observations.json)。
+因此示例中的新字段不能无条件发送给所有版本。官网页面也不能当成某个本机二进制的契约。完整字段名和 schema SHA-256 见 [protocol-observations.json](protocol-observations.json)。
 
 MVP 只支持实施时最新、通过验收的 Codex profile，不做旧版 legacy history 兼容。用户允许必要的 CLI 升级；升级和服务切换是维护步骤，PocketPilot 不在自身生命周期中自动重启活跃 daemon。
 
@@ -125,7 +125,7 @@ ssh -T \
 
 若只有已存在 WebSocket，可用 OpenSSH `-L` 转发到远程 loopback；监听绑定本地 loopback，验证转发是否成功。纯 WebSocket 不通过公网明文暴露。SSH 复用现有 ssh_config、known_hosts、密钥与 ProxyJump，默认不启用 agent forwarding。
 
-配置 TOTP seed 的 keyboard-interactive profile 使用 russh 原生认证回调 + totp-rs，分别设置 connect/auth/proxy/RPC 超时；不使用 BatchMode 命令伪称支持 OTP。详见 [SSH 与 OTP](06-deployment-config-ssh.md)。
+配置 TOTP seed 的 keyboard-interactive profile 使用 russh 原生认证回调 + totp-rs，分别设置 connect/auth/proxy/RPC 超时；不使用 BatchMode 命令伪称支持 OTP。详见 [SSH 与 OTP](../design/connections-and-config.md)。
 
 ## 5. 会话共享、订阅与“不影响状态”的精确定义
 
@@ -188,7 +188,7 @@ ssh -T \
 
 服务端 request 仍须解析和关联 epoch，不能发通用错误导致服务取消。PocketPilot 不接管动态工具宿主。若附加连接会抢占原端审批路由、未回应/断线会自动取消，当前组合不符合生命周期约束，必须使用只读观察或限制控制，不能靠自动答复解决。
 
-普通文本仍可作为用户续轮/steer 输入，但不会冒充特定 RPC request 的答案。历史入口、最后用户输入/最终输出与单条集合规则见 [08](08-history-and-delivery.md)。
+普通文本仍可作为用户续轮/steer 输入，但不会冒充特定 RPC request 的答案。历史入口、最后用户输入/最终输出与单条集合规则见 [历史与投递](../design/history-and-delivery.md)。
 
 ## 9. 备选方案取舍
 

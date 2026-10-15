@@ -1,4 +1,4 @@
-# 07 · Lark 与 Claude 兼容 shim 规划
+# Lark 与 Claude 兼容 shim 规划
 
 两者均为后续阶段，本轮只做规划。Telegram + 原生 Codex 仍是首版重点；设计保持 Rust 核心与平台/provider 的独立边界。
 
@@ -48,7 +48,7 @@ PlatformAddress 增加 `Lark { region, tenant_id, chat_id, thread_id, root_messa
 
 ## 4. Lark 阶段验收
 
-先在自建应用测试租户验证：群内非 @ 文本能否接收、thread_id/root 路由、状态卡更新、文件历史集合、卡片回调、权限撤销、token 轮换、断网恢复、重复事件和限速。消息合并复用 [08 的批次设计](08-history-and-delivery.md)，不改变 Codex 控制白名单。
+先在自建应用测试租户验证：群内非 @ 文本能否接收、thread_id/root 路由、状态卡更新、文件历史集合、卡片回调、权限撤销、token 轮换、断网恢复、重复事件和限速。消息合并复用 [消息批次设计](../design/history-and-delivery.md)，不改变 Codex 控制白名单。
 
 可行性是平台能力判断，尚未创建 Lark 应用、读取租户消息、运行 Rust adapter 或进行真实回调验收。
 

@@ -1,0 +1,85 @@
+# 配置 schema 草案；当前仓库尚无运行程序。
+# 文件路径以本配置文件所在目录为基准。仅变量名，不包含真实令牌。
+include = []
+
+[service]
+data_dir = "../var/data"
+
+[logging]
+format = "json"
+filter = "info,app=debug,codex=info,telegram=info,session=info"
+directory = "../var/logs"
+
+[telegram]
+# 这些 ID 是示例，必须替换为实际允许的群和用户。
+allowed_chat_ids = [-1001234567890]
+allowed_user_ids = [123456789]
+control_topic_id = 100
+
+[telegram.credentials]
+kind = "dotenv"
+path = "../.env"
+key = "TELEGRAM_BOT_TOKEN"
+
+[[hosts]]
+id = "00000000-0000-4000-8000-000000000001"
+name = "开发机"
+transport = "ssh_proxy"
+backend = "auto"
+ssh_alias = "pilot-dev"
+codex_bin = "/absolute/path/to/codex"
+codex_control_socket = "/absolute/path/to/app-server-control.sock"
+allowed_workspace_roots = ["/srv/code"]
+
+[hosts.timeouts]
+connect_seconds = 90
+authenticate_seconds = 120
+proxy_ready_seconds = 120
+rpc_read_seconds = 60
+rpc_write_receipt_seconds = 60
+keepalive_seconds = 30
+keepalive_missed = 6
+reconnect_initial_seconds = 2
+reconnect_max_seconds = 120
+
+[hosts.authentication]
+max_attempts = 2
+# 普通认证继承 SSH config；需要 OTP 时仅在私有配置中启用下段并填 seed。
+# [hosts.authentication.totp]
+# secret_base32 = "REPLACE_IN_PRIVATE_CONFIG"
+# algorithm = "SHA1"
+# digits = 6
+# period_seconds = 30
+# minimum_remaining_seconds = 5
+# prompt_patterns = ['(?i)^verification code:\s*$', '(?i)^otp:\s*$']
+# password_prompt_patterns = ['(?i)^password:\s*$']
+
+[[providers]]
+id = "00000000-0000-4000-8000-000000000002"
+host_id = "00000000-0000-4000-8000-000000000001"
+kind = "codex"
+connection_mode = "existing_proxy"
+compatibility_profile = "latest-tested-codex"
+
+[[workspaces]]
+id = "00000000-0000-4000-8000-000000000003"
+provider_id = "00000000-0000-4000-8000-000000000002"
+name = "PocketPilot"
+short_name = "PP"
+cwd = "/srv/code/PocketPilot"
+additional_cwds = []
+
+[config_reload]
+enabled = true
+debounce_ms = 500
+periodic_rescan_seconds = 30
+
+[delivery]
+burst_window_ms = 2000
+burst_threshold = 3
+max_flush_delay_ms = 5000
+history_barrier_timeout_seconds = 60
+telegram_group_messages_per_minute = 18
+history_active = "full_bundle"
+history_idle = "last_user_and_final"
+overflow = "single_document"

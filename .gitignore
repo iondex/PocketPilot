@@ -9,4 +9,5 @@
 *.db-shm
 *.db-wal
 /logs/
+/var/
 /.DS_Store

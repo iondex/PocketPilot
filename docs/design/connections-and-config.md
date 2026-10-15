@@ -1,6 +1,6 @@
-# 06 · 部署、配置热更新与 SSH / OTP
+# 部署、配置热更新与 SSH / OTP
 
-本次补充把本机运行作为默认部署方式，并将所有设置收敛到配置文件。本文与修订后的 01–04 一起构成当前设计；旧研究快照只代表当时观察，不能作为必须兼容旧 CLI 的要求。
+本文定义本机/SSH 部署、普通配置与显式凭据源。接口见 [架构](architecture.md)，执行顺序见 [实施计划](../planning/implementation.md)；研究快照仅记录当时观察。
 
 ## 1. 本机控制入口与远程运行身份
 
@@ -34,106 +34,29 @@ MVP 以实施时最新、通过测试的 Codex 版本为唯一基线，不投入
 
 ## 3. 所有设置来自 config
 
-采用 `pocketpilot.toml`，支持显式 `include` 的 TOML 文件；不加载 `.env`，不要求 `token_env`、RUST_LOG 或其他业务环境变量。CLI 只选择 config 路径，不另造一套配置覆盖优先级。Codex/Claude 本身已有的登录配置不由 PocketPilot 复制或改写。
+采用 `pocketpilot.toml` 管理普通设置，支持显式 include 的 TOML。CLI 只选择 config 路径，不通过环境变量覆盖 host/workspace、权限、速率或日志设置。Codex/Claude 已有的登录配置不由 PocketPilot 复制或改写。
 
-可将秘密直接写入主 config，也可放入受权限控制的 `secrets.toml` 后 include，二者都是配置文件。TOTP secret 与 bot token 用 secrecy 类型持有，文件要求仅当前用户可读，日志和错误不得输出值。仓库只提交不含有效凭据的 example。
+用户现有仓库根目录 .env 已含 TELEGRAM_BOT_TOKEN；本次只验证了键名、非空和 token 格式，没有打印值或联网验证。它是 bot token，不是群 ID、用户 ID 或数值 bot ID。bot ID 在实施阶段通过只读 getMe 确认；允许的 chat/user/topic ID 仍在 TOML 配置。
+
+为沿用已有凭据，允许 config 显式指定 Telegram secret source：`kind=dotenv`、path、key。只读取所选 key，不执行 shell、不导入整份文件到进程环境、不自动搜索当前目录，也不让 .env 中其他设置覆盖 TOML。路径相对声明该字段的配置文件解析；public example 位于 config/，故使用 ../.env。后续也支持 `kind=inline` 的私有 TOML token；两种来源互斥，不隐式 fallback 到宿主环境。
+
+实现使用 dotenvy 的只读解析接口，取值后立即封装为 secrecy 类型；不调用会修改全局环境的 dotenv 加载函数。token 必须为直接字面值，拒绝 $VAR/${VAR} 展开，避免凭据来自未声明环境。缺文件、缺 key、重复 key、空值、非法格式时 Telegram adapter 不进入 Ready，错误只含类别和 key 名，不含值或原始解析行。有效 token 仍需 getMe 确认账号，不能从字符串格式宣告认证成功。
+
+除 Telegram 的显式凭据源外，TOTP seed/密码可放私有 TOML include；所有秘密文件权限受控并被 Git 忽略。读取 token 的路径不出现在公开状态卡，ConfigWriter 不写秘密文件、不复制令牌进入 SQLite/公开示例。凭据文件纳入显式 watcher，token 轮换只重建 Telegram 客户端，不影响 Codex；重新验证 bot 身份，身份变化要求新 bot_instance 命名空间，不沿用旧 polling offset。
+
+同一 getMe.id 的 token 轮换保留 bot_instance 和既有绑定，旧 poller 完成已落盘交接后再启新 poller，避免同账号双消费者。getMe.id 改变则冻结旧账号 inbox 待处理操作、outbox、nonce、provisioning 与状态卡引用，标 suspended_account_change；新账号重新核验群/用户/权限，不自动执行旧输入或投递旧积压。重新绑定原 session 时需明确确认并建立新账号的投递上下文和状态卡，不能尝试编辑旧 bot 的消息。远端 session 不因此变化。
 
 配置是 hosts、workspaces、允许用户、平台账号、速率和 SSH 策略的唯一权威。SQLite 保留绑定、投递、操作结果和 config 派生索引，不作为另一份可独立修改的授权源。
 
 Telegram 的“添加工作区”和本地 `workspace add` 通过统一 ConfigWriter 更新配置，再走同一热更新流程；不能只写 DB。ConfigWriter 只改非秘密的 workspace 段，验证允许根路径与 user 权限，使用配置 revision 比较、文件锁、同目录临时文件 + 原子 rename，保留文件权限；并发编辑冲突时拒绝覆盖。管理员手工编辑仍受支持。配置中的 host 不能由聊天输入任意 shell 命令创建。
 
-示例仅是设计草案，不代表程序已实现：
+完整且唯一维护的公开 schema 草案见 [配置示例](../../config/pocketpilot.example.toml)。它只引用 TELEGRAM_BOT_TOKEN 键名，不含真实凭据；示例 host、socket、chat/user/topic ID 必须按部署填写。
 
-```toml
-include = ["./secrets.toml"]
-
-[service]
-data_dir = "/absolute/path/to/pocketpilot-data"
-
-[logging]
-format = "json"
-filter = "info,pocketpilot=debug"
-directory = "/absolute/path/to/pocketpilot-logs"
-
-[telegram]
-token = "EXAMPLE_ONLY_REPLACE_IN_PRIVATE_CONFIG"
-allowed_chat_ids = [-1001234567890]
-allowed_user_ids = [123456789]
-control_topic_id = 100
-
-[[hosts]]
-id = "00000000-0000-4000-8000-000000000001"
-name = "慢速开发机"
-transport = "ssh_proxy"
-backend = "auto"
-ssh_alias = "pilot-dev"
-codex_bin = "/absolute/path/to/codex"
-codex_control_socket = "/absolute/path/to/app-server-control.sock"
-allowed_workspace_roots = ["/srv/code"]
-
-[hosts.timeouts]
-connect_seconds = 90
-authenticate_seconds = 120
-proxy_ready_seconds = 120
-rpc_read_seconds = 60
-rpc_write_receipt_seconds = 60
-keepalive_seconds = 30
-keepalive_missed = 6
-reconnect_initial_seconds = 2
-reconnect_max_seconds = 120
-
-[hosts.authentication]
-methods = ["public_key", "keyboard_interactive"]
-private_key_passphrase = "EXAMPLE_ONLY"
-password = "EXAMPLE_ONLY_IF_REQUIRED"
-max_attempts = 2
-
-[hosts.authentication.totp]
-secret_base32 = "EXAMPLE_ONLY_NOT_A_VALID_SECRET"
-algorithm = "SHA1"
-digits = 6
-period_seconds = 30
-minimum_remaining_seconds = 5
-prompt_patterns = ['(?i)^verification code:\s*$', '(?i)^otp:\s*$']
-password_prompt_patterns = ['(?i)^password:\s*$']
-
-[[providers]]
-id = "00000000-0000-4000-8000-000000000002"
-host_id = "00000000-0000-4000-8000-000000000001"
-kind = "codex"
-connection_mode = "existing_proxy"
-compatibility_profile = "latest-tested-codex"
-
-[[workspaces]]
-id = "00000000-0000-4000-8000-000000000003"
-provider_id = "00000000-0000-4000-8000-000000000002"
-name = "PocketPilot"
-short_name = "PP"
-cwd = "/srv/code/PocketPilot"
-additional_cwds = []
-
-[config_reload]
-enabled = true
-debounce_ms = 500
-periodic_rescan_seconds = 30
-
-[delivery]
-burst_window_ms = 2000
-burst_threshold = 3
-max_flush_delay_ms = 5000
-telegram_group_messages_per_minute = 18
-history_active = "full_bundle"
-history_idle = "last_user_and_final"
-overflow = "single_document"
-```
-
-示例的秘密只为表达字段，不会通过解析校验。methods 是认证策略候选与顺序，最终要遵循服务器 remaining_methods/partial_success；不能认为列出两项就必然需要两项。
-
-实际配置推荐只写 ssh_alias，继承本机 SSH config 的 hostname/user/port/identityfile/known_hosts；不重复维护。backend=auto 在本例因为配置了 TOTP 而选择 russh。所有设置来自配置文件也包括用户已有的 ~/.ssh/config，OTP seed 仍由 PocketPilot TOML 明确提供。prompt pattern 使用 TOML 单引号 literal string，正则空白符只写一个反斜杠的 \s，不再额外转义。
+SSH 只写 ssh_alias，继承本机 SSH config 的有效 hostname/user/port/identityfile/known_hosts；backend=auto，配置 TOTP 后选择 russh。prompt pattern 用 TOML 单引号 literal string，正则空白符只写一个反斜杠，不额外转义。方法候选顺序仍须遵循服务器 remaining_methods/partial_success。
 
 ## 4. 配置热更新
 
-`notify` 监听主文件、include 文件、SSH config 及其 Include 文件和父目录的原子替换事件；debounce 后解析完整文件集合，周期 rescan 修复丢失事件。`arc-swap` 原子替换已验证的 immutable ConfigSnapshot，每个操作捕获 config_generation。include 循环、ID 冲突、缺失引用、非法路径/速率/OTP 配置均拒绝整份候选，继续使用最后有效配置。
+`notify` 监听主文件、include 文件、显式 Telegram 凭据文件、SSH config 及其 Include 文件和父目录的原子替换事件；debounce 后解析完整文件集合，周期 rescan 修复丢失事件。`arc-swap` 原子替换已验证的 immutable ConfigSnapshot，每个操作捕获 config_generation。include 循环、ID 冲突、缺失引用、非法路径/速率/OTP 配置均拒绝整份候选，继续使用最后有效配置。
 
 两阶段：先完整解析/静态验证/建立变更计划，再原子提交配置与授权快照；外部 SSH 建连失败只让该 host degraded，不撤销已经生效的授权撤销，也不影响其他 host。
 

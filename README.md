@@ -1,41 +1,30 @@
 # PocketPilot
 
-通过 Telegram 管理并继续 Codex 会话的 Rust 项目。默认在本机运行，聚合本地及配置允许的 SSH 实例；优先支持 Telegram forum topic + 最新 Codex app server，后续支持 Lark、Discord 与 Claude shim。
+Rust 实现的 Codex 会话桥接器：默认在本机运行，通过 Telegram topic 查看、创建和继续本地/SSH 会话，运行中支持 steer。后续规划 Lark、Discord 和 Claude shim。
 
-当前阶段：**探索与设计，尚未实现可运行的机器人**。调研日期：2026-10-15。
+**当前仅有设计和实施计划，尚无可运行程序。** 既有 `.env` 已提供 `TELEGRAM_BOT_TOKEN`，仅核对格式，未联网认证或操作真实 session。
 
-核心要求是接入同一个正在运行的 Codex 实例：Telegram 可以查看消息、状态和发送 steer，但不能中断任务、重启服务、修改现有会话的配置或通过 fork 替代原会话。
+## 从这里开始
 
-## 文档
+- [文档目录与阅读路线](docs/README.md)
+- [细化实施计划](docs/planning/implementation.md)
+- [48 项验收场景](docs/planning/acceptance.md)
+- [不含秘密的配置示例](config/pocketpilot.example.toml)
 
-建议按以下顺序阅读：
+## 当前约定
 
-1. [探索结论与可行性边界](docs/01-exploration.md)：官方协议、本机版本差异、共享会话与 SSH 接入的证据。
-2. [架构、Rust 接口与数据设计](docs/02-architecture.md)：领域模型、模块边界、持久化、并发与恢复。
-3. [Telegram 交互设计](docs/03-telegram-ux.md)：添加工作区、绑定/新建会话、topic、状态、消息和异常交互。
-4. [MVP 实施与验收计划](docs/04-mvp-plan.md)：依赖选型、目录结构、配置、实现顺序、运行与验收矩阵。
-5. [资料与研究记录](docs/05-sources.md)：官方资料、固定源码版本、实际验证与未验证事项。
-6. [部署、配置热更新与 SSH / OTP](docs/06-deployment-config-ssh.md)：本机/远程共享实例、纯 config、慢服务器、TOTP 和生命周期隔离。
-7. [Lark 与 Claude shim 规划](docs/07-future-adapters.md)：平台可行性、兼容子集、远端常驻与能力边界。
-8. [历史集合与消息合并](docs/08-history-and-delivery.md)：最后输入/最终输出、活跃会话完整历史、单消息附件与防刷屏。
-
-## 关键决策
-
-| 问题 | 决策 |
+| 范围 | 决策 |
 | --- | --- |
-| 自动列出所有工作区 | MVP 手动登记；由 thread 的 cwd 提供候选，不能宣称完整枚举桌面项目 |
-| 每个工作区的会话 | app-server `thread/list` 分页；显式区分原始 cwd、项目归属和 worktree |
-| 同时使用桌面、CLI、Telegram | 同一 app-server 实例是前提；共享历史目录不足以证明共享运行状态 |
-| 本地/远程连接 | 优先已有 endpoint；OpenSSH 普通认证、russh + TOTP 交互认证；共同连接远端已有 daemon |
-| 正在运行的会话 | 获取真实 active turn ID 后调用 `turn/steer`，带 `expectedTurnId` |
-| 停止会话 | 不提供；协议发送器使用方法白名单，生命周期操作也受限制 |
-| 消息转发 | 转发 user/agent 的可见文本，包括中间说明；过滤工具调用及其输出、推理内容 |
-| 一次发送结果未知 | 进入待核对状态，不自动重复执行；不能承诺端到端 exactly-once |
-| Telegram 组织 | 一个私有 forum supergroup；一个控制 topic；每个绑定会话一个 topic |
-| 扩展 | AgentProvider、ChatPlatform、RpcTransport 三条独立接口边界 |
-| 配置 | 全部配置文件管理：TOML + 既有 SSH config，可包含秘密；不使用 .env；host/workspace 和授权原子热更新 |
-| 生命周期 | 启停/崩溃/reload/重连不写 session；不自动 resume，不回复审批，不 unsubscribe |
-| 进入历史 | 空闲显示最后输入/对应最终输出；活跃显示全部可读历史的单条集合，超长用一条附件 |
-| 防刷屏 | 短时窗口/阈值合并同会话输出，保留正文；叠加平台限速 |
+| crate 名称 | `session`、`codex`、`telegram`、`app`；binary 仍叫 `pocketpilot` |
+| 首版 | 最新受测 Codex + Telegram；本地和配置允许的 SSH 实例 |
+| 会话共享 | desktop、CLI、桥接器连接同一执行实例；相同历史目录不足以证明共享 |
+| 允许动作 | 创建、用户明确续轮、steer、只读查看；审批由原端处理 |
+| 生命周期 | 程序启停、崩溃、reload、重连不自动 resume/start/unsubscribe 或停止 agent |
+| 配置 | 普通设置 TOML，继承本机 SSH config；Telegram 明确引用既有 .env token，不用环境变量覆盖普通配置 |
+| SSH | 读取 Host/Include，按 OpenSSH 有效配置连接；TOTP 使用 russh + totp-rs |
+| 热更新 | host/workspace/授权可更新，排队操作再次授权；不改变已运行任务 |
+| 历史 | 空闲显示最后输入/对应 final；活跃会话全历史一个集合，超限一条附件 |
+| 输出 | 保留可见文本、过滤工具/推理，短时合并同会话消息并统一限速 |
+| 不确定结果 | 远程写入或平台投递未知时核对，不盲目重复执行 |
 
-目前没有把真实会话接入、发送提示词、改变审批策略、启动/停止 Codex daemon，或创建 Telegram/Discord 资源。详细限制和实施前置验证见文档。
+真实 token、OTP seed、用户配置、数据库和日志不提交。当前可行性证据与尚待验证事项见 [研究记录](docs/research/sources.md)。

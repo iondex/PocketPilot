@@ -1,4 +1,4 @@
-# 02 · 架构、Rust 接口与数据设计
+# 架构、Rust 接口与数据设计
 
 状态：建议实施的设计契约，非已实现代码。接口示例用于约束责任；命名和少量类型可在实施时调整，但生命周期与安全约束不能弱化。
 
@@ -50,6 +50,8 @@ flowchart TB
 | TextItem | session + turn + item ID + role/phase + 可见文本 + 完成标记 |
 | Operation | 用户一次操作的持久化 ID、输入地址、执行模式、结果与不确定性 |
 | PendingRequest | agent 发来的审批/输入请求；仅观察，由 desktop/CLI 原端处理 |
+
+Telegram 平台资源增加 BotInstanceId（由 getMe.id 确认账号，不用 token 字符串作身份）。bindings、inbox/offset、operations 的来源、deliveries/outbox、ui_actions 和 provisioning 均带账号 namespace；同 bot token 轮换保留资源，更换 bot 冻结旧资源并显式重新绑定、创建新状态卡。容器不能跨 thread 复用的约束仍跨账号迁移保持。细节见 [凭据与配置](connections-and-config.md)。
 
 同一远程 thread 在不同 host/provider 中可同名；ID 不跨实例合并。instance 的 runtime ownership 需要受测连接 profile 和安装记录验证。initialize 不提供通用、可靠的进程身份认证；不能靠响应版本字符串证明两连接属于同一进程。
 
@@ -156,7 +158,7 @@ pub trait ChatPlatform: Send + Sync {
 
 Inbound 由 adapter 自己接收，再转成统一的 `UserCommand` envelope；它包含用户、平台地址、稳定外部 update/message ID、平台发送时间、本地接收时间、绑定修订号、接收时的连接 epoch。平台接口不暴露 provider 的 wire JSON。Topic 与 Discord channel 都是 session container，但 Telegram 控制菜单、Discord category 是 adapter 的表现细节。
 
-消息长度、可编辑/固定能力、按钮限制在 PlatformCapabilities；core 传可见文本/结构化状态，adapter 分片和渲染。未来不能为 Discord 把 Telegram message_thread_id 强行映射成通用整数。
+消息长度、可编辑/固定能力、按钮限制在 PlatformCapabilities；session crate 传可见文本/结构化状态，adapter 分片和渲染。未来不能为 Discord 把 Telegram message_thread_id 强行映射成通用整数。
 
 ### 3.4 RpcTransport
 
@@ -203,7 +205,7 @@ Freshness 保存 observed_at 和连接 epoch。推荐新鲜状态窗口 15 秒�
 
 ## 6. 持久化
 
-SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署。迁移由 sqlx 管理；数据只存 PocketPilot 目录，不修改 Codex DB/rollout。TOML 是全部设置、host/workspace 和授权的权威；DB 管派生注册索引、绑定与投递，不能另存独立授权。配置 ID 是稳定 UUID。新增 ConfigSnapshot/ConfigWriter、notify + arc-swap 热更新及原子授权检查见 [06](06-deployment-config-ssh.md)。
+SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署。迁移由 sqlx 管理；数据只存 PocketPilot 目录，不修改 Codex DB/rollout。TOML 是普通设置、host/workspace、授权和凭据源引用的权威；DB 管派生注册索引、绑定与投递，不能另存独立授权。配置 ID 是稳定 UUID。新增 ConfigSnapshot/ConfigWriter、notify + arc-swap 热更新及原子授权检查见 [部署与配置](connections-and-config.md)。
 
 建议表：
 
@@ -256,7 +258,7 @@ RPC 写入前事务记录 Dispatching。进程崩溃遗留 Dispatching 按 Outco
 
 ## 8. 出站文本与 Telegram 一致性
 
-`TextItemObserved` → upsert 权威文本 → DeliveryAggregator 形成批次/历史集合 → 同一事务封存成员和 outbox。Sender 独立限速投递，成功保存 message ID。按 session/turn/item 序列展示，外部 agent 没有可证明全局顺序时按服务事件/历史顺序保持，不用 ID 字典序假定时间顺序。message_batches/batch_items/history_bundles 与超长单附件规则见 [08](08-history-and-delivery.md)。
+`TextItemObserved` → upsert 权威文本 → DeliveryAggregator 形成批次/历史集合 → 同一事务封存成员和 outbox。Sender 独立限速投递，成功保存 message ID。按 session/turn/item 序列展示，外部 agent 没有可证明全局顺序时按服务事件/历史顺序保持，不用 ID 字典序假定时间顺序。message_batches/batch_items/history_bundles 与超长单附件规则见 [历史与投递](history-and-delivery.md)。
 
 本 topic 用户消息已经在 Telegram 可见，匹配 clientId 后只补“已送达”状态，不再原样复读。CLI/desktop 发来的 userMessage 加来源标签转发；未知来源标为“Codex 用户”，不凭文本相同判定回声。多平台绑定时只排除原始输入位置，其他授权位置仍可同步。
 
@@ -286,15 +288,15 @@ SSH keepalive用于探测连接，无法保证服务永不中断。丢失 SSH �
 
 ## 10. 扩展边界
 
-Claude 后续可通过远端 Rust shim 兼容 Codex wire 子集，保留不同 provider 身份与 capabilities；不保证完整 Codex Desktop 兼容。没有真正 steer 的 provider 返回 Unsupported，不以“停止再 resume”模拟。独立 daemon/executor、CLI stream-json、ownership 和 EOF 边界见 [07](07-future-adapters.md)。
+Claude 后续可通过远端 Rust shim 兼容 Codex wire 子集，保留不同 provider 身份与 capabilities；不保证完整 Codex Desktop 兼容。没有真正 steer 的 provider 返回 Unsupported，不以“停止再 resume”模拟。独立 daemon/executor、CLI stream-json、ownership 和 EOF 边界见 [后续扩展](../future/integrations.md)。
 
 Discord adapter 把 workspace 映射为 category、session 为 text channel，使用同样的 inbox/operations/outbox。平台拥有能力多不代表 provider 可停止；管理员权限不绕过应用的 host/workspace 授权。
 
-Lark adapter 使用 region/tenant/chat/thread/root-message 地址、根状态卡和线程回复；能力和 Rust 生态取舍见 [07](07-future-adapters.md)。SSH backend 增加 russh/TOTP，传输超时逐 host 配置，不能把系统 OpenSSH 等同于自动 keyboard-interactive 支持。
+Lark adapter 使用 region/tenant/chat/thread/root-message 地址、根状态卡和线程回复；能力和 Rust 生态取舍见 [后续扩展](../future/integrations.md)。SSH backend 增加 russh/TOTP，传输超时逐 host 配置，不能把系统 OpenSSH 等同于自动 keyboard-interactive 支持。
 
 ## 11. 日志与诊断
 
-统一 tracing，tracing-subscriber JSON 输出，config 的 logging.filter 控制级别和热更新，不依赖 RUST_LOG/.env；第三方 log 桥接到 tracing。span 字段含 operation_id、instance_id、内部 workspace_id、thread/turn/item ID、epoch、config_generation、method、耗时、结果分类。用户/平台 ID 可哈希化。TOTP seed、动态 code、密码、secret config 路径/正文和实际展开认证响应不进入日志。
+统一 tracing，tracing-subscriber JSON 输出，config 的 logging.filter 控制级别和热更新，不依赖 RUST_LOG；Telegram .env 仅作为配置显式引用的凭据源；第三方 log 桥接到 tracing。span 字段含 operation_id、instance_id、内部 workspace_id、thread/turn/item ID、epoch、config_generation、method、耗时、结果分类。用户/平台 ID 可哈希化。TOTP seed、动态 code、密码、secret config 路径/正文和实际展开认证响应不进入日志。
 
 禁止默认记录 token、Authorization、完整 URL（Telegram token 在 URL path）、SSH 命令展开后的秘密、全文、配置内容、原始 RPC body、工具输出。错误显示结构化错误码和经清理摘要，不直接打印 reqwest/teloxide 的含 token URL。DEBUG 也必须脱敏。
 
