@@ -1,0 +1,10 @@
+/target/
+/.env
+/.env.*
+!/.env.example
+/pocketpilot.local.toml
+*.db
+*.db-shm
+*.db-wal
+/logs/
+/.DS_Store
