@@ -119,11 +119,20 @@ impl Api {
             timeout: Duration::from_secs(2),
         })
     }
-    pub fn new(token: SecretString) -> Self {
-        Self {
-            bot: Bot::new(token.expose_secret()),
+    pub fn new(token: SecretString) -> Result<Self, Error> {
+        Self::with_builder(token, reqwest::Client::builder())
+    }
+    fn with_builder(token: SecretString, builder: reqwest::ClientBuilder) -> Result<Self, Error> {
+        // teloxide's default HTTP timeout is 17s, shorter than a 30s long poll.
+        let client = builder
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(50))
+            .build()
+            .map_err(|_| Error::Network)?;
+        Ok(Self {
+            bot: Bot::with_client(token.expose_secret(), client),
             timeout: Duration::from_secs(50),
-        }
+        })
     }
     pub async fn identity(&self) -> Result<Identity, Error> {
         let me = account(&self.bot, self.timeout).await?;
@@ -287,6 +296,27 @@ pub(crate) async fn account(bot: &Bot, timeout: Duration) -> Result<Account, Err
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn production_poll_budget_survives_a_response_slower_than_the_sdk_default() {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path_regex};
+        let server = MockServer::start().await;
+        Mock::given(path_regex("(?i).*/getupdates$"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"ok":true,"result":[]}"#)
+                    .set_delay(Duration::from_secs(18)),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut api = Api::with_builder(
+            "1:abcdefghijklmnopqrstuvwxyz".into(),
+            reqwest::Client::builder().no_proxy(),
+        )
+        .unwrap();
+        api.bot = api.bot.set_api_url(url::Url::parse(&server.uri()).unwrap());
+        assert!(api.updates(None).await.unwrap().is_empty());
+    }
     #[tokio::test]
     async fn identity_extension_keeps_the_token_in_the_url_path_and_reads_private_topics() {
         use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path_regex};

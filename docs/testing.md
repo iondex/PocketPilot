@@ -67,3 +67,7 @@ cargo build --workspace --locked
 ## Discord 原型
 
 可选编译和同进程运行，详见 [Discord 原型](design/discord.md)。仅配 Telegram 时无需启用此 feature。Discord 尚未提供真实 token/guild，当前是 mock API/原生协议 fixture 验证，不宣称已连上真实服务器。
+
+## 当前本机桥接
+
+桥接已在本机后台启动，进程号保存在被忽略的 var/data/bridge.pid。停止桥接时仅向该进程发送 SIGTERM；不对 Codex daemon 或其进程组发送信号。日志位于 var/logs，配对 CLI 可同时运行。电脑休眠/退出登录等本机环境变化可能使桥接离线，原生任务生命周期仍由其 daemon 管理。

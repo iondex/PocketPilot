@@ -95,7 +95,7 @@ pub async fn run(path: PathBuf) -> Result<(), Error> {
         return Err(Error::DiscordFeature);
     }
     let telegram = if let Some(settings) = &snapshot.config.telegram {
-        let api = Api::new(credentials::read(settings)?);
+        let api = Api::new(credentials::read(settings)?)?;
         let identity = api.identity().await?;
         if identity.webhook_enabled {
             return Err(Error::Webhook);

@@ -24,7 +24,7 @@
 
 ## 自动与隔离验证
 
-全功能测试共 56 项通过。完整命令为 cargo fmt --all -- --check、cargo clippy --workspace --all-targets --all-features --locked -- -D warnings、cargo test --workspace --all-features --locked。
+全功能测试共 57 项通过。完整命令为 cargo fmt --all -- --check、cargo clippy --workspace --all-targets --all-features --locked -- -D warnings、cargo test --workspace --all-features --locked。
 
 行为测试覆盖私聊配对/topic/历史/创建/续轮/steer、重复与丢回执、按 peer 顺序 dispatch、撤销授权/配置与绑定校验、批次重启/固定截止、bot 私聊账号隔离；Discord mock 覆盖 owner 授权、category/channel、共享 provider 与重复/未知写不重发、解绑不结束任务。构建与测试没有真实聊天平台写入。
 
@@ -37,3 +37,9 @@ Telegram getMe/getWebhookInfo 已通过：私聊 Topics 已开启，无 webhook�
 本机现有 Desktop 0.162.0-alpha.17.2 的服务采用 stdio，缺少公开共享入口；独立 native fixture 不能证明既有本地任务可接入。未重启 Desktop。真实 OTP/复杂跳板、慢服务器长时故障、Telegram 实际收发和 Discord 真实 guild 尚需部署验证。
 
 不把 mock 或单台 SSH 探针记作 A01–A52 全部通过。依赖仍有 proc-macro-error2 的上游 future-incompat 提示，项目 lint 与测试检查独立记录。
+
+## 正式轮询启动检查
+
+实际启动发现 teloxide 默认 HTTP timeout 为 17 秒，短于 30 秒 getUpdates 长轮询。现使用明确配置的 50 秒 HTTP/总请求预算，并加入 18 秒延迟响应行为测试。桥接进程已独立运行，正式轮询健康以自有 polling_cursors.last_poll_at 推进核对，不额外启动第二个 getUpdates 消费者。
+
+GitHub Actions 在任何构建步骤开始前被平台拒绝；官方 annotation 为账户近期付款失败或 spending limit 需提高。此状态不是编译/测试失败，需仓库账户管理员处理 Billing & plans 后重新运行。当前验证结果来自本机完整检查。

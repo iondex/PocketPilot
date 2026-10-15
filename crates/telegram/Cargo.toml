@@ -14,11 +14,11 @@ teloxide.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-reqwest = { workspace = true, optional = true }
+reqwest.workspace = true
 url = { workspace = true, optional = true }
 
 [features]
-test-support = ["dep:reqwest", "dep:url"]
+test-support = ["dep:url"]
 
 [dev-dependencies]
 reqwest.workspace = true
