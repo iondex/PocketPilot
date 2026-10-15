@@ -1,38 +1,39 @@
-# 首轮实现与验证记录
+# 实现与验证记录
 
-日期：2026-10-15。当前交付是可运行的只读基础版，不是完整 Telegram MVP。
+日期：2026-10-16。Telegram MVP 已具备可运行功能链路，SSH 共享实例控制已通过专用会话验收；真实 Telegram 交互等待用户测试。Discord 是可选、可运行的 slash-command 原型。
 
-## 已实现
+## 实现边界
 
-- 四个 package：session、codex、telegram、app；源码在各自 src/ 下平铺。
-- 根目录单一 TOML、路径/限制校验、内联 token、脱敏错误和 tracing 日志。
-- build.rs 动态导出官方 Codex schema、筛选只读投影并用 typify 生成 Rust DTO；生成物不提交。provider 不使用 serde_json::Value 字段操作。
-- 类型化只读 RPC：握手、并发关联、deadline、有界 pending、服务端请求只观察；本地 proxy、普通 OpenSSH proxy、loopback WS/远程 WSS。
-- 只读 thread 列表、状态、分页文本历史；工具/推理过滤、最近输入/对应 final、基础合并规则。
-- 本机 SSH config alias 发现、OpenSSH 有效配置解析；不会因发现 alias 自动登录。
-- 独占锁保护的自有 SQLite 基础账本、输入去重、状态 CAS、重启后不确定结果、容器不跨 session 复用。
-- 私聊配对账本及 CLI pending/approve/list/revoke；一次性码有效期十分钟，按 bot 隔离。管理 CLI 可与持有账本锁的服务并行运行，不恢复或改动执行中操作。
-- Telegram 账号/webhook 只读 Inspector。尚无 poller、消息发送、topic 或 session 写接口。
+- 平铺源码：session、codex、telegram、app，加上可选 Discord adapter 的 discord crate。普通配置与所有秘密保留在单根 TOML。
+- build.rs 动态导出官方 schema 到 OUT_DIR，typify 生成 DTO，无提交快照。业务 RPC 使用生成类型，RawValue 仅在 framing 边界保存不透明 payload。
+- 固定只读方法与四类写入；后台无 resume/停止/审批代答。当前官方 legacy 与 paginated 历史模式均按类型路由。
+- 本地/SSH proxy 的字节隧道执行 WebSocket 握手；loaded/list 覆盖尚未进入历史索引的活跃任务，精确 cwd/worktree 分页。
+- Telegram 持久 inbox/offset、CLI 私聊配对、菜单/topic、完整历史集合、状态卡、操作回执、持久合并与限速 outbox。
+- 系统 OpenSSH config、keepalive/backoff、受限 askpass/TOTP；单根配置快照热更新。SQLite 服务锁、账号隔离、容器墓碑和 unknown 不重放。
+- Discord 复用共享连接、会话锁、操作账本；独立 category/channel provenance 与输出账本。原型范围见 [说明](../design/discord.md)。
 
-## 已执行的检查
+## 真实 SSH 证据
 
-- cargo test --workspace：26 个测试通过，覆盖单文件配置、拒绝 include/旧允许列表、凭据脱敏、私聊配对、RPC、schema DTO、文本、SQLite 与连接边界。
-- cargo clippy --workspace --all-targets --locked -- -D warnings；cargo fmt。
-- CLI --help、config-check --credentials、doctor、pair --help/pending/list 的本机 smoke check；当前无待配对申请或已配对用户。
-- Telegram getMe/getWebhookInfo 成功；当前没有 webhook。没有发送消息、消费 updates 或改 webhook。
-- 本机 SSH config 只读发现成功；没有登录远端，未将个人 alias 写入仓库。
-- 重新导出桌面内置 codex-cli 0.162.0-alpha.17.2 的 schema；仅生成文件，没有启动或重启 app-server。实际生成器版本保存在 Cargo OUT_DIR/schema-version.txt，不提交版本快照。
+用户指定 SSH 目标后，只读确认 Desktop 和 CLI proxy 使用既有远端 daemon，运行版本 0.161.0；PocketPilot 使用同一共享 socket。没有升级、重启或停止该 daemon。
 
-## 未完成的真实验收
+专用新会话探针验证：创建与首轮均收到回执；另一个连接读取同一 active turn；steer 收到对应 turn 回执；桥接全部客户端退出后重新只读连接仍 active；原任务完成并在最终文本中保留固定标记；随后仅对该测试会话显式 resume 成功。Desktop 的只读 API 同时观察到相同 active turn。现有用户任务只读查看，未收到探针输入。
 
-检查时本机默认控制 socket 不存在；现有公开示例仍是占位 endpoint。没有验证同一运行对象、多端 active turn、最后连接退出的行为，也没有重启 app-server 或操作真实 thread。因此 G0/G3 未通过，控制能力在代码中保持关闭。
+调试发现原生服务接受输入后短暂暴露空 rollout，thread/read 返回 -32603。修复在 framing 层识别这个已知只读错误，最多五秒重读；不会重试任何写入。日志只记录方法、错误码和固定诊断分类，不记录原生错误文本、输入或 token。
 
-OTP 后端、完整配置热更新、durable Telegram poller、私聊 /start 配对入口、topic 交互、持久 outbox 和创建/续轮/steer 仍须后续实现。mock 测试不能代替这些实际行为。
+已授权配置中的该 SSH provider 已开启 control_verified；九个工作区保留在私有根配置，公开示例不包含个人 endpoint/凭据。测试产生的专用会话留在原生服务供核对，未主动归档或停止。
 
-依赖构建有上游 proc-macro-error2 的 future-incompat 通知；当前工具链编译和项目 lint 可通过，后续更新 teloxide 相关依赖时跟进，不把第三方通知隐去。
+## 自动与隔离验证
 
-## 构建生成调整
+全功能测试共 56 项通过。完整命令为 cargo fmt --all -- --check、cargo clippy --workspace --all-targets --all-features --locked -- -D warnings、cargo test --workspace --all-features --locked。
 
-按要求取消 schema/Python 脚本/版本快照提交，生成逻辑迁入 build.rs。构建时自动导出所选 CLI 的 schema、用类型化 Schema 模型筛选引用并生成 DTO，全部输出至 Cargo OUT_DIR；无快照 fallback。CI 安装明确的 @openai/codex 0.162.1，再运行构建。
+行为测试覆盖私聊配对/topic/历史/创建/续轮/steer、重复与丢回执、按 peer 顺序 dispatch、撤销授权/配置与绑定校验、批次重启/固定截止、bot 私聊账号隔离；Discord mock 覆盖 owner 授权、category/channel、共享 provider 与重复/未知写不重发、解绑不结束任务。构建与测试没有真实聊天平台写入。
 
-本机全局 CLI 已从 0.149.1 更新到 0.162.1，用于构建生成；既有 desktop/远端 daemon 没有重启或升级。动态生成已在桌面内置 0.162.0-alpha.17.2 和全局 0.162.1 上验证编译，实际支持仍以运行时行为验收为准。
+本机真实 Codex 0.162.1 和 0.161.0 均使用独立临时 CODEX_HOME、模拟模型运行 TCP WS/Unix proxy 生命周期实验：多客户端 active、steer、最后客户端断开后仍运行、最终历史均通过。这些 fixture 不读取用户凭据，也不调用付费模型。
+
+Telegram getMe/getWebhookInfo 已通过：私聊 Topics 已开启，无 webhook；不会自行删除 webhook。正式服务启动后才消费 updates 和处理用户请求。真实交互证据将在用户测试后补充。
+
+## 未验收事项
+
+本机现有 Desktop 0.162.0-alpha.17.2 的服务采用 stdio，缺少公开共享入口；独立 native fixture 不能证明既有本地任务可接入。未重启 Desktop。真实 OTP/复杂跳板、慢服务器长时故障、Telegram 实际收发和 Discord 真实 guild 尚需部署验证。
+
+不把 mock 或单台 SSH 探针记作 A01–A52 全部通过。依赖仍有 proc-macro-error2 的上游 future-incompat 提示，项目 lint 与测试检查独立记录。

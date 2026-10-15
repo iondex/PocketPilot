@@ -1,4 +1,4 @@
-# 只读基础版配置示例；真实 endpoint 和 workspace 需要按部署填写。
+# Telegram MVP 配置示例；真实 endpoint 和 workspace 需要按部署填写。
 # 运行时只读取根目录 pocketpilot.toml；不支持 include 或 .env。
 # 文件路径以本配置文件所在目录为基准。公开示例不包含真实令牌。
 
@@ -13,6 +13,12 @@ directory = "var/logs"
 [telegram]
 # 只接受私聊；用户必须通过 CLI 完成一次性配对。
 token = "REPLACE_WITH_BOT_TOKEN"
+
+# 可选 Discord 原型，编译时启用 --features discord。
+# 只允许此服务器的 owner 使用。
+# [discord]
+# token = "REPLACE_WITH_DISCORD_BOT_TOKEN"
+# guild_id = 123456789012345678
 
 [[hosts]]
 id = "00000000-0000-4000-8000-000000000001"
@@ -53,6 +59,9 @@ host_id = "00000000-0000-4000-8000-000000000001"
 kind = "codex"
 connection_mode = "existing_proxy"
 compatibility_profile = "latest-tested-codex"
+# 在独立测试会话确认 Desktop/CLI/PocketPilot 共用同一执行实例、断线不结束任务后开启。
+# 这是此实例的部署确认；doctor --connect 本身只做只读连接检查。
+control_verified = false
 
 [[workspaces]]
 id = "00000000-0000-4000-8000-000000000003"

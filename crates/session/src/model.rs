@@ -46,6 +46,7 @@ pub struct Session {
     pub title: String,
     pub cwd: String,
     pub status: RuntimeStatus,
+    /// Metadata may omit this ID for an active session. Use provider.active_turn before steer.
     pub active_turn: Option<String>,
     pub updated_at: Option<i64>,
 }

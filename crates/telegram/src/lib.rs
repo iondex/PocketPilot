@@ -1,4 +1,5 @@
-//! Read-only Telegram inspection. No message is sent by construction.
+//! Telegram transport. Only the service command starts receiving or sending messages.
+pub mod api;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use std::time::Duration;
@@ -16,14 +17,46 @@ pub enum Error {
     Network,
     #[error("Telegram returned an incompatible response (body is redacted)")]
     Protocol,
+    #[error("Telegram rate limit; retry in {0} seconds")]
+    RetryAfter(u64),
+    #[error("Telegram rejected the request")]
+    Rejected,
+    #[error("Telegram recipient is unavailable")]
+    NoRecipient,
+    #[error("Telegram message already matches the requested content")]
+    NotModified,
+    #[error("history exceeds Telegram's single attachment limit")]
+    TooLarge,
+    #[error("Telegram topic is closed or no longer available")]
+    TopicUnavailable,
 }
 
-fn safe_error(error: RequestError) -> Error {
+pub(crate) fn safe_error(error: RequestError) -> Error {
     match error {
+        RequestError::Api(ApiError::Unknown(text)) if text == "Bad Request: TOPIC_NOT_MODIFIED" => {
+            Error::NotModified
+        }
+        RequestError::Api(ApiError::Unknown(text))
+            if matches!(
+                text.as_str(),
+                "Bad Request: TOPIC_CLOSED"
+                    | "Bad Request: message thread not found"
+                    | "Bad Request: MESSAGE_THREAD_NOT_FOUND"
+            ) =>
+        {
+            Error::TopicUnavailable
+        }
+        RequestError::Api(ApiError::MessageNotModified) => Error::NotModified,
+        RequestError::Api(
+            ApiError::BotBlocked | ApiError::UserDeactivated | ApiError::ChatNotFound,
+        ) => Error::NoRecipient,
+        RequestError::Api(ApiError::Unknown(_)) => Error::Request,
         RequestError::Api(ApiError::InvalidToken) => Error::Authentication,
         RequestError::Network(error) if error.is_timeout() => Error::Timeout,
         RequestError::Network(_) => Error::Network,
         RequestError::InvalidJson { .. } => Error::Protocol,
+        RequestError::RetryAfter(seconds) => Error::RetryAfter(u64::from(seconds.seconds())),
+        RequestError::Api(_) => Error::Rejected,
         _ => Error::Request,
     }
 }
@@ -33,6 +66,7 @@ pub struct Identity {
     pub bot_id: u64,
     pub username: Option<String>,
     pub webhook_enabled: bool,
+    pub topics_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,18 +100,16 @@ impl Inspector {
         }
     }
     pub async fn check(&self) -> Result<Identity, Error> {
-        let me = tokio::time::timeout(self.timeout, self.bot.get_me().send())
-            .await
-            .map_err(|_| Error::Timeout)?
-            .map_err(safe_error)?;
+        let me = api::account(&self.bot, self.timeout).await?;
         let hook = tokio::time::timeout(self.timeout, self.bot.get_webhook_info().send())
             .await
             .map_err(|_| Error::Timeout)?
             .map_err(safe_error)?;
         Ok(Identity {
-            bot_id: me.user.id.0,
-            username: me.user.username,
+            bot_id: me.id,
+            username: me.username,
             webhook_enabled: hook.url.is_some(),
+            topics_enabled: me.has_topics_enabled,
         })
     }
 }

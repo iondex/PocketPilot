@@ -6,10 +6,14 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite},
     process::{Child, Command},
 };
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Message};
+use tokio_tungstenite::{
+    WebSocketStream,
+    tungstenite::{Message, protocol::WebSocketConfig},
+};
+#[cfg(test)]
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 
-pub const MAX_FRAME: usize = 8 * 1024 * 1024;
+pub const MAX_FRAME: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub enum Connection {
@@ -27,6 +31,9 @@ pub struct SshOptions {
     pub connect_timeout: Duration,
     pub keepalive_seconds: u64,
     pub keepalive_missed: u32,
+    pub askpass: Option<PathBuf>,
+    pub max_auth_attempts: u32,
+    pub authentication_methods: Vec<String>,
 }
 
 #[async_trait]
@@ -47,7 +54,7 @@ pub(crate) async fn connect(connection: Connection) -> Result<Box<dyn Wire>, Err
             }
             let mut command = Command::new(binary);
             command.args(["app-server", "proxy", "--sock"]).arg(socket);
-            spawn_proxy(command)
+            spawn_proxy(command).await
         }
         Connection::SshProxy(options) => {
             if options.alias.is_empty()
@@ -64,7 +71,11 @@ pub(crate) async fn connect(connection: Connection) -> Result<Box<dyn Wire>, Err
                 .args([
                     "-T",
                     "-o",
-                    "BatchMode=yes",
+                    if options.askpass.is_some() {
+                        "BatchMode=no"
+                    } else {
+                        "BatchMode=yes"
+                    },
                     "-o",
                     "StrictHostKeyChecking=yes",
                 ])
@@ -77,6 +88,22 @@ pub(crate) async fn connect(connection: Connection) -> Result<Box<dyn Wire>, Err
                 .arg(format!("ServerAliveInterval={}", options.keepalive_seconds))
                 .arg("-o")
                 .arg(format!("ServerAliveCountMax={}", options.keepalive_missed));
+            if let Some(helper) = options.askpass {
+                command
+                    .env("SSH_ASKPASS", helper)
+                    .env("SSH_ASKPASS_REQUIRE", "force")
+                    .arg("-o")
+                    .arg(format!(
+                        "NumberOfPasswordPrompts={}",
+                        options.max_auth_attempts
+                    ));
+            }
+            if !options.authentication_methods.is_empty() {
+                command.arg("-o").arg(format!(
+                    "PreferredAuthentications={}",
+                    options.authentication_methods.join(",")
+                ));
+            }
             if let Some(config) = options.config {
                 command.arg("-F").arg(config);
             }
@@ -85,7 +112,7 @@ pub(crate) async fn connect(connection: Connection) -> Result<Box<dyn Wire>, Err
                 remote.push_str(&format!(" --sock {}", quote(&socket)?));
             }
             command.arg(options.alias).arg(remote);
-            spawn_proxy(command)
+            spawn_proxy(command).await
         }
         Connection::Websocket { endpoint } => {
             let parsed = url::Url::parse(&endpoint).map_err(|_| Error::Endpoint)?;
@@ -101,10 +128,17 @@ pub(crate) async fn connect(connection: Connection) -> Result<Box<dyn Wire>, Err
             {
                 return Err(Error::Endpoint);
             }
-            let (socket, _) = tokio_tungstenite::connect_async(endpoint)
-                .await
-                .map_err(|_| Error::Disconnected)?;
-            Ok(Box::new(Websocket { socket }))
+            let config = WebSocketConfig::default()
+                .max_message_size(Some(MAX_FRAME))
+                .max_frame_size(Some(MAX_FRAME));
+            let (socket, _) =
+                tokio_tungstenite::connect_async_with_config(endpoint, Some(config), false)
+                    .await
+                    .map_err(|_| Error::Disconnected)?;
+            Ok(Box::new(Websocket {
+                socket,
+                _proxy: None,
+            }))
         }
     }
 }
@@ -116,7 +150,7 @@ fn quote(value: &str) -> Result<String, Error> {
     Ok(format!("'{}'", value.replace('\'', "'\\''")))
 }
 
-fn spawn_proxy(mut command: Command) -> Result<Box<dyn Wire>, Error> {
+async fn spawn_proxy(mut command: Command) -> Result<Box<dyn Wire>, Error> {
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -139,15 +173,30 @@ fn spawn_proxy(mut command: Command) -> Result<Box<dyn Wire>, Error> {
             }
         });
     }
-    Ok(Box::new(JsonLines::new(input, output, Some(child))))
+    // The official proxy is a byte tunnel, not a JSONL adapter. Codex Unix
+    // listeners require the same HTTP Upgrade and WS frames as TCP listeners.
+    let stream = tokio::io::join(input, output);
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_FRAME))
+        .max_frame_size(Some(MAX_FRAME));
+    let (socket, _) =
+        tokio_tungstenite::client_async_with_config("ws://localhost/", stream, Some(config))
+            .await
+            .map_err(|_| Error::Disconnected)?;
+    Ok(Box::new(Websocket {
+        socket,
+        _proxy: Some(child),
+    }))
 }
 
+#[cfg(test)]
 pub(crate) struct JsonLines {
     input: FramedRead<Box<dyn AsyncRead + Unpin + Send>, LinesCodec>,
     output: FramedWrite<Box<dyn AsyncWrite + Unpin + Send>, LinesCodec>,
     _proxy: Option<Child>,
 }
 
+#[cfg(test)]
 impl JsonLines {
     pub(crate) fn new(
         input: impl AsyncRead + Unpin + Send + 'static,
@@ -163,6 +212,7 @@ impl JsonLines {
 }
 
 #[async_trait]
+#[cfg(test)]
 impl Wire for JsonLines {
     async fn send(&mut self, text: String) -> Result<(), Error> {
         if text.len() > MAX_FRAME {
@@ -182,12 +232,13 @@ impl Wire for JsonLines {
     }
 }
 
-struct Websocket {
-    socket: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+struct Websocket<S> {
+    socket: WebSocketStream<S>,
+    _proxy: Option<Child>,
 }
 
 #[async_trait]
-impl Wire for Websocket {
+impl<S: AsyncRead + AsyncWrite + Unpin + Send> Wire for Websocket<S> {
     async fn send(&mut self, text: String) -> Result<(), Error> {
         if text.len() > MAX_FRAME {
             return Err(Error::Protocol);

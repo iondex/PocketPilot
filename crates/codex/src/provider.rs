@@ -1,19 +1,41 @@
 use crate::{Client, Error, protocol as p};
+use session::provider::{Mutation, Receipt};
 use session::{
     AgentProvider, Capabilities, History, Page, ProviderError, Role, RuntimeStatus, Session,
     SessionQuery, SessionRef, TextItem,
 };
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ListCursor {
+    instance: String,
+    cwd: Option<String>,
+    archived: bool,
+    loaded: bool,
+    backend: Option<String>,
+    seen_loaded: Vec<String>,
+}
+
+#[derive(Clone)]
 pub struct Codex {
     instance: String,
     client: Client,
+    control: bool,
 }
 impl Codex {
     pub fn new(instance: String, client: Client) -> Self {
-        Self { instance, client }
+        Self {
+            instance,
+            client,
+            control: false,
+        }
     }
     pub fn client(&self) -> &Client {
         &self.client
+    }
+    /// Enable only after the configured shared runtime passes the lifecycle probe.
+    pub fn with_control(mut self, verified: bool) -> Self {
+        self.control = verified;
+        self
     }
 }
 
@@ -110,6 +132,15 @@ fn text_item(turn_id: &str, turn_complete: bool, item: p::ThreadItem) -> Option<
             text,
             client_id: None,
         },
+        p::ThreadItem::Plan { id, text } => TextItem {
+            turn_id: turn_id.into(),
+            item_id: id,
+            role: Role::Agent,
+            phase: Some("plan".into()),
+            text,
+            complete: turn_complete,
+            client_id: None,
+        },
         _ => return None,
     };
     (!item.text.is_empty()).then_some(item)
@@ -122,37 +153,128 @@ impl AgentProvider for Codex {
         Capabilities {
             list: true,
             history: true,
-            ..Default::default()
+            live_status: true,
+            control_verified: self.control,
         }
     }
     async fn list(&self, query: SessionQuery) -> Result<Page<Session>, ProviderError> {
-        let result = self
-            .client
-            .call(&p::ThreadListParams {
-                cwd: query.cwd.map(p::ThreadListCwdFilter::String),
-                cursor: query.cursor,
-                limit: Some(query.limit.clamp(1, 100)),
-                archived: Some(query.archived),
-                use_state_db_only: Some(true),
-                sort_key: Some(p::ThreadSortKey::UpdatedAt),
-                source_kinds: Some(vec![
-                    p::ThreadSourceKind::Cli,
-                    p::ThreadSourceKind::Vscode,
-                    p::ThreadSourceKind::AppServer,
-                    p::ThreadSourceKind::Exec,
-                    p::ThreadSourceKind::Unknown,
-                ]),
-                ..Default::default()
-            })
-            .await?;
-        Ok(Page {
-            data: result
-                .data
-                .into_iter()
-                .map(|t| summary(&self.instance, t))
-                .collect(),
-            next_cursor: result.next_cursor,
-        })
+        let mut cursor = if let Some(encoded) = &query.cursor {
+            let cursor: ListCursor = serde_json::from_str(
+                encoded
+                    .strip_prefix("pp1:")
+                    .ok_or(ProviderError::Incompatible)?,
+            )
+            .map_err(|_| ProviderError::Incompatible)?;
+            if cursor.instance != self.instance
+                || cursor.cwd != query.cwd
+                || cursor.archived != query.archived
+            {
+                return Err(ProviderError::Incompatible);
+            }
+            cursor
+        } else {
+            ListCursor {
+                instance: self.instance.clone(),
+                cwd: query.cwd.clone(),
+                archived: query.archived,
+                loaded: !query.archived,
+                backend: None,
+                seen_loaded: vec![],
+            }
+        };
+        let limit = query.limit.clamp(1, 100) as usize;
+        let mut data = vec![];
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            if !seen.insert((cursor.loaded, cursor.backend.clone())) {
+                return Err(ProviderError::Incompatible);
+            }
+            if cursor.loaded {
+                // Newly active threads can precede rollout/state-DB indexing. Read the
+                // already-loaded objects first, without subscribing or resuming them.
+                let page = self
+                    .client
+                    .call(&p::ThreadLoadedListParams {
+                        cursor: cursor.backend.clone(),
+                        limit: Some((limit - data.len()) as u32),
+                    })
+                    .await?;
+                for id in page.data {
+                    let result = match self
+                        .client
+                        .call(&p::ThreadReadParams {
+                            thread_id: id,
+                            include_turns: Some(false),
+                        })
+                        .await
+                    {
+                        Ok(thread) => thread,
+                        Err(Error::Rejected(_)) => continue, // closed during pagination
+                        Err(error) => return Err(error.into()),
+                    };
+                    if !matches!(
+                        result.thread.source,
+                        p::SessionSource::Cli
+                            | p::SessionSource::Vscode
+                            | p::SessionSource::Exec
+                            | p::SessionSource::AppServer
+                            | p::SessionSource::Unknown
+                    ) {
+                        continue;
+                    }
+                    let item = summary(&self.instance, result.thread);
+                    if query.cwd.as_deref().is_none_or(|cwd| cwd == item.cwd) {
+                        cursor.seen_loaded.push(item.reference.thread.clone());
+                        data.push(item);
+                    }
+                }
+                cursor.backend = page.next_cursor;
+                if cursor.backend.is_none() {
+                    cursor.loaded = false;
+                }
+            } else {
+                let page = self
+                    .client
+                    .call(&p::ThreadListParams {
+                        cwd: query.cwd.clone().map(p::ThreadListCwdFilter::String),
+                        cursor: cursor.backend.clone(),
+                        limit: Some((limit - data.len()) as u32),
+                        archived: Some(query.archived),
+                        use_state_db_only: Some(true),
+                        sort_key: Some(p::ThreadSortKey::UpdatedAt),
+                        source_kinds: Some(vec![
+                            p::ThreadSourceKind::Cli,
+                            p::ThreadSourceKind::Vscode,
+                            p::ThreadSourceKind::AppServer,
+                            p::ThreadSourceKind::Exec,
+                            p::ThreadSourceKind::Unknown,
+                        ]),
+                        ..Default::default()
+                    })
+                    .await?;
+                for thread in page.data {
+                    if !cursor.seen_loaded.contains(&thread.id) {
+                        data.push(summary(&self.instance, thread));
+                    }
+                }
+                cursor.backend = page.next_cursor;
+                if cursor.backend.is_none() {
+                    return Ok(Page {
+                        data,
+                        next_cursor: None,
+                    });
+                }
+            }
+            if data.len() >= limit {
+                let encoded =
+                    serde_json::to_string(&cursor).map_err(|_| ProviderError::Incompatible)?;
+                return Ok(Page {
+                    data,
+                    next_cursor: Some(format!("pp1:{encoded}")),
+                });
+            }
+        }
+        Err(ProviderError::Incompatible)
     }
     async fn read(&self, thread: &str) -> Result<Session, ProviderError> {
         let result = self
@@ -162,9 +284,105 @@ impl AgentProvider for Codex {
                 include_turns: Some(false),
             })
             .await?;
-        Ok(summary(&self.instance, result.thread))
+        let legacy = matches!(result.thread.history_mode, p::ThreadHistoryMode::Legacy);
+        let mut session = summary(&self.instance, result.thread);
+        if matches!(session.status, RuntimeStatus::Active { .. }) && !legacy {
+            let turns = self
+                .client
+                .call(&p::ThreadTurnsListParams {
+                    thread_id: thread.into(),
+                    limit: Some(10),
+                    sort_direction: Some(p::SortDirection::Desc),
+                    items_view: Some(p::TurnItemsView::NotLoaded),
+                    cursor: None,
+                })
+                .await?;
+            session.active_turn = turns
+                .data
+                .into_iter()
+                .find(|t| matches!(t.status, p::TurnStatus::InProgress))
+                .map(|t| t.id);
+        }
+        Ok(session)
+    }
+    async fn active_turn(&self, thread: &str) -> Result<Option<String>, ProviderError> {
+        let metadata = self
+            .client
+            .call(&p::ThreadReadParams {
+                thread_id: thread.into(),
+                include_turns: Some(false),
+            })
+            .await?;
+        if !matches!(metadata.thread.status, p::ThreadStatus::Active(_)) {
+            return Ok(None);
+        }
+        let turns = match metadata.thread.history_mode {
+            p::ThreadHistoryMode::Legacy => {
+                self.client
+                    .call(&p::ThreadReadParams {
+                        thread_id: thread.into(),
+                        include_turns: Some(true),
+                    })
+                    .await?
+                    .thread
+                    .turns
+            }
+            p::ThreadHistoryMode::Paginated => {
+                self.client
+                    .call(&p::ThreadTurnsListParams {
+                        thread_id: thread.into(),
+                        cursor: None,
+                        limit: Some(10),
+                        sort_direction: Some(p::SortDirection::Desc),
+                        items_view: Some(p::TurnItemsView::NotLoaded),
+                    })
+                    .await?
+                    .data
+            }
+        };
+        Ok(turns
+            .into_iter()
+            .find(|t| matches!(t.status, p::TurnStatus::InProgress))
+            .map(|t| t.id))
     }
     async fn history(&self, thread: &str) -> Result<History, ProviderError> {
+        let metadata = self
+            .client
+            .call(&p::ThreadReadParams {
+                thread_id: thread.into(),
+                include_turns: Some(false),
+            })
+            .await?;
+        if matches!(metadata.thread.history_mode, p::ThreadHistoryMode::Legacy) {
+            let full = self
+                .client
+                .call(&p::ThreadReadParams {
+                    thread_id: thread.into(),
+                    include_turns: Some(true),
+                })
+                .await?;
+            let mut items = Vec::new();
+            let mut bytes = 0_usize;
+            for turn in full.thread.turns {
+                let complete = matches!(turn.status, p::TurnStatus::Completed);
+                for value in turn.items {
+                    if let Some(item) = text_item(&turn.id, complete, value) {
+                        bytes = bytes.saturating_add(item.text.len());
+                        if bytes > 64 * 1024 * 1024 {
+                            return Ok(History {
+                                items,
+                                all_pages_read: false,
+                            });
+                        }
+                        items.push(item);
+                    }
+                }
+            }
+            return Ok(History {
+                items,
+                all_pages_read: true,
+            });
+        }
         let mut items = vec![];
         let mut cursor = None::<String>;
         let mut seen_cursors = std::collections::HashSet::new();
@@ -217,11 +435,218 @@ impl AgentProvider for Codex {
             all_pages_read,
         })
     }
+
+    async fn execute(&self, mutation: Mutation) -> Result<Receipt, ProviderError> {
+        if !self.control {
+            return Err(ProviderError::Unsupported);
+        }
+        match mutation {
+            Mutation::Create { cwd } => {
+                let params: p::ThreadStartParams = p::ThreadStartParams::builder()
+                    .cwd(Some(cwd))
+                    .try_into()
+                    .map_err(|_| ProviderError::Incompatible)?;
+                let result = self.client.write(&params).await?;
+                Ok(Receipt {
+                    thread: result.thread.id,
+                    turn: None,
+                })
+            }
+            Mutation::Resume { thread } => {
+                let params: p::ThreadResumeParams = p::ThreadResumeParams::builder()
+                    .thread_id(thread.clone())
+                    .exclude_turns(Some(true))
+                    .try_into()
+                    .map_err(|_| ProviderError::Incompatible)?;
+                let result = self.client.write(&params).await?;
+                if result.thread.id != thread {
+                    return Err(ProviderError::Incompatible);
+                }
+                Ok(Receipt { thread, turn: None })
+            }
+            Mutation::Start {
+                thread,
+                text,
+                client_id,
+            } => {
+                // Never convert a detected active turn into an unguarded turn/start.
+                let current = self.read(&thread).await?;
+                if current.status != RuntimeStatus::Idle {
+                    return Err(ProviderError::Conflict);
+                }
+                let params: p::TurnStartParams = p::TurnStartParams::builder()
+                    .thread_id(thread.clone())
+                    .input(text_input(text)?)
+                    .client_user_message_id(Some(client_id))
+                    .try_into()
+                    .map_err(|_| ProviderError::Incompatible)?;
+                let result = self.client.write(&params).await?;
+                Ok(Receipt {
+                    thread,
+                    turn: Some(result.turn.id),
+                })
+            }
+            Mutation::Steer {
+                thread,
+                expected_turn,
+                text,
+                client_id,
+            } => {
+                let params = p::TurnSteerParams {
+                    thread_id: thread.clone(),
+                    expected_turn_id: expected_turn,
+                    input: text_input(text)?,
+                    client_user_message_id: Some(client_id),
+                };
+                let result = self.client.write(&params).await?;
+                Ok(Receipt {
+                    thread,
+                    turn: Some(result.turn_id),
+                })
+            }
+        }
+    }
+}
+
+fn text_input(text: String) -> Result<Vec<p::UserInput>, ProviderError> {
+    if text.trim().is_empty() || text.len() > 1024 * 1024 {
+        return Err(ProviderError::Conflict);
+    }
+    Ok(vec![p::UserInput::TextUserInput {
+        text,
+        text_elements: vec![],
+        type_: p::TextUserInputType::Text,
+    }])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[derive(serde::Deserialize)]
+    struct Frame {
+        id: Option<p::RequestId>,
+        method: String,
+        params: Option<Box<serde_json::value::RawValue>>,
+    }
+    const THREAD: &str = r#"{"id":"thread","sessionId":"thread","cliVersion":"0.162.1","projectId":null,"preview":"Title","cwd":"/workspace","ephemeral":false,"source":"appServer","modelProvider":"openai","createdAt":100,"updatedAt":100,"status":{"type":"idle"},"turns":[]}"#;
+
+    #[tokio::test]
+    async fn user_input_preserves_execution_policy_and_drop_sends_no_lifecycle_action() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_util::codec::{Framed, LinesCodec};
+        let (local, remote) = tokio::io::duplex(16384);
+        let (read, write) = tokio::io::split(local);
+        let provider = Codex::new(
+            "instance".into(),
+            Client::spawn(
+                Box::new(crate::transport::JsonLines::new(read, write, None)),
+                std::time::Duration::from_secs(2),
+            ),
+        )
+        .with_control(true);
+        let server = tokio::spawn(async move {
+            let mut server = Framed::new(remote, LinesCodec::new());
+            let read: Frame = serde_json::from_str(&server.next().await.unwrap().unwrap()).unwrap();
+            assert_eq!(read.method, "thread/read");
+            let params: p::ThreadReadParams =
+                serde_json::from_str(read.params.unwrap().get()).unwrap();
+            assert_eq!(params.include_turns, Some(false));
+            server
+                .send(format!(
+                    "{{\"id\":{},\"result\":{{\"thread\":{THREAD}}}}}",
+                    read.id.unwrap()
+                ))
+                .await
+                .unwrap();
+            let start: Frame =
+                serde_json::from_str(&server.next().await.unwrap().unwrap()).unwrap();
+            assert_eq!(start.method, "turn/start");
+            let params: p::TurnStartParams =
+                serde_json::from_str(start.params.unwrap().get()).unwrap();
+            assert_eq!(params.thread_id, "thread");
+            assert_eq!(params.client_user_message_id.as_deref(), Some("message-1"));
+            assert!(
+                params.model.is_none()
+                    && params.cwd.is_none()
+                    && params.approval_policy.is_none()
+                    && params.approvals_reviewer.is_none()
+                    && params.sandbox_policy.is_none()
+            );
+            server.send(format!("{{\"id\":{},\"result\":{{\"turn\":{{\"id\":\"active-turn\",\"status\":\"inProgress\",\"items\":[]}}}}}}",start.id.unwrap())).await.unwrap();
+            let steer: Frame =
+                serde_json::from_str(&server.next().await.unwrap().unwrap()).unwrap();
+            assert_eq!(steer.method, "turn/steer");
+            let params: p::TurnSteerParams =
+                serde_json::from_str(steer.params.unwrap().get()).unwrap();
+            assert_eq!(params.expected_turn_id, "active-turn");
+            assert_eq!(params.client_user_message_id.as_deref(), Some("message-2"));
+            server
+                .send(format!(
+                    "{{\"id\":{},\"result\":{{\"turnId\":\"active-turn\"}}}}",
+                    steer.id.unwrap()
+                ))
+                .await
+                .unwrap();
+            assert!(
+                server.next().await.is_none(),
+                "disconnect emitted an unexpected lifecycle request"
+            );
+        });
+        let first = provider
+            .execute(Mutation::Start {
+                thread: "thread".into(),
+                text: "first".into(),
+                client_id: "message-1".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(first.turn.as_deref(), Some("active-turn"));
+        provider
+            .execute(Mutation::Steer {
+                thread: "thread".into(),
+                expected_turn: "active-turn".into(),
+                text: "second".into(),
+                client_id: "message-2".into(),
+            })
+            .await
+            .unwrap();
+        drop(provider);
+        tokio::time::timeout(std::time::Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn unverified_provider_refuses_mutation_before_sending_any_request() {
+        use futures_util::StreamExt;
+        use tokio_util::codec::{Framed, LinesCodec};
+        let (local, remote) = tokio::io::duplex(1024);
+        let (read, write) = tokio::io::split(local);
+        let provider = Codex::new(
+            "instance".into(),
+            Client::spawn(
+                Box::new(crate::transport::JsonLines::new(read, write, None)),
+                std::time::Duration::from_secs(1),
+            ),
+        );
+        assert!(matches!(
+            provider
+                .execute(Mutation::Create {
+                    cwd: "/workspace".into()
+                })
+                .await,
+            Err(ProviderError::Unsupported)
+        ));
+        drop(provider);
+        assert!(
+            Framed::new(remote, LinesCodec::new())
+                .next()
+                .await
+                .is_none()
+        );
+    }
+
     #[test]
     fn schema_decodes_active_flags_and_rejects_unknown_state() {
         let status: p::ThreadStatus =

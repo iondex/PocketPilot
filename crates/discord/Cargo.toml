@@ -1,0 +1,22 @@
+[package]
+name = "discord"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+reqwest.workspace = true
+async-trait.workspace = true
+secrecy.workspace = true
+session = { path = "../session" }
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+serenity = { version = "0.12", default-features = false, features = ["builder", "client", "gateway", "http", "model", "rustls_backend"] }
+
+[lints]
+workspace = true

@@ -8,6 +8,8 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    #[error("provider ID points at a different execution endpoint; assign a new provider ID")]
+    InstanceConflict,
     #[error("local state database could not be accessed")]
     Database,
     #[error("invalid operation state transition")]
@@ -18,6 +20,8 @@ pub enum StoreError {
     Locked,
     #[error("input identity was already assigned to a different session")]
     SourceConflict,
+    #[error("platform resource creation outcome is unknown; inspect Discord before retrying")]
+    ProvisionUnknown,
     #[error("a paired private chat is required")]
     NotPaired,
 }
@@ -63,8 +67,15 @@ impl Store {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
                 .map_err(|_| StoreError::Database)?;
+            for suffix in ["-wal", "-shm"] {
+                let sidecar = std::path::PathBuf::from(format!("{}{suffix}", path.display()));
+                if sidecar.exists() {
+                    std::fs::set_permissions(sidecar, std::fs::Permissions::from_mode(0o600))
+                        .map_err(|_| StoreError::Database)?;
+                }
+            }
         }
         Ok(store)
     }
@@ -95,6 +106,7 @@ impl Store {
             .execute(&store.pool)
             .await
             .map_err(|_| StoreError::Database)?;
+        store.redact_pairing_codes().await?;
         Ok(store)
     }
 
@@ -172,11 +184,12 @@ impl Store {
             return Err(StoreError::NotPaired);
         }
         let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;
-        sqlx::query("INSERT INTO containers(chat_id,topic_id,instance_id,thread_id) VALUES(?,?,?,?) ON CONFLICT DO NOTHING")
-            .bind(chat).bind(topic).bind(instance).bind(thread).execute(&mut *tx).await.map_err(|_| StoreError::Database)?;
+        sqlx::query("INSERT INTO containers(bot_id,chat_id,topic_id,instance_id,thread_id) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING")
+            .bind(bot).bind(chat).bind(topic).bind(instance).bind(thread).execute(&mut *tx).await.map_err(|_| StoreError::Database)?;
         let row = sqlx::query(
-            "SELECT instance_id,thread_id FROM containers WHERE chat_id=? AND topic_id=?",
+            "SELECT instance_id,thread_id FROM containers WHERE bot_id=? AND chat_id=? AND topic_id=?",
         )
+        .bind(bot)
         .bind(chat)
         .bind(topic)
         .fetch_one(&mut *tx)
@@ -279,7 +292,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn a_new_bot_cannot_retarget_an_old_container_to_another_thread() {
+    async fn private_containers_are_bot_scoped_and_never_retarget_within_an_account() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).await.unwrap();
         for bot in [1, 2] {
@@ -291,8 +304,9 @@ mod tests {
             store.pairing().approve_pairing(&code, 2).await.unwrap();
         }
         store.bind(1, 100, 1, "host", "original").await.unwrap();
+        store.bind(2, 100, 1, "host", "different").await.unwrap();
         assert!(matches!(
-            store.bind(2, 100, 1, "host", "different").await,
+            store.bind(2, 100, 1, "host", "retargeted").await,
             Err(StoreError::ContainerConflict)
         ));
         assert!(matches!(

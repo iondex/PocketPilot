@@ -1,10 +1,11 @@
 use app::{
-    config::{self, Config, Host, SshBackend, TransportKind},
+    config::{self, Config, Host, TransportKind},
     credentials,
     storage::Store,
 };
 use clap::{Parser, Subcommand};
-use codex::{Client, Codex, Connection, SshOptions};
+use codex::{Client, Codex};
+use secrecy::ExposeSecret;
 use serde::Serialize;
 use session::{AgentProvider, SessionQuery};
 use std::{
@@ -17,7 +18,7 @@ use std::{
 #[command(
     name = "pocketpilot",
     version,
-    about = "Observe existing Codex sessions without changing their execution state"
+    about = "Telegram bridge for shared Codex sessions"
 )]
 struct Arguments {
     #[arg(long, global = true, default_value = "pocketpilot.toml")]
@@ -28,6 +29,28 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Check a deployment; --write uses a dedicated NEW probe session with the configured model.
+    Probe {
+        #[arg(long)]
+        workspace: String,
+        #[arg(long)]
+        write: bool,
+        #[arg(long, conflicts_with = "write")]
+        thread: Option<String>,
+    },
+    #[command(hide = true)]
+    SshAskpass {
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        attempt: String,
+        #[arg(long)]
+        config_hash: String,
+        #[arg(allow_hyphen_values = true)]
+        prompt: String,
+    },
+    /// Run the private-chat Telegram bridge until Ctrl-C or SIGTERM.
+    Serve,
     /// Validate configuration without making network connections.
     ConfigCheck {
         /// Also validate the inline token format (never prints its value).
@@ -108,6 +131,12 @@ enum Sessions {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
+    Probe(#[from] app::probe::Error),
+    #[error(transparent)]
+    Otp(#[from] app::otp::Error),
+    #[error(transparent)]
+    Service(#[from] app::service::Error),
+    #[error(transparent)]
     Config(#[from] config::ConfigError),
     #[error(transparent)]
     Rpc(#[from] codex::Error),
@@ -146,6 +175,18 @@ pub async fn run() -> Result<(), Error> {
     let args = Arguments::parse();
     let loaded = config::load(&args.config)?;
     let config = loaded.config;
+    if let Command::SshAskpass {
+        host,
+        attempt,
+        config_hash,
+        prompt,
+    } = &args.command
+    {
+        let answer = app::otp::answer(&config, host, attempt, config_hash, prompt).await?;
+        writeln!(std::io::stdout().lock(), "{}", answer.expose_secret())
+            .map_err(|_| Error::Output)?;
+        return Ok(());
+    }
     if let Command::ConfigCheck { credentials: check } = args.command {
         if check {
             let _ = credentials::read(config.telegram.as_ref().ok_or(Error::Selection)?)?;
@@ -156,11 +197,18 @@ pub async fn run() -> Result<(), Error> {
             workspaces: config.workspaces.len(),
             telegram_configured: config.telegram.is_some(),
             credentials_checked: check,
-            control_enabled: false,
+            control_enabled: config.providers.iter().any(|p| p.control_verified),
         });
     }
     let _logs = crate::telemetry::init(&config.logging).map_err(|_| Error::Logging)?;
     match args.command {
+        Command::Probe {
+            workspace,
+            write,
+            thread,
+        } => print(&app::probe::run(&config, &workspace, write, thread.as_deref()).await?)?,
+        Command::SshAskpass { .. } => unreachable!(),
+        Command::Serve => app::service::run(args.config).await?,
         Command::ConfigCheck { .. } => unreachable!(),
         Command::Doctor { connect, telegram } => doctor(&config, connect, telegram).await?,
         Command::TelegramCheck => print(&check_telegram(&config).await?)?,
@@ -246,7 +294,7 @@ pub async fn run() -> Result<(), Error> {
                 .iter()
                 .find(|h| h.id == provider.host_id)
                 .ok_or(Error::Selection)?;
-            let client = connect(host).await?;
+            let client = connect(host, &config).await?;
             let provider = Codex::new(provider.id.clone(), client);
             match command {
                 Sessions::List {
@@ -306,45 +354,8 @@ fn transport_name(kind: TransportKind) -> &'static str {
     }
 }
 
-async fn connect(host: &Host) -> Result<Client, Error> {
-    let connection = match host.transport {
-        TransportKind::LocalProxy => Connection::LocalProxy {
-            binary: host.codex_bin.clone(),
-            socket: host
-                .codex_control_socket
-                .as_ref()
-                .ok_or(Error::Selection)?
-                .into(),
-        },
-        TransportKind::Websocket => Connection::Websocket {
-            endpoint: host.endpoint.clone().ok_or(Error::Selection)?,
-        },
-        TransportKind::SshProxy => {
-            // OTP must never silently fall back to public-key-only BatchMode.
-            if host.backend == SshBackend::Russh
-                || host.authentication.totp.is_some()
-                || host.authentication.password.is_some()
-                || host.authentication.private_key_passphrase.is_some()
-            {
-                return Err(codex::Error::Unsupported.into());
-            }
-            Connection::SshProxy(SshOptions {
-                alias: host.ssh_alias.clone().ok_or(Error::Selection)?,
-                config: host.ssh_config.clone(),
-                binary: host.codex_bin.clone(),
-                socket: host.codex_control_socket.clone(),
-                connect_timeout: Duration::from_secs(host.timeouts.connect_seconds),
-                keepalive_seconds: host.timeouts.keepalive_seconds,
-                keepalive_missed: host.timeouts.keepalive_missed,
-            })
-        }
-    };
-    Ok(Client::connect(
-        connection,
-        Duration::from_secs(host.timeouts.proxy_ready_seconds),
-        Duration::from_secs(host.timeouts.rpc_read_seconds),
-    )
-    .await?)
+async fn connect(host: &Host, config: &Config) -> Result<Client, Error> {
+    Ok(app::connections::connect(host, config).await?)
 }
 
 async fn check_telegram(config: &Config) -> Result<telegram::Identity, Error> {
@@ -373,9 +384,10 @@ async fn doctor(config: &Config, probe: bool, telegram: bool) -> Result<(), Erro
     }
     let mut tasks = tokio::task::JoinSet::new();
     for host in config.hosts.clone() {
+        let config = config.clone();
         tasks.spawn(async move {
             let (connected, reason) = if probe {
-                match connect(&host).await {
+                match connect(&host, &config).await {
                     Ok(_) => (Some(true), None),
                     Err(error) => (Some(false), Some(error.to_string())),
                 }
@@ -383,11 +395,14 @@ async fn doctor(config: &Config, probe: bool, telegram: bool) -> Result<(), Erro
                 (None, None)
             };
             HostCheck {
-                id: host.id,
+                id: host.id.clone(),
                 configured: true,
                 connected,
                 reason,
-                control_verified: false,
+                control_verified: config
+                    .providers
+                    .iter()
+                    .any(|p| p.host_id == host.id && p.control_verified),
             }
         });
     }
@@ -404,8 +419,8 @@ async fn doctor(config: &Config, probe: bool, telegram: bool) -> Result<(), Erro
     print(&Report {
         hosts,
         telegram,
-        control_enabled: false,
-        note: "Read-only foundation. Shared-runtime and disconnect behavior still require live validation.",
+        control_enabled: config.providers.iter().any(|p| p.control_verified),
+        note: "Read-only probe. Control flags are operator attestations for each configured shared runtime.",
     })
 }
 

@@ -6,11 +6,11 @@ Telegram 只接收私聊业务，不支持群、supergroup、channel 或在群�
 
 配对按 `(bot_id, user_id)` 持久化在自有 SQLite，chat_id 必须是该用户自己的私聊地址。配对后可使用当前配置允许的所有 host/workspace；不同用户各有自己的私聊 topic/状态卡/绑定，同一 Codex session 的操作仍由同一 actor 串行化。
 
-当前已实现私聊访问判定、配对账本和 CLI 批准/撤销。Telegram poller 和以下消息入口尚未接通，不能把 CLI 基础误报为机器人已可完整使用。
+私聊访问判定、持久 poller、配对账本、CLI 批准/撤销、菜单、topic、历史和输入处理已接通。自动测试覆盖本地 API fixtures；实际手机联调步骤见 [测试入口](../testing.md)。
 
 ## 2. CLI 配对
 
-计划中的 `/start` 流程：
+`/start` 流程：
 
 1. 验证消息是用户本人的私聊；群聊静默忽略，不创建配对申请、不泄漏 workspace 信息。
 2. 未配对用户只获得一个短期一次性码和“请在运行 PocketPilot 的机器上批准”的提示；此时不能列会话或触发 agent。
@@ -36,7 +36,7 @@ CLI 使用独立的配对管理数据库连接，不获取服务主锁、不执�
 
 每个已配对用户在与 bot 的私聊内选择 workspace/session，一个具体 thread 对应一个 topic；控制菜单位于私聊入口。使用 Telegram 支持的 bot 私聊 topic 模式，不创建群聊作为替代。
 
-实现前检查当前 Bot API、SDK 与 bot 设置是否支持私聊 topics。未启用时明确提示需开启相应 bot topic 模式；不能声称所有普通私聊 bot 默认都可创建 topic。SDK 必须保留正确的 message_thread_id/thread_id 类型。
+getMe 的 has_topics_enabled 必须为 true，当前 SDK 已通过私聊 thread_id 保留测试。未启用时明确提示需开启相应 bot topic 模式；不能声称所有普通私聊 bot 默认都可创建 topic。SDK 必须保留正确的 message_thread_id/thread_id 类型。
 
 ```text
 PocketPilot 私聊
@@ -51,7 +51,7 @@ PocketPilot 私聊
 
 `/workspaces` 显示当前配置的 host/workspace；选择工作区后提供已有会话、新建、已绑定与诊断。按精确 cwd 和显式关联 worktree 分页查询，不能把同目录历史视作同一个执行实例。
 
-选择已有会话先显示完整信息与状态新鲜度；进入和绑定只读，不 resume。topic 创建用 provisioning saga，保存返回 ID；结果未知不再次自动创建。重复绑定返回原 topic。同一容器解绑后只可回连原 thread，更换 session 必须新容器。
+选择已有会话先显示完整信息与状态新鲜度；进入和绑定只读，不 resume。topic 创建用 provisioning saga，保存返回 ID；结果未知不再次自动创建。重复绑定返回原 topic。同一 bot 私聊中的容器解绑后只可回连原 thread，更换 session 必须新容器。不同 bot 的私聊按 account 隔离。
 
 工作区增改仍通过 ConfigWriter 原子更新根目录单一 TOML；配对用户可使用允许根路径下的 workspace，不可从聊天指定任意 SSH 命令、binary 或参数。
 

@@ -1,6 +1,6 @@
 # 探索结论与可行性边界
 
-日期：2026-10-15。本文把「官方协议支持」「本机静态验证」「源码行为」「尚待实际验证」分开。研究范围是 Rust 实现的 Telegram + Codex MVP，不在本阶段实现机器人。
+日期：2026-10-15（初始探索快照；当前真实验收见 [实现记录](implementation-checks.md)）。本文把「官方协议支持」「本机静态验证」「源码行为」「尚待实际验证」分开。研究范围是 Rust 实现的 Telegram + Codex MVP。
 
 修订部署前提：本机已有管理本地和 SSH 任务的 Codex 体系，PocketPilot 默认本机启动；它聚合允许实例，不假定一个本地 RPC endpoint 代理所有远程任务。SSH 的 desktop/CLI/PocketPilot 应连相同远端 daemon。详见 [部署与生命周期契约](../design/connections-and-config.md)。
 
@@ -84,7 +84,7 @@ PocketPilot 的 Workspace ID 与桌面的 projectId 独立。手动登记 cwd �
 
 | 传输 | 说明 | 采用方式 |
 | --- | --- | --- |
-| stdio | 每行一个 JSON 对象 | 用于本地/SSH **proxy 进程**的管道，不把 fresh app-server 当默认 |
+| stdio | 原生 stdio app-server 可用 JSONL，但现有 stdio 进程不能被第二个客户端直接附加 | PocketPilot 不启动 fresh app-server；官方 proxy 管道实际传递 WebSocket 字节帧 |
 | TCP WebSocket | 每个 text frame 一个消息 | 连接已有 listener，使用 tokio-tungstenite |
 | Unix socket | 官方说明为 socket 上 WebSocket 握手 | 本地现有 socket 可选；优先 proxy，避免自行猜测 wire framing |
 | `off` | 不暴露本地连接 | 不尝试绕过，报告不支持共享接入 |
@@ -125,7 +125,7 @@ ssh -T \
 
 若只有已存在 WebSocket，可用 OpenSSH `-L` 转发到远程 loopback；监听绑定本地 loopback，验证转发是否成功。纯 WebSocket 不通过公网明文暴露。SSH 复用现有 ssh_config、known_hosts、密钥与 ProxyJump，默认不启用 agent forwarding。
 
-配置 TOTP seed 的 keyboard-interactive profile 使用 russh 原生认证回调 + totp-rs，分别设置 connect/auth/proxy/RPC 超时；不使用 BatchMode 命令伪称支持 OTP。详见 [SSH 与 OTP](../design/connections-and-config.md)。
+当前实现已选系统 OpenSSH + 受限 SSH_ASKPASS + totp-rs；含秘密的 profile 使用 BatchMode=no 和严格的已配置挑战匹配。russh 为早期候选，未作为生产依赖。连接/auth/proxy 使用组合启动预算，读 RPC 与写回执超时独立。详见 [SSH 与 OTP](../design/connections-and-config.md)。
 
 ## 5. 会话共享、订阅与“不影响状态”的精确定义
 

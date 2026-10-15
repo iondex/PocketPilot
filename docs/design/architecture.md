@@ -1,6 +1,6 @@
 # 架构、Rust 接口与数据设计
 
-状态：建议实施的设计契约，非已实现代码。接口示例用于约束责任；命名和少量类型可在实施时调整，但生命周期与安全约束不能弱化。
+状态：架构契约与接口设计。当前已实现 Telegram 服务和可选 Discord 原型；下方接口示例表达职责，部分名称/高级能力仍为设计目标。实际文件与验证边界见实施计划和验证记录，不能将示例当作已导出的 Rust API。
 
 ## 1. 架构目标
 
@@ -17,7 +17,7 @@ PocketPilot 是会话的附加客户端和聊天平台桥接器。Codex 继续�
 ```mermaid
 flowchart TB
   T[Telegram adapter] --> I[持久化 Inbox + 授权]
-  D[未来 Discord adapter] --> I
+  D[可选 Discord adapter] --> I
   I --> C[应用服务 / Command router]
   C --> A[每 thread 串行 SessionActor]
   A --> P[AgentProvider]
@@ -292,7 +292,7 @@ Claude 后续可通过远端 Rust shim 兼容 Codex wire 子集，保留不同 p
 
 Discord adapter 把 workspace 映射为 category、session 为 text channel，使用同样的 inbox/operations/outbox。平台拥有能力多不代表 provider 可停止；管理员权限不绕过应用的 host/workspace 授权。
 
-Lark adapter 使用 region/tenant/chat/thread/root-message 地址、根状态卡和线程回复；能力和 Rust 生态取舍见 [后续扩展](../future/integrations.md)。SSH backend 增加 russh/TOTP，传输超时逐 host 配置，不能把系统 OpenSSH 等同于自动 keyboard-interactive 支持。
+Lark adapter 使用 region/tenant/chat/thread/root-message 地址、根状态卡和线程回复；能力和 Rust 生态取舍见 [后续扩展](../future/integrations.md)。SSH 使用系统 OpenSSH 加受限 askpass/TOTP，传输超时逐 host 配置；具体认证与热更新边界见连接文档。
 
 ## 11. 日志与诊断
 

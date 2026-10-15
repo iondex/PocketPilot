@@ -1,0 +1,831 @@
+//! In-process protocol and Telegram fixtures; no real user account is contacted.
+use super::*;
+use codex::protocol as p;
+use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
+use telegram::api::Api;
+use tokio::{net::TcpStream, task::JoinHandle};
+use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
+use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path_regex},
+};
+
+const THREAD: &str = r#"{"id":"thread","sessionId":"thread","cliVersion":"0.162.1","projectId":null,"historyMode":"paginated","preview":"Fixture title","cwd":"/workspace","ephemeral":false,"source":"appServer","modelProvider":"fixture","createdAt":100,"updatedAt":100,"status":{"type":"idle"},"turns":[]}"#;
+#[derive(Deserialize)]
+struct Frame {
+    id: Option<p::RequestId>,
+    #[serde(flatten)]
+    method: Method,
+}
+#[derive(Deserialize)]
+#[serde(tag = "method", content = "params")]
+enum Method {
+    #[serde(rename = "initialize")]
+    Initialize(p::InitializeParams),
+    #[serde(rename = "initialized")]
+    Initialized,
+    #[serde(rename = "thread/loaded/list")]
+    Loaded(p::ThreadLoadedListParams),
+    #[serde(rename = "thread/list")]
+    List(p::ThreadListParams),
+    #[serde(rename = "thread/read")]
+    Read(p::ThreadReadParams),
+    #[serde(rename = "thread/turns/list")]
+    Turns(p::ThreadTurnsListParams),
+    #[serde(rename = "thread/start")]
+    Create(p::ThreadStartParams),
+    #[serde(rename = "thread/resume")]
+    Resume(p::ThreadResumeParams),
+    #[serde(rename = "turn/start")]
+    Start(p::TurnStartParams),
+    #[serde(rename = "turn/steer")]
+    Steer(p::TurnSteerParams),
+}
+struct State {
+    status: p::ThreadStatus,
+    items: Vec<p::ThreadItem>,
+    requests: Vec<&'static str>,
+    drop_write: bool,
+    legacy: bool,
+}
+impl State {
+    fn thread(&self) -> p::Thread {
+        let mut thread: p::Thread = serde_json::from_str(THREAD).unwrap();
+        thread.status = self.status.clone();
+        if self.legacy {
+            thread.history_mode = p::ThreadHistoryMode::Legacy;
+        }
+        thread
+    }
+    fn turn(&self) -> p::Turn {
+        let mut turn: p::Turn = serde_json::from_str(
+            r#"{"id":"turn","status":"inProgress","itemsView":"full","items":[]}"#,
+        )
+        .unwrap();
+        turn.items = self.items.clone();
+        turn.status = if matches!(self.status, p::ThreadStatus::Active(_)) {
+            p::TurnStatus::InProgress
+        } else {
+            p::TurnStatus::Completed
+        };
+        turn
+    }
+}
+async fn reply<T: Serialize>(socket: &mut WebSocketStream<TcpStream>, id: p::RequestId, result: T) {
+    #[derive(Serialize)]
+    struct Response<T> {
+        id: p::RequestId,
+        result: T,
+    }
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&Response { id, result })
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+}
+
+struct Fixture {
+    _directory: tempfile::TempDir,
+    telegram: MockServer,
+    service: Arc<Service>,
+    state: Arc<Mutex<State>>,
+    _server: JoinHandle<()>,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        self._server.abort();
+    }
+}
+impl Fixture {
+    async fn new() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let telegram = MockServer::start().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let file = directory.path().join("pocketpilot.toml");
+        std::fs::write(
+            &file,
+            format!(
+                r#"
+[telegram]
+token="1:abcdefghijklmnopqrstuvwxyz"
+[[hosts]]
+id="host"
+name="Fixture"
+transport="websocket"
+endpoint="{endpoint}"
+allowed_workspace_roots=["/workspace"]
+[[providers]]
+id="instance"
+host_id="host"
+kind="codex"
+connection_mode="existing_proxy"
+compatibility_profile="fixture"
+control_verified=true
+[[workspaces]]
+id="workspace"
+provider_id="instance"
+name="Fixture workspace"
+short_name="FX"
+cwd="/workspace"
+[delivery]
+telegram_messages_per_minute=60000
+"#
+            ),
+        )
+        .unwrap();
+        let config = Arc::new(ConfigFile::open(file).unwrap());
+        let store = Store::open(&config.snapshot().config.service.data_dir)
+            .await
+            .unwrap();
+        let api =
+            Api::local_fixture("1:abcdefghijklmnopqrstuvwxyz".into(), &telegram.uri()).unwrap();
+        let state=Arc::new(Mutex::new(State{status:p::ThreadStatus::Active(vec![]),items:vec![
+            serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"original question"}]}"#).unwrap(),
+            serde_json::from_str(r#"{"type":"agentMessage","id":"a","text":"original answer","phase":"final_answer"}"#).unwrap(),
+            serde_json::from_str(r#"{"type":"reasoning","id":"r","summary":["must never appear in Telegram"]}"#).unwrap(),
+        ],requests:vec![],drop_write:false,legacy:false}));
+        let server_state = state.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                let state = server_state.clone();
+                tokio::spawn(async move {
+                    let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(Message::Text(text))) = socket.next().await {
+                        let frame: Frame = serde_json::from_str(&text).unwrap();
+                        let mut state = state.lock().await;
+                        match frame.method {
+                            Method::Initialize(params) => {
+                                assert_eq!(params.client_info.name, "pocketpilot");
+                                state.requests.push("initialize");
+                                let response:p::InitializeResponse=serde_json::from_str(r#"{"codexHome":"/fixture","userAgent":"fixture","platformFamily":"unix","platformOs":"test"}"#).unwrap();
+                                reply(&mut socket, frame.id.unwrap(), response).await;
+                            }
+                            Method::Initialized => state.requests.push("initialized"),
+                            Method::Loaded(params) => {
+                                assert!(params.limit.is_some());
+                                state.requests.push("thread/loaded/list");
+                                reply(
+                                    &mut socket,
+                                    frame.id.unwrap(),
+                                    p::ThreadLoadedListResponse {
+                                        data: vec!["thread".into()],
+                                        next_cursor: None,
+                                    },
+                                )
+                                .await;
+                            }
+                            Method::List(params) => {
+                                assert!(params.use_state_db_only.unwrap_or(false));
+                                state.requests.push("thread/list");
+                                reply(
+                                    &mut socket,
+                                    frame.id.unwrap(),
+                                    p::ThreadListResponse {
+                                        data: vec![],
+                                        next_cursor: None,
+                                        backwards_cursor: None,
+                                    },
+                                )
+                                .await;
+                            }
+                            Method::Read(params) => {
+                                assert_eq!(params.thread_id, "thread");
+                                let mut thread = state.thread();
+                                if params.include_turns == Some(true) {
+                                    thread.turns = vec![state.turn()];
+                                    state.requests.push("thread/read/full");
+                                } else {
+                                    state.requests.push("thread/read");
+                                }
+                                reply(
+                                    &mut socket,
+                                    frame.id.unwrap(),
+                                    p::ThreadReadResponse { thread },
+                                )
+                                .await;
+                            }
+                            Method::Turns(params) => {
+                                assert_eq!(params.thread_id, "thread");
+                                state.requests.push("thread/turns/list");
+                                reply(
+                                    &mut socket,
+                                    frame.id.unwrap(),
+                                    p::ThreadTurnsListResponse {
+                                        data: vec![state.turn()],
+                                        next_cursor: None,
+                                        backwards_cursor: None,
+                                    },
+                                )
+                                .await;
+                            }
+                            Method::Create(params) => {
+                                assert_eq!(params.cwd.as_deref(), Some("/workspace"));
+                                assert!(
+                                    params.approval_policy.is_none() && params.sandbox.is_none()
+                                );
+                                state.requests.push("thread/start");
+                                state.status = p::ThreadStatus::Idle;
+                                let response:p::ThreadStartResponse=serde_json::from_str(&format!(r#"{{"thread":{THREAD},"approvalPolicy":"on-request","approvalsReviewer":"user","cwd":"/workspace","model":"fixture","modelProvider":"fixture","sandbox":{{"type":"readOnly"}}}}"#)).unwrap();
+                                reply(&mut socket, frame.id.unwrap(), response).await;
+                            }
+                            Method::Resume(params) => {
+                                assert_eq!(params.thread_id, "thread");
+                                assert_eq!(params.exclude_turns, Some(true));
+                                assert!(
+                                    params.model.is_none()
+                                        && params.cwd.is_none()
+                                        && params.approval_policy.is_none()
+                                        && params.sandbox.is_none()
+                                );
+                                state.requests.push("thread/resume");
+                                state.status = p::ThreadStatus::Idle;
+                                let response:p::ThreadResumeResponse=serde_json::from_str(&format!(r#"{{"thread":{THREAD},"approvalPolicy":"on-request","approvalsReviewer":"user","cwd":"/workspace","model":"fixture","modelProvider":"fixture","sandbox":{{"type":"readOnly"}}}}"#)).unwrap();
+                                reply(&mut socket, frame.id.unwrap(), response).await;
+                            }
+                            Method::Start(params) => {
+                                assert!(
+                                    params.approval_policy.is_none()
+                                        && params.sandbox_policy.is_none()
+                                        && params.model.is_none()
+                                        && params.cwd.is_none()
+                                );
+                                state.requests.push("turn/start");
+                                state.status = p::ThreadStatus::Active(vec![]);
+                                let id = format!("u{}", state.items.len());
+                                state.items.push(p::ThreadItem::UserMessage {
+                                    id,
+                                    content: params.input,
+                                    client_id: params.client_user_message_id,
+                                });
+                                if state.drop_write {
+                                    break;
+                                }
+                                reply(
+                                    &mut socket,
+                                    frame.id.unwrap(),
+                                    p::TurnStartResponse { turn: state.turn() },
+                                )
+                                .await;
+                            }
+                            Method::Steer(params) => {
+                                assert_eq!(params.expected_turn_id, "turn");
+                                state.requests.push("turn/steer");
+                                let id = format!("u{}", state.items.len());
+                                state.items.push(p::ThreadItem::UserMessage {
+                                    id,
+                                    content: params.input,
+                                    client_id: params.client_user_message_id,
+                                });
+                                if state.drop_write {
+                                    break;
+                                }
+                                reply(
+                                    &mut socket,
+                                    frame.id.unwrap(),
+                                    p::TurnSteerResponse {
+                                        turn_id: "turn".into(),
+                                    },
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        let service = Arc::new(Service {
+            config,
+            connections: Arc::new(Connections::new(store.clone())),
+            store,
+            api,
+            bot: 1,
+            topics_enabled: true,
+            pair_attempts: Mutex::new(HashMap::new()),
+            history_slots: Semaphore::new(4),
+        });
+        Mock::given(method("POST")).and(path_regex("(?i).*/createforumtopic$")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":{"message_thread_id":11,"name":"fixture","icon_color":7322096}}"#)).mount(&telegram).await;
+        Mock::given(method("POST")).and(path_regex("(?i).*/(sendmessage|senddocument|editmessagetext)$")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":{"message_id":700,"date":100,"chat":{"id":10,"type":"private","first_name":"Fixture"},"text":"fixture"}}"#)).mount(&telegram).await;
+        Mock::given(method("POST"))
+            .and(path_regex("(?i).*/(editforumtopic|answercallbackquery)$"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":true}"#),
+            )
+            .mount(&telegram)
+            .await;
+        Self {
+            _directory: directory,
+            telegram,
+            service,
+            state,
+            _server: server,
+        }
+    }
+    async fn pair(&self) {
+        let code = self
+            .service
+            .store
+            .pairing()
+            .request_pairing(1, 10, 10, true, now())
+            .await
+            .unwrap();
+        self.service
+            .store
+            .pairing()
+            .approve_pairing(&code, now())
+            .await
+            .unwrap();
+    }
+    async fn outputs(&self) -> Vec<Outbound> {
+        sqlx::query_scalar::<_, String>("SELECT payload FROM deliveries ORDER BY rowid")
+            .fetch_all(&self.service.store.pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| serde_json::from_str(&p).unwrap())
+            .collect()
+    }
+}
+fn input(id: u32, topic: i32, text: &str) -> Input {
+    Input {
+        update_id: id,
+        event_key: format!("message:10:{id}"),
+        user: 10,
+        chat: 10,
+        topic,
+        date: now(),
+        text: text.into(),
+        callback: None,
+        callback_id: None,
+        message_id: id as i32,
+        config_hash: None,
+    }
+}
+
+#[cfg(feature = "discord")]
+#[tokio::test]
+async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receipts() {
+    use discord::{Backend, Command as DCommand, Input as DInput};
+    use wiremock::matchers::body_string_contains;
+    let fixture = Fixture::new().await;
+    let http = MockServer::start().await;
+    let guild = r#"{"id":"2","name":"Fixture","owner_id":"10","verification_level":0,"default_message_notifications":0,"explicit_content_filter":0,"roles":[],"emojis":[],"features":[],"mfa_level":0,"system_channel_flags":0,"premium_tier":0,"preferred_locale":"en-US","nsfw_level":0,"stickers":[],"premium_progress_bar_enabled":false}"#;
+    Mock::given(method("GET"))
+        .and(path_regex(".*/guilds/2$"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(guild))
+        .mount(&http)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/guilds/2/channels$"))
+        .and(body_string_contains("\"type\":4"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"id":"9","guild_id":"2","type":4,"name":"Fixture category"}"#),
+        )
+        .with_priority(1)
+        .mount(&http)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(".*/guilds/2/channels$"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"id":"11","guild_id":"2","type":0,"name":"Fixture session"}"#),
+        )
+        .with_priority(10)
+        .mount(&http)
+        .await;
+    let api = discord::Api::local_fixture(&http.uri(), 2, 1);
+    let (_stop, receiver) = watch::channel(false);
+    let service = crate::discord_service::Service::local_fixture(
+        fixture.service.config.clone(),
+        fixture.service.store.clone(),
+        fixture.service.connections.clone(),
+        receiver,
+    );
+    let make = |id, channel, command| DInput {
+        id,
+        bot: 1,
+        guild: 2,
+        channel,
+        user: 10,
+        date: now(),
+        command,
+    };
+    let open = make(
+        1,
+        7,
+        DCommand::Open {
+            workspace: "FX".into(),
+            thread: "thread".into(),
+        },
+    );
+    assert!(service.handle(&api, open).await.unwrap().contains("<#11>"));
+    let history = fixture
+        .service
+        .store
+        .discord_pending(1, 2, now())
+        .await
+        .unwrap();
+    assert_eq!(history.len(), 1);
+    assert!(history[0].payload.contains("original question"));
+    assert!(!history[0].payload.contains("must never appear"));
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .any(|r| matches!(*r, "thread/resume" | "turn/start" | "turn/steer"))
+    );
+    let ask = make(
+        2,
+        11,
+        DCommand::Ask {
+            text: "continue".into(),
+        },
+    );
+    service.handle(&api, ask.clone()).await.unwrap();
+    service.handle(&api, ask).await.unwrap();
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/steer")
+            .count(),
+        1
+    );
+    let mut denied = make(
+        3,
+        11,
+        DCommand::Ask {
+            text: "unauthorized".into(),
+        },
+    );
+    denied.user = 20;
+    assert!(service.handle(&api, denied).await.is_err());
+    fixture.state.lock().await.drop_write = true;
+    let lost = make(
+        4,
+        11,
+        DCommand::Ask {
+            text: "lost receipt".into(),
+        },
+    );
+    assert!(service.handle(&api, lost.clone()).await.is_err());
+    assert!(service.handle(&api, lost).await.is_err());
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/steer")
+            .count(),
+        2
+    );
+    service
+        .handle(&api, make(5, 11, DCommand::Unbind))
+        .await
+        .unwrap();
+    assert!(
+        service
+            .handle(
+                &api,
+                make(
+                    6,
+                    11,
+                    DCommand::Ask {
+                        text: "unbound".into()
+                    }
+                )
+            )
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        fixture.state.lock().await.status,
+        p::ThreadStatus::Active(_)
+    ));
+}
+
+#[tokio::test]
+async fn private_pairing_topic_history_and_steer_form_a_durable_workflow() {
+    let fixture = Fixture::new().await;
+    fixture
+        .service
+        .handle(&input(1, 0, "/workspaces"))
+        .await
+        .unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    fixture
+        .service
+        .handle(&input(2, 0, "/start"))
+        .await
+        .unwrap();
+    assert!(
+        !fixture
+            .service
+            .store
+            .pairing()
+            .is_paired(1, 10, 10)
+            .await
+            .unwrap()
+    );
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(3, 0, "/sessions workspace"))
+        .await
+        .unwrap();
+    let outputs = fixture.outputs().await;
+    let button = outputs
+        .last()
+        .unwrap()
+        .buttons
+        .first()
+        .unwrap()
+        .first()
+        .unwrap()
+        .data
+        .clone();
+    let mut click = input(4, 0, "");
+    click.callback = Some(button);
+    fixture.service.handle(&click).await.unwrap();
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let bodies = fixture.outputs().await;
+    let history = bodies
+        .iter()
+        .find(|b| b.text.starts_with("会话历史"))
+        .unwrap();
+    assert!(history.text.contains("original question") && history.text.contains("original answer"));
+    assert!(!history.text.contains("must never appear"));
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .any(|r| *r == "thread/resume" || *r == "turn/start")
+    );
+    fixture
+        .service
+        .handle(&input(5, 11, "follow up"))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(5, 11, "follow up"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/steer")
+            .count(),
+        1
+    );
+    let (stop, receiver) = watch::channel(false);
+    let sender = tokio::spawn(fixture.service.clone().deliver(receiver));
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    stop.send(true).unwrap();
+    sender.await.unwrap();
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    assert!(
+        requests
+            .iter()
+            .any(|r| r.url.path().to_ascii_lowercase().ends_with("sendmessage"))
+    );
+}
+
+#[tokio::test]
+async fn a_lost_write_receipt_cannot_cause_a_second_steer() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .store
+        .bind(1, 10, 11, "instance", "thread")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .set_workspace(1, 10, 11, "workspace")
+        .await
+        .unwrap();
+    fixture.state.lock().await.drop_write = true;
+    let event = input(1, 11, "uncertain steer");
+    assert!(matches!(
+        fixture.service.handle(&event).await,
+        Err(Error::Unknown)
+    ));
+    assert!(matches!(
+        fixture.service.handle(&event).await,
+        Err(Error::Unknown)
+    ));
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/steer")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn new_session_requires_confirmation_and_an_unloaded_session_resumes_only_on_user_input() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1, 0, "/new workspace first task"))
+        .await
+        .unwrap();
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .contains(&"thread/start")
+    );
+    let mut click = input(2, 0, "");
+    click.callback = Some(
+        fixture.outputs().await.last().unwrap().buttons[0][0]
+            .data
+            .clone(),
+    );
+    fixture.service.handle(&click).await.unwrap();
+    assert!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .contains(&"thread/start")
+    );
+    fixture.state.lock().await.status = p::ThreadStatus::NotLoaded;
+    fixture
+        .service
+        .handle(&input(3, 11, "/status"))
+        .await
+        .unwrap();
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .contains(&"thread/resume")
+    );
+    fixture
+        .service
+        .handle(&input(4, 11, "resume task"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "thread/resume")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn waiting_approval_still_accepts_steer_without_answering_the_approval() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .store
+        .bind(1, 10, 11, "instance", "thread")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .set_workspace(1, 10, 11, "workspace")
+        .await
+        .unwrap();
+    fixture.state.lock().await.status =
+        p::ThreadStatus::Active(vec![p::ThreadActiveFlag::WaitingOnApproval]);
+    fixture
+        .service
+        .handle(&input(1, 11, "/steer investigate another file meanwhile"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/steer")
+            .count(),
+        1
+    );
+    assert!(matches!(
+        fixture.state.lock().await.status,
+        p::ThreadStatus::Active(_)
+    ));
+}
+
+#[tokio::test]
+async fn display_and_rate_changes_preserve_authorized_live_outputs() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    let before = fixture.outputs().await;
+    let history = before
+        .iter()
+        .find(|b| b.text.starts_with("会话历史"))
+        .unwrap();
+    let scope = history.scope.as_ref().unwrap();
+    let path = fixture.service.config.path.clone();
+    let contents = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("Fixture workspace", "Renamed workspace")
+        .replace(
+            "telegram_messages_per_minute=60000",
+            "telegram_messages_per_minute=100",
+        );
+    std::fs::write(path, contents).unwrap();
+    fixture.service.config.reload().unwrap();
+    assert!(
+        fixture
+            .service
+            .scope_allowed(&fixture.service.config.snapshot().config, scope)
+    );
+    fixture
+        .service
+        .handle(&input(2, 11, "/rename new display name"))
+        .await
+        .unwrap();
+    let binding = fixture
+        .service
+        .store
+        .binding(1, 10, 11)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(history.binding_revision, Some(binding.revision));
+}
+
+#[tokio::test]
+async fn declared_legacy_history_uses_only_read_and_steer_without_resume() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture.state.lock().await.legacy = true;
+    fixture
+        .service
+        .handle(&input(1, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(2, 11, "/steer legacy follow up"))
+        .await
+        .unwrap();
+    let state = fixture.state.lock().await;
+    assert!(state.requests.contains(&"thread/read/full"));
+    assert!(state.requests.contains(&"turn/steer"));
+    assert!(!state.requests.contains(&"thread/turns/list"));
+    assert!(!state.requests.contains(&"thread/resume"));
+}

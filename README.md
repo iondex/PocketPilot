@@ -1,65 +1,56 @@
 # PocketPilot
 
-Rust 实现的 Codex 会话桥接器：默认在本机运行，通过 Telegram topic 查看、创建和继续本地/SSH 会话，运行中支持 steer。后续规划 Lark、Discord 和 Claude shim。
+Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 topic 管理本地/SSH app-server 会话。提供可选 Discord 原型；Lark 和 Claude shim 保留后续规划。
 
-**已实现可运行的只读 CLI 基础版。** 包含配置/凭据校验、tracing、官方 schema 生成协议类型、Codex 只读列表/状态/历史、本地/普通 SSH/WS transport、SSH 配置发现和 SQLite 基础账本。完整 Telegram bot、OTP、热更新、续轮/steer 尚未完成，控制能力始终关闭。
-
-## 从这里开始
-
-- [文档目录与阅读路线](docs/README.md)
-- [细化实施计划](docs/planning/implementation.md)
-- [52 项验收场景](docs/planning/acceptance.md)
-- [不含秘密的配置示例](pocketpilot.example.toml)
+**Telegram 功能链路已接通，SSH 共享实例控制已验证，等待你测试真实私聊交互。** 包括 CLI 配对、工作区与会话菜单、topic 绑定、历史集合、创建/续轮/steer、状态卡、持久收发与消息合并、OpenSSH/TOTP 和根配置热更新。具体部署状态与验证边界见 [测试入口](docs/testing.md) 和 [验证记录](docs/research/implementation-checks.md)。
 
 ## 运行
 
-需要当前 stable Rust（声明最低 1.94）。
+需要 stable Rust（声明最低 1.94）和当前受测 Codex CLI。官方协议由 build.rs 动态生成到 Cargo OUT_DIR，不提交 schema、生成代码或版本快照。
+
+普通设置和凭据都在根目录 pocketpilot.toml；[公开示例](pocketpilot.example.toml) 不含秘密。配置不 include、不读取 .env，没有 Telegram chat/user 允许列表。真实配置、数据库和日志已被 Git 忽略。
 
 ```sh
-cargo run -p app --bin pocketpilot -- --help
-cargo run -p app --bin pocketpilot -- config-check --credentials
-cargo run -p app --bin pocketpilot -- doctor
-cargo run -p app --bin pocketpilot -- telegram-check
+cargo build --workspace --locked
+./target/debug/pocketpilot config-check --credentials
+./target/debug/pocketpilot telegram-check
+./target/debug/pocketpilot doctor --connect
+./target/debug/pocketpilot serve
 ```
 
-config-check 只检查文件，doctor 默认不连接网络。telegram-check 仅调用账号/webhook 只读 API，不发送消息；根配置中的令牌已通过本机只读账号检查。需要连接已有服务时先填写实际 endpoint/workspace，再使用 doctor --connect 或 sessions 子命令。
+只连接已经运行的 app-server，缺少 endpoint 时明确失败。Desktop、CLI 和 PocketPilot 必须连接同一执行实例；相同历史目录不能证明共享。部署前先读 [测试入口](docs/testing.md)。
+
+## Telegram
+
+只接受用户本人的私聊。发送 /start 取得申请码，然后在本机另一个终端批准：
 
 ```sh
-cargo run -p app --bin pocketpilot -- hosts discover
-cargo run -p app --bin pocketpilot -- sessions --workspace WORKSPACE_ID list
-cargo run -p app --bin pocketpilot -- sessions --workspace WORKSPACE_ID history THREAD_ID --latest
+./target/debug/pocketpilot pair approve CODE
+./target/debug/pocketpilot pair pending
+./target/debug/pocketpilot pair list
+./target/debug/pocketpilot pair revoke BOT_ID USER_ID
 ```
 
-默认读取根目录 pocketpilot.toml，token 直接在 [telegram].token；不读取 .env、不支持 include。根目录 pocketpilot.example.toml 是无秘密的模板。私有配置已准备好，host/workspace 尚需按部署填写；没有配置 chat/user 允许列表。
+批准后再次 /start，选择工作区和已有会话。新建使用 /new WORKSPACE_ID 任务，确认后创建；会话 topic 内直接发送文本即可续轮或 steer。/status、/history、/info、/rename 和 /unbind 均可使用。
 
-私聊配对的本机管理入口：
+空闲会话首次展示最后用户输入和对应 final；活跃会话展示一个完整的可读历史集合，超长使用单个附件。只转发可见 user/agent/plan 文本，过滤工具和推理。短时输出进入持久批次，同一私聊的所有 topics 共享速率预算。
+
+## 约定
+
+- 业务写入仅创建、用户发起的 resume、续轮和带 expectedTurnId 的 steer；没有停止、取消、审批代答或 agent 服务管理接口。
+- 启停、崩溃、重连和配置 reload 只改变桥接连接，不自动恢复或重发 agent 输入；结果未知时先核对。
+- 默认只读。provider 的 control_verified 是针对该共享执行实例的部署确认；doctor --connect 本身只检查连接。
+- SSH 使用系统 OpenSSH 的有效配置、known_hosts、心跳和认证链；TOTP seed 保留在根 TOML，通过受限 askpass responder 回答已配置的挑战。
+- host/workspace/速率支持热更新。执行地址改变须使用新的 provider ID；原平台容器不能换绑其他 session。
+- crate 名称为 session、codex、telegram、discord、app；源码直接平铺在各 crate 的 src/ 下，binary 仍叫 pocketpilot。
+
+[文档目录](docs/README.md) · [实施计划](docs/planning/implementation.md) · [验收清单](docs/planning/acceptance.md) · [协议生成](docs/design/protocol-generation.md)
+
+## Discord 原型
 
 ```sh
-cargo run -p app --bin pocketpilot -- pair pending
-cargo run -p app --bin pocketpilot -- pair approve CODE
-cargo run -p app --bin pocketpilot -- pair list
-cargo run -p app --bin pocketpilot -- pair revoke BOT_ID USER_ID
+cargo build -p app --features discord --locked
+./target/debug/pocketpilot serve
 ```
 
-配对账本/CLI 已实现；私聊 /start 生成并发送申请码的 bot 消息入口仍待 poller 接通。群聊不会获得业务访问。
-
-协议在构建时动态生成，见 [生成说明](docs/design/protocol-generation.md)，源码全部是各 crate 的 src/ 平铺文件。docs 不包含 JSON。
-
-## 当前约定
-
-| 范围 | 决策 |
-| --- | --- |
-| crate 名称 | `session`、`codex`、`telegram`、`app`；binary 仍叫 `pocketpilot` |
-| 首版 | 最新受测 Codex + Telegram；本地和配置允许的 SSH 实例 |
-| 会话共享 | desktop、CLI、桥接器连接同一执行实例；相同历史目录不足以证明共享 |
-| 允许动作 | 创建、用户明确续轮、steer、只读查看；审批由原端处理 |
-| 生命周期 | 程序启停、崩溃、reload、重连不自动 resume/start/unsubscribe 或停止 agent |
-| 配置 | 根目录单一 pocketpilot.toml，token 直接存储；不 include、不读取 .env；继承既有 SSH config |
-| Telegram 访问 | 仅私聊；通过 CLI 批准一次性码配对，无 chat/user 配置列表 |
-| SSH | 读取 Host/Include，按 OpenSSH 有效配置连接；TOTP 使用 russh + totp-rs |
-| 热更新 | host/workspace/授权可更新，排队操作再次授权；不改变已运行任务 |
-| 历史 | 空闲显示最后输入/对应 final；活跃会话全历史一个集合，超限一条附件 |
-| 输出 | 保留可见文本、过滤工具/推理，短时合并同会话消息并统一限速 |
-| 不确定结果 | 远程写入或平台投递未知时核对，不盲目重复执行 |
-
-真实 token、OTP seed、用户配置、数据库和日志不提交。当前可行性证据与尚待验证事项见 [研究记录](docs/research/sources.md)。
+在同一根配置增加 [discord] 的 token 与 guild_id；可以和 Telegram 同进程运行，共享连接/会话锁/写入账本。一个 workspace 一个 category，一个 session 一个 channel，owner 使用 /pp-workspaces、/pp-sessions、/pp-open、/pp-new 和 /pp-ask。完整范围、安装权限与限制见 [Discord 原型](docs/design/discord.md)。当前未提供真实 Discord 凭据，未做真实 guild 联调。

@@ -1,14 +1,15 @@
 # MVP 实施计划
 
-状态：已开始实现只读基础版。四个平铺源码 crate、配置/凭据读取、tracing、官方 schema 生成 DTO、类型化 RPC、本地/普通 SSH/WS transport、只读 session API 和 SQLite 基础账本已落地。Telegram 当前只有只读账号诊断，没有消息收发；共享实例/断线行为尚未实测，控制能力保持关闭。
+状态：Telegram MVP 的消息、控制、持久化、OTP helper 和热更新已落地；授权 SSH 共享 daemon 已通过专用会话的 active/steer/断线完成验证。真实 Telegram 交互待用户测试，本地既有 Desktop 缺少共享 endpoint。Discord 可选原型已加入，见 [原型说明](../design/discord.md)。
 
+下文 W00–W17 保留为设计工作包；描述中的目标接口不全部与当前源码名称一一对应。当前行为与边界以 [验证记录](../research/implementation-checks.md)、[配置实现](../design/connections-and-config.md) 和源码为准。
 ## 1. 范围与当前输入
 
 首版是最新受测 Codex + Telegram，默认本机运行，聚合允许的本地/SSH 实例。具备只读列表/状态/历史、topic 绑定、新建、续轮、steer、输出合并、OTP、热更新与恢复。允许的 provider 业务动作仅创建、用户明确续轮、steer、只读查看。
 
-已有输入：token 已迁入根目录私有 pocketpilot.toml 并通过只读账号验证。配置不 include、不读取 .env；Telegram 仅私聊，经 CLI 配对后可用，无 chat/user 配置列表。host/workspace 和实际 endpoint 仍待部署填写。
+已有输入：token 已迁入根目录私有 pocketpilot.toml 并通过只读账号验证。配置不 include、不读取 .env；Telegram 仅私聊，经 CLI 配对后可用，无 chat/user 配置列表。已登记授权 SSH host 的九个工作区和共享 socket；其他实例需填写已存在的共享入口。
 
-硬门禁：同一运行实例、无副作用观察、程序断线/退出不结束 agent。无法通过时只开放相应只读能力，并将完整 MVP 标为未完成。Lark、Discord、Claude shim、旧 Codex 兼容和 agent 生命周期管理不在首版任务中。
+硬门禁：同一运行实例、无副作用观察、程序断线/退出不结束 agent。无法通过时只开放相应只读能力，并将完整 MVP 标为未完成。Lark、Claude shim、任意旧 Codex 兼容和 agent 生命周期管理不在首版任务中；Discord 按后续请求提供有明确边界的原型。
 
 ## 2. Rust 依赖选择
 
@@ -22,8 +23,8 @@
 | SQL | sqlx（SQLite） | 0.9.0 | 1.65 亿 | Tokio 集成、事务、迁移，不自写 SQLite 包装 |
 | serialization | serde / serde_json | 1.0.229 / 1.0.154 | 15.33 / 14.36 亿 | wire/config/持久化 payload |
 | WebSocket | tokio-tungstenite | 0.30.0 | 3.10 亿 | 协议与握手，不自写 WebSocket |
-| 普通 SSH | openssh | 0.11.6 | 545 万 | 复用系统 OpenSSH、ssh_config、认证、转义与 multiplexing |
-| OTP SSH | russh / totp-rs | 0.64.1 / 6.0.0 | 841 / 1128 万 | keyboard-interactive、多阶段认证与 TOTP |
+| SSH | 系统 OpenSSH + tokio::process | 系统安装 | — | 复用原生 config、认证链与 keepalive，固定 proxy 命令 |
+| OTP SSH | 受限 SSH_ASKPASS + totp-rs | 6.x | 1128 万（TOTP 调研快照） | OpenSSH 处理 keyboard-interactive，helper 只回答明确挑战 |
 | 热更新 | notify / arc-swap | 8.2.0 / 1.9.2 | 1.72 / 3.61 亿 | 文件监听与配置快照原子切换 |
 | SSH 配置发现 | ssh2-config | 0.8.2 | 19.2 万 | 候选 alias/Include 解析，实际连接参数由 ssh -G 评估 |
 | CLI | clap | 4.6.7 | 12.28 亿 | daemon/doctor/config/status 命令 |
@@ -36,7 +37,7 @@
 
 补充依赖按需加入 tokio-util、futures、toml、uuid、time、tracing-appender、directories、fs2、tempfile；没有实际使用就不引入。锁定 Rust 工具链和 Cargo.lock，确认 MSRV、TLS feature、依赖版本冲突后再固定具体版本。Telegram 不需要 Discord/Claude 的 feature 和依赖随 MVP 一起编译。
 
-SSH 选型采用双后端：openssh 负责普通 key/agent 和复杂 ssh_config 兼容；配置 OTP 时使用 russh 原生 keyboard-interactive + totp-rs，不能仅依赖 OpenSSH BatchMode。直接读取本机 SSH config/Include 发现 alias，受控 ssh -G 获取有效参数；实际认证链由服务端协商。慢 host 的超时、心跳和认证退避逐台配置，详细规则见 [部署与配置](../design/connections-and-config.md)。
+SSH 选型采用双后端：openssh 负责普通 key/agent 和复杂 ssh_config 兼容；配置 OTP 时使用 系统 OpenSSH 原生 keyboard-interactive + totp-rs，不能仅依赖 OpenSSH BatchMode。直接读取本机 SSH config/Include 发现 alias，受控 ssh -G 获取有效参数；实际认证链由服务端协商。慢 host 的超时、心跳和认证退避逐台配置，详细规则见 [部署与配置](../design/connections-and-config.md)。
 
 JSON-RPC 不直接套标准 jsonrpsee server/client：Codex wire 省略 jsonrpc 字段且存在双向服务端请求和特殊 transport。使用 serde 的小型、可测试 dispatcher 对接受测方法；不要为了复用框架改变 wire。Codex 源码的内部 workspace crate 不直接作为 git 依赖引入整个 agent 引擎。build.rs 调用所选 Codex 导出官方 JSON Schema，在 OUT_DIR 筛选只读投影并用 typify 生成 DTO，不提交 schema/生成代码。provider 访问生成类型；RPC 边界只用不透明 RawValue 保留扩展，不在业务层操作 serde_json::Value。
 
@@ -72,11 +73,12 @@ Store 暴露应用事务，不为每张表建立泛型 repository。共享 SSH t
 
 | 阶段 | 工作 | 放行条件 | 当前状态 |
 | --- | --- | --- | --- |
-| P0 | W00–W03：骨架、配置、类型化 RPC 与只读兼容探针 | W00–W02 已落地；G0 真实共享/断线证据待执行 | 进行中 |
-| P1 | W04–W07：远程、持久化、只读 provider、动作许可 | 普通连接、读取和账本为部分实现，actor/许可待完成 | 部分实现 |
-| P2 | W08–W11：Telegram 接入、绑定、历史与投递 | 账号/webhook 只读检查与配对账本/CLI 已实现；poller/topic/outbox 未接通 | 未完成 |
-| P3 | W12–W14：OTP、热更新、创建/续轮/steer | 需 G0 + 隔离任务写语义证据形成 G3，才打开控制 | 未实施 |
-| P4 | W15–W17：故障恢复、打包与完整验收 | fake 规则测试不是 A01–A52 实际端到端验收 | 未实施 |
+| P0 | W00–W03：骨架、配置、类型化 RPC 与兼容探针 | 原生本地隔离实验和真实 SSH 共享实例通过；既有本地 Desktop 入口待部署 | 已实现，部分部署未验收 |
+| P1 | W04–W07：远程、持久化、只读 provider、动作许可 | OpenSSH、账本、actor、白名单与未知结果不重发已有行为测试 | 已实现 |
+| P2 | W08–W11：Telegram、绑定、历史与投递 | mock 完整链路通过；实际私聊 topic 收发等待用户 | 代码完成，待用户验收 |
+| P3 | W12–W14：OTP、热更新、创建/续轮/steer | 实际 SSH 写入/断线完成通过；真实 OTP 待验收 | 代码完成，部分部署未验收 |
+| P4 | W15–W17：恢复、打包与验收 | 重启/unknown/持久批次测试通过；A01–A52 非全量实测 | 部分验收 |
+| D0 | Discord 原型 | owner slash、category/channel、共享锁/操作账本、输出队列；未提供真实凭据 | 原型完成，待真实 guild 验收 |
 
 W00–W02 是制作 P0 探针必需的最小骨架，不代表先做完整产品再验证共享能力。可独立实现 fake/持久化/渲染，但 G0 未通过时不对真实任务启用写入。
 
@@ -94,7 +96,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 - 创建四个 publish=false package；app 声明 pocketpilot binary，确保 cargo run -p app --bin pocketpilot 的目标清晰。
 - 配置共享依赖/TLS feature、lockfile、fmt/clippy；主程序先提供本地帮助，不在初始化时连接服务。
-- 产物：可编译 workspace 与职责一致的空骨架，不拉入 Lark/Discord/Claude 依赖。
+- 产物：可编译 workspace 与职责一致的空骨架，不拉入 Lark/Claude 依赖；Discord 为独立可选 feature。
 - 验证：workspace build、依赖方向检查、CLI help；无网络/agent 子进程副作用。覆盖 A23/A46 的初始结构约束。
 
 ### W01 · 单根配置、内联 token 与 tracing
@@ -210,9 +212,9 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 ### W12 · Keyboard-interactive / TOTP
 
-依赖：W04/W07。归属：codex transport/russh，app 私有 OTP profile。
+依赖：W04/W07。归属：系统 OpenSSH transport/askpass，app 私有 OTP profile。
 
-- russh 完成 key partial_success 后的挑战链；按配置 prompt 规则和数量答复，未知挑战不发送 secret。
+- OpenSSH 完成 key 与 keyboard-interactive 的认证链；受限 askpass 按明确 prompt 规则回答，未知挑战不发送 secret。
 - totp-rs 临发送生成、跨周期异步等待、次数/时间/退避上限；不能用短信/FIDO/HOTP 冒充 TOTP。
 - 已有 key/jump/agent profile 不静默丢字段；不支持的组合返回明确错误，原端已运行任务不变。
 - 产物：OTP 后端与逐 host deadline；W03 追加该 profile 的共享/断线验证。

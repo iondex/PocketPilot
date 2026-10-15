@@ -1,5 +1,5 @@
 use app::config::Logging;
-use tracing_subscriber::{EnvFilter, fmt::writer::BoxMakeWriter};
+use tracing_subscriber::{EnvFilter, fmt::writer::BoxMakeWriter, prelude::*};
 
 pub fn init(config: &Logging) -> Result<Option<tracing_appender::non_blocking::WorkerGuard>, ()> {
     let filter = EnvFilter::try_new(&config.filter)
@@ -19,18 +19,40 @@ pub fn init(config: &Logging) -> Result<Option<tracing_appender::non_blocking::W
     } else {
         (BoxMakeWriter::new(std::io::stderr), None)
     };
+    // Transport/SQL trace events can contain credential URLs or raw message bodies.
+    // This independent filter also applies to more specific user log directives.
+    let redacted = tracing_subscriber::filter::filter_fn(|metadata| {
+        ![
+            "reqwest",
+            "hyper",
+            "h2",
+            "teloxide_core",
+            "tungstenite",
+            "tokio_tungstenite",
+            "rustls",
+            "sqlx",
+            "ssh2_config",
+            "serenity",
+        ]
+        .iter()
+        .any(|target| metadata.target().starts_with(target))
+    });
     if config.format == "json" {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_writer(writer)
-            .json()
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(redacted)
+            .with(tracing_subscriber::fmt::layer().with_writer(writer).json())
             .try_init()
             .map_err(|_| ())?;
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_writer(writer)
-            .with_ansi(false)
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(redacted)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer)
+                    .with_ansi(false),
+            )
             .try_init()
             .map_err(|_| ())?;
     }

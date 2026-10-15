@@ -19,6 +19,10 @@ pub trait ReadRequest: Serialize + sealed::Sealed {
     type Response: DeserializeOwned;
     const METHOD: &'static str;
 }
+pub(crate) trait WriteRequest: Serialize + sealed::Sealed {
+    type Response: DeserializeOwned;
+    const METHOD: &'static str;
+}
 macro_rules! request {
     ($params:ident, $response:ident, $method:literal) => {
         impl sealed::Sealed for p::$params {}
@@ -46,6 +50,19 @@ request!(
     ThreadItemsListResponse,
     "thread/items/list"
 );
+macro_rules! write_request {
+    ($params:ident, $response:ident, $method:literal) => {
+        impl sealed::Sealed for p::$params {}
+        impl WriteRequest for p::$params {
+            type Response = p::$response;
+            const METHOD: &'static str = $method;
+        }
+    };
+}
+write_request!(ThreadStartParams, ThreadStartResponse, "thread/start");
+write_request!(ThreadResumeParams, ThreadResumeResponse, "thread/resume");
+write_request!(TurnStartParams, TurnStartResponse, "turn/start");
+write_request!(TurnSteerParams, TurnSteerResponse, "turn/steer");
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum Error {
@@ -57,6 +74,8 @@ pub enum Error {
     Protocol,
     #[error("app-server rejected request (code {0})")]
     Rejected(i64),
+    #[error("app-server history is not materialized yet; refresh shortly")]
+    HistoryPending,
     #[error("endpoint is missing or does not satisfy connection policy")]
     Endpoint,
     #[error("connection profile is not supported yet")]
@@ -96,6 +115,8 @@ struct Incoming {
 #[derive(Deserialize)]
 struct Failure {
     code: i64,
+    #[serde(default)]
+    message: String,
 }
 
 // RawValue exists only at this RPC framing boundary. It is never indexed or modified.
@@ -117,6 +138,7 @@ pub struct Client {
     commands: mpsc::Sender<Command>,
     events: broadcast::Sender<Event>,
     timeout: Duration,
+    write_timeout: Duration,
 }
 
 impl Client {
@@ -140,7 +162,12 @@ impl Client {
                     title: None,
                     version: env!("CARGO_PKG_VERSION").into(),
                 },
-                capabilities: Some(p::InitializeCapabilities::default()),
+                // Needed for paginated history on the deployed 0.161 daemon.
+                // Calls remain restricted to the generated, sealed method sets.
+                capabilities: Some(p::InitializeCapabilities {
+                    experimental_api: true,
+                    ..Default::default()
+                }),
             })
             .await?;
         let (reply, receive) = oneshot::channel();
@@ -154,10 +181,11 @@ impl Client {
             .map_err(|_| Error::Timeout)?
             .map_err(|_| Error::Disconnected)??;
         client.timeout = request_timeout;
+        client.write_timeout = request_timeout;
         Ok(client)
     }
 
-    fn spawn(wire: Box<dyn Wire>, timeout: Duration) -> Self {
+    pub(crate) fn spawn(wire: Box<dyn Wire>, timeout: Duration) -> Self {
         let (commands, receiver) = mpsc::channel(128);
         let (events, _) = broadcast::channel(256);
         tokio::spawn(run(wire, receiver, events.clone()));
@@ -165,21 +193,59 @@ impl Client {
             commands,
             events,
             timeout,
+            write_timeout: timeout,
         }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.events.subscribe()
     }
+    pub fn is_connected(&self) -> bool {
+        !self.commands.is_closed()
+    }
+    pub fn with_write_timeout(mut self, timeout: Duration) -> Self {
+        self.write_timeout = timeout;
+        self
+    }
 
     pub async fn call<R: ReadRequest>(&self, params: &R) -> Result<R::Response, Error> {
         let deadline = Instant::now() + self.timeout;
+        let warming_deadline = Instant::now() + self.timeout.min(Duration::from_secs(5));
+        let mut delay = Duration::from_millis(25);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(Error::Timeout);
+            }
+            match self.request(R::METHOD, params, remaining).await {
+                Err(Error::HistoryPending) if Instant::now() + delay < warming_deadline => {
+                    // Native persistence can briefly expose an empty rollout after
+                    // accepting a turn. Retry only this safe read; never its input.
+                    tokio::time::sleep(delay).await;
+                    delay = (delay * 2).min(Duration::from_millis(250));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    pub(crate) async fn write<R: WriteRequest>(&self, params: &R) -> Result<R::Response, Error> {
+        self.request(R::METHOD, params, self.write_timeout).await
+    }
+
+    async fn request<P: Serialize, R: DeserializeOwned>(
+        &self,
+        method: &'static str,
+        params: &P,
+        timeout: Duration,
+    ) -> Result<R, Error> {
+        let deadline = Instant::now() + timeout;
         let (reply, receive) = oneshot::channel();
         let params = to_raw_value(params).map_err(|_| Error::Protocol)?;
         tokio::time::timeout_at(
             deadline,
             self.commands.send(Command::Call {
-                method: R::METHOD,
+                method,
                 params,
                 deadline,
                 reply,
@@ -196,7 +262,7 @@ impl Client {
     }
 }
 
-type Pending = HashMap<i64, (Instant, oneshot::Sender<Reply>)>;
+type Pending = HashMap<i64, (Instant, oneshot::Sender<Reply>, &'static str)>;
 
 async fn run(
     mut wire: Box<dyn Wire>,
@@ -238,9 +304,9 @@ async fn run(
                             Ok(value) => value,
                             Err(_) => { let _ = reply.send(Err(Error::Protocol)); continue; }
                         };
-                        pending.insert(id, (deadline, reply));
+                        pending.insert(id, (deadline, reply, method));
                         if !matches!(tokio::time::timeout_at(deadline, wire.send(message)).await, Ok(Ok(()))) { break; }
-                        tracing::debug!(rpc_id=id, method, "read-only request sent");
+                        tracing::debug!(rpc_id=id, method, "typed request sent");
                     }
                 }
             }
@@ -253,9 +319,16 @@ async fn run(
                     continue;
                 }
                 let Some(p::RequestId::Int64(id)) = value.id else { continue; };
-                if let Some((_, reply)) = pending.remove(&id) {
+                if let Some((_, reply, method)) = pending.remove(&id) {
                     let result = match value.error {
-                        Some(error) => Err(Error::Rejected(error.code)),
+                        Some(error) => {
+                            // Only fixed diagnostic labels are logged, never the server's text.
+                            let lower=error.message.to_lowercase();
+                            let terms=["legacy","paginated","materialized","not found","active","summary","experimental","history","persisted","rollout","empty","unavailable","database","turn","read","before","partial"].into_iter().filter(|term|lower.contains(term)).collect::<Vec<_>>();
+                            tracing::warn!(rpc_method=method,code=error.code,?terms,"app-server rejected typed request");
+                            if history_pending(method, &error) { Err(Error::HistoryPending) }
+                            else { Err(Error::Rejected(error.code)) }
+                        },
                         None => value.result.ok_or(Error::Protocol),
                     };
                     let _ = reply.send(result);
@@ -263,16 +336,25 @@ async fn run(
             }
             _ = cleanup.tick() => {
                 let now = Instant::now();
-                let expired: Vec<_> = pending.iter().filter(|(_, (deadline, reply))| *deadline <= now || reply.is_closed()).map(|(id, _)| *id).collect();
+                let expired: Vec<_> = pending.iter().filter(|(_, (deadline, reply, _))| *deadline <= now || reply.is_closed()).map(|(id, _)| *id).collect();
                 for id in expired {
-                    if let Some((_, reply)) = pending.remove(&id) { let _ = reply.send(Err(Error::Timeout)); }
+                    if let Some((_, reply, _)) = pending.remove(&id) { let _ = reply.send(Err(Error::Timeout)); }
                 }
             }
         }
     }
-    for (_, (_, reply)) in pending {
+    for (_, (_, reply, _)) in pending {
         let _ = reply.send(Err(Error::Disconnected));
     }
+}
+
+fn history_pending(method: &str, error: &Failure) -> bool {
+    matches!(
+        method,
+        "thread/read" | "thread/turns/list" | "thread/items/list"
+    ) && error.code == -32603
+        && error.message.contains("rollout")
+        && error.message.contains(" is empty")
 }
 
 #[cfg(test)]
@@ -281,6 +363,46 @@ mod tests {
     use crate::transport::JsonLines;
     use futures_util::{SinkExt, StreamExt};
     use tokio_util::codec::{Framed, LinesCodec};
+
+    #[tokio::test]
+    async fn retries_only_the_known_empty_rollout_read_race() {
+        let (local, remote) = tokio::io::duplex(4096);
+        let (read, write) = tokio::io::split(local);
+        let client = Client::spawn(
+            Box::new(JsonLines::new(read, write, None)),
+            Duration::from_secs(1),
+        );
+        let task = tokio::spawn(async move {
+            let mut server = Framed::new(remote, LinesCodec::new());
+            for attempt in 0..2 {
+                let request: Incoming =
+                    serde_json::from_str(&server.next().await.unwrap().unwrap()).unwrap();
+                assert_eq!(request.method.as_deref(), Some("thread/turns/list"));
+                let body = if attempt == 0 {
+                    r#""error":{"code":-32603,"message":"failed to read rollout: rollout at /private/fixture is empty"}"#
+                } else {
+                    r#""result":{"data":[]}"#
+                };
+                server
+                    .send(format!("{{\"id\":{},{body}}}", request.id.unwrap()))
+                    .await
+                    .unwrap();
+            }
+        });
+        let params: p::ThreadTurnsListParams = p::ThreadTurnsListParams::builder()
+            .thread_id("fixture")
+            .try_into()
+            .unwrap();
+        assert!(client.call(&params).await.unwrap().data.is_empty());
+        task.await.unwrap();
+        let error = Failure {
+            code: -32603,
+            message: "rollout at /fixture is empty".into(),
+        };
+        assert!(!history_pending("turn/start", &error));
+        assert!(!history_pending("turn/steer", &error));
+        assert!(!history_pending("thread/resume", &error));
+    }
 
     #[tokio::test]
     async fn websocket_handshake_uses_schema_types_and_initialized_notification() {
@@ -294,7 +416,7 @@ mod tests {
             assert_eq!(request.method.as_deref(), Some("initialize"));
             let params: p::InitializeParams =
                 serde_json::from_str(request.params.unwrap().get()).unwrap();
-            assert!(!params.capabilities.unwrap().experimental_api);
+            assert!(params.capabilities.unwrap().experimental_api);
             socket.send(tokio_tungstenite::tungstenite::Message::Text(format!(
                 "{{\"id\":{},\"result\":{{\"codexHome\":\"/tmp/test-codex\",\"userAgent\":\"test\",\"platformFamily\":\"unix\",\"platformOs\":\"test\"}}}}", request.id.unwrap()
             ).into())).await.unwrap();

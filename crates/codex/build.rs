@@ -23,6 +23,14 @@ const ROOTS: &[&str] = &[
     "ThreadTurnsListResponse",
     "ThreadItemsListParams",
     "ThreadItemsListResponse",
+    "ThreadStartParams",
+    "ThreadStartResponse",
+    "ThreadResumeParams",
+    "ThreadResumeResponse",
+    "TurnStartParams",
+    "TurnStartResponse",
+    "TurnSteerParams",
+    "TurnSteerResponse",
 ];
 
 #[derive(Deserialize)]
@@ -113,7 +121,7 @@ fn generate() -> Result<()> {
         schema: SchemaObject {
             instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
             metadata: Some(Box::new(Metadata {
-                title: Some("CodexReadProtocol".into()),
+                title: Some("CodexProtocol".into()),
                 ..Default::default()
             })),
             ..Default::default()
@@ -121,11 +129,12 @@ fn generate() -> Result<()> {
         definitions: selected,
     };
     fs::write(
-        output.join("codex-readonly.json"),
+        output.join("codex-protocol.json"),
         serde_json::to_vec_pretty(&schema)?,
     )?;
     fs::write(output.join("schema-version.txt"), &version)?;
     println!("cargo:rustc-env=CODEX_SCHEMA_VERSION={version}");
+    println!("cargo:rustc-env=CODEX_SCHEMA_BIN_PATH={}", binary.display());
     let mut settings = typify::TypeSpaceSettings::default();
     settings.with_struct_builder(true);
     let mut types = typify::TypeSpace::new(&settings);

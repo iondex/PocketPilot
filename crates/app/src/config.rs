@@ -29,11 +29,16 @@ pub struct LoadedConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(skip)]
+    source: PathBuf,
+    #[serde(skip)]
+    source_hash: String,
     #[serde(default)]
     pub service: Service,
     #[serde(default)]
     pub logging: Logging,
     pub telegram: Option<Telegram>,
+    pub discord: Option<Discord>,
     #[serde(default)]
     pub hosts: Vec<Host>,
     #[serde(default)]
@@ -81,6 +86,21 @@ impl Default for Logging {
 pub struct Telegram {
     pub token: String,
 }
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Discord {
+    pub token: String,
+    pub guild_id: u64,
+}
+impl std::fmt::Debug for Discord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Discord")
+            .field("guild_id", &self.guild_id)
+            .field("token", &"[REDACTED]")
+            .finish()
+    }
+}
 impl std::fmt::Debug for Telegram {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Telegram([REDACTED])")
@@ -101,7 +121,6 @@ pub enum SshBackend {
     #[default]
     Auto,
     Openssh,
-    Russh,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -205,6 +224,9 @@ pub struct Provider {
     pub kind: String,
     pub connection_mode: String,
     pub compatibility_profile: String,
+    /// Operator attestation for this exact shared runtime after the lifecycle probe.
+    #[serde(default)]
+    pub control_verified: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -266,7 +288,13 @@ impl Default for Delivery {
 pub fn load(path: &Path) -> Result<LoadedConfig, ConfigError> {
     let path = path.canonicalize().map_err(|_| ConfigError::Io)?;
     let source = std::fs::read_to_string(&path).map_err(|_| ConfigError::Io)?;
-    let mut config: Config = toml::from_str(&source).map_err(|_| ConfigError::Parse)?;
+    parse(&path, &source)
+}
+
+pub fn parse(path: &Path, source: &str) -> Result<LoadedConfig, ConfigError> {
+    let mut config: Config = toml::from_str(source).map_err(|_| ConfigError::Parse)?;
+    config.source = path.to_owned();
+    config.source_hash = crate::ledger::digest(source);
     let base = path.parent().ok_or(ConfigError::Invalid)?;
     config.service.data_dir = absolute(base, &config.service.data_dir);
     config.logging.directory = config.logging.directory.as_ref().map(|p| absolute(base, p));
@@ -276,7 +304,7 @@ pub fn load(path: &Path) -> Result<LoadedConfig, ConfigError> {
     config.validate()?;
     Ok(LoadedConfig {
         config,
-        sources: vec![path],
+        sources: vec![path.to_owned()],
     })
 }
 
@@ -310,11 +338,33 @@ fn unique<'a>(ids: impl Iterator<Item = &'a str>) -> Result<(), ConfigError> {
 }
 
 impl Config {
+    pub fn source(&self) -> &Path {
+        &self.source
+    }
+    pub fn source_hash(&self) -> &str {
+        &self.source_hash
+    }
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if self
+            .discord
+            .as_ref()
+            .is_some_and(|d| d.token.trim().is_empty() || d.guild_id == 0)
+        {
+            return Err(ConfigError::Credentials);
+        }
         unique(self.hosts.iter().map(|h| h.id.as_str()))?;
         unique(self.providers.iter().map(|p| p.id.as_str()))?;
         unique(self.workspaces.iter().map(|w| w.id.as_str()))?;
+        unique(self.workspaces.iter().map(|w| w.short_name.as_str()))?;
+        if self.workspaces.iter().any(|w| {
+            self.workspaces
+                .iter()
+                .any(|other| w.id != other.id && w.short_name == other.id)
+        }) {
+            return Err(ConfigError::Duplicate);
+        }
         for host in &self.hosts {
+            crate::otp::validate(&host.authentication).map_err(|_| ConfigError::Invalid)?;
             let t = &host.timeouts;
             if [
                 t.connect_seconds,

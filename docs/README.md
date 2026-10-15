@@ -1,20 +1,22 @@
 # 文档入口
 
-当前阶段：已实现只读 CLI 基础版，完整 Telegram bot 和 session 控制尚未完成。源码为四个平铺 crate；schema 和 Rust DTO 由 build.rs 动态生成到 OUT_DIR，不提交生成物，docs 不保留 JSON。Telegram 账号/webhook 只读检查已通过，未发消息或操作真实 session。真实凭据不进入文档、配置示例或提交。
+当前阶段：Telegram 功能链路已接通并进入真实 SSH 验收，另提供可选 Discord 原型，源代码和协议边界已有自动测试。源码平铺，schema 和 DTO 由 build.rs 生成到 OUT_DIR；真实部署状态见 [测试入口](testing.md) 与 [验证记录](research/implementation-checks.md)。
 
 ## 按目的阅读
 
 | 目的 | 文档 | 负责维护的内容 |
 | --- | --- | --- |
+| 开始测试 | [测试入口](testing.md) | 启动、CLI 配对、共享实例准备、测试顺序与当前限制 |
 | 开始实现 | [实施计划](planning/implementation.md) | crate 边界、任务依赖、提交粒度、阶段门禁与当前状态 |
 | 确认验收 | [验收清单](planning/acceptance.md) | A01–A52 的行为条件、执行记录格式与证据要求 |
 | 协议生成 | [构建时生成](design/protocol-generation.md) | build.rs、Codex binary 选择与生成物边界 |
 | 理解接口 | [架构](design/architecture.md) | 领域模型、provider/platform 接口、操作许可、数据与恢复 |
 | 做 Telegram 交互 | [Telegram](design/telegram.md) | 菜单、topic、绑定、新建、状态与用户可见异常 |
+| 做 Discord 交互 | [Discord 原型](design/discord.md) | category/channel、owner slash、可选运行与原型限制 |
 | 做配置和连接 | [连接与配置](design/connections-and-config.md) | 根目录单一 TOML、内联 token、CLI 私聊配对、SSH config、OTP、热更新、生命周期 |
 | 做历史与投递 | [历史与消息](design/history-and-delivery.md) | 最后输入/最终输出、单条历史集合、合并、附件与限速 |
 | 查事实与限制 | [Codex 探索](research/codex-app-server.md)、[资料](research/sources.md) | 静态观察、来源、版本差异和未验证能力 |
-| 后期扩展 | [Lark、Discord 与 Claude](future/integrations.md) | 可行性与候选实现，不构成首版已支持能力 |
+| 后期扩展 | [Lark 与 Claude](future/integrations.md) | 可行性与候选实现，不构成首版已支持能力 |
 
 公开的 [配置示例](../pocketpilot.example.toml) 是字段和默认值的唯一示例来源；设计文档不再维护另一份大段 TOML。当前程序可验证并读取该配置；示例 host、socket、workspace 和 token 需填写；不设置 chat/user 允许列表。
 
@@ -25,9 +27,10 @@
 | `session` | 统一模型、接口、命令、actor、历史与投递规则 | 架构、历史与消息 |
 | `codex` | Codex wire/RPC、provider、只读观察、本地/SSH transport | 架构、连接与配置、研究 |
 | `telegram` | Bot API、poller、授权、菜单/topic、渲染和平台限速 | Telegram、历史与消息 |
+| `discord` | Serenity Bot API、owner slash gateway、category/channel 平台操作 | Discord 原型 |
 | `app` | 配置/凭据、SQLite、装配、CLI、tracing、生命周期 | 连接与配置、实施计划 |
 
-package、目录和 Rust crate 名都不用 PocketPilot 前缀；可执行程序保留 pocketpilot 产品名。四个 package 初期 publish=false；后续按需新增 claude、lark、discord，不预建空 crate。
+package、目录和 Rust crate 名都不用 PocketPilot 前缀；可执行程序保留 pocketpilot 产品名。所有 package 都是 publish=false；discord 已有原型代码，claude/lark 尚未创建 crate。
 
 ## 维护约定
 

@@ -1,4 +1,6 @@
-//! Read-only connection to existing Codex app servers.
+//! Typed observation and four explicit mutation methods on existing Codex app servers.
+#[cfg(test)]
+mod live_tests;
 pub mod protocol;
 pub mod provider;
 pub mod rpc;

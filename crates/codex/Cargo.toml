@@ -30,6 +30,7 @@ typify = "0.5"
 
 [dev-dependencies]
 tempfile.workspace = true
+wiremock = "0.6"
 
 [lints]
 workspace = true

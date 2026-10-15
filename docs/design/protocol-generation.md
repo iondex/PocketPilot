@@ -1,8 +1,8 @@
 # Codex 协议类型生成
 
-全部生成逻辑在 crates/codex/build.rs。构建时调用所选 Codex 的 `app-server generate-json-schema`，筛选当前只读接口的传递引用，再通过 typify 生成 Rust DTO。provider 使用类型化字段，不直接操作 serde_json::Value。
+全部生成逻辑在 crates/codex/build.rs。构建时调用所选 Codex 的 `app-server generate-json-schema`，筛选只读接口与四类允许写接口的传递引用，再通过 typify 生成 Rust DTO。provider 使用类型化字段，不直接操作 serde_json::Value。
 
-官方 schema、只读投影、版本记录和 protocol.rs 都写入 Cargo OUT_DIR，通常位于 target/debug/build/codex-*/out/。仓库不提交生成的 schema、代码或版本快照，不保留 Python 生成脚本。
+官方 schema、协议投影、版本记录和 protocol.rs 都写入 Cargo OUT_DIR，通常位于 target/debug/build/codex-*/out/。仓库不提交生成的 schema、代码或版本快照，不保留 Python 生成脚本。
 
 ## 选择构建工具
 
@@ -18,7 +18,7 @@ Cargo 监听 build.rs、PATH、CODEX_SCHEMA_BIN 和实际 executable 的变化�
 
 ## 约束
 
-只导出 schema，不启动、升级、重启 app-server 或恢复 thread。CLI 不存在、导出失败、缺少所需类型或类型生成失败时构建明确失败，不回退到旧快照。生成只使用稳定导出表面，不自动开启运行时 experimentalApi。
+只导出 schema，不启动、升级、重启 app-server 或恢复 thread。CLI 不存在、导出失败、缺少所需类型或类型生成失败时构建明确失败，不回退到旧快照。生成使用受测的官方导出表面。连接显式协商 experimentalApi，以获取已部署 0.161 服务的分页历史模式及接口；这不扩大封闭的方法集合，不允许停止、取消或审批代答。
 
 schema 兼容仅证明类型可编译；共享实例、实时观察和断线语义仍需行为验收。RPC 的未知扩展参数只作为不透明 RawValue 保留，由明确 DTO 解码，不做业务字段猜测。
 

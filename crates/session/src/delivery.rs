@@ -6,7 +6,7 @@ pub fn short_title(title: &str, max_graphemes: usize) -> String {
     let normalized = title.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut result = String::new();
     for grapheme in normalized.graphemes(true).take(max_graphemes) {
-        if result.chars().count() + grapheme.chars().count() > 120 {
+        if result.chars().count() + grapheme.chars().count() > 96 {
             break;
         }
         result.push_str(grapheme);

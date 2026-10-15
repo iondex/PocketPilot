@@ -9,10 +9,21 @@ publish.workspace = true
 session = { path = "../session" }
 secrecy.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 teloxide.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+reqwest = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+
+[features]
+test-support = ["dep:reqwest", "dep:url"]
+
+[dev-dependencies]
+reqwest.workspace = true
+url.workspace = true
+wiremock = "0.6"
 
 [lints]
 workspace = true

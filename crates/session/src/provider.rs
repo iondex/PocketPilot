@@ -1,4 +1,34 @@
 use crate::{Capabilities, History, Page, Session, SessionQuery};
+use serde::{Deserialize, Serialize};
+
+/// The complete mutation vocabulary. Background observers have no lifecycle actions.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum Mutation {
+    Create {
+        cwd: String,
+    },
+    Resume {
+        thread: String,
+    },
+    Start {
+        thread: String,
+        text: String,
+        client_id: String,
+    },
+    Steer {
+        thread: String,
+        expected_turn: String,
+        text: String,
+        client_id: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Receipt {
+    pub thread: String,
+    pub turn: Option<String>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
@@ -12,6 +42,8 @@ pub enum ProviderError {
     Incompatible,
     #[error("operation is unsupported by this provider")]
     Unsupported,
+    #[error("session state changed; refresh and confirm the input again")]
+    Conflict,
 }
 
 #[async_trait::async_trait]
@@ -19,5 +51,13 @@ pub trait AgentProvider: Send + Sync {
     fn capabilities(&self) -> Capabilities;
     async fn list(&self, query: SessionQuery) -> Result<Page<Session>, ProviderError>;
     async fn read(&self, thread: &str) -> Result<Session, ProviderError>;
+    /// Fetch the current turn precondition when metadata alone cannot provide it.
+    async fn active_turn(&self, thread: &str) -> Result<Option<String>, ProviderError> {
+        Ok(self.read(thread).await?.active_turn)
+    }
     async fn history(&self, thread: &str) -> Result<History, ProviderError>;
+    /// Called only for a durably recorded, freshly authorized user action.
+    async fn execute(&self, _mutation: Mutation) -> Result<Receipt, ProviderError> {
+        Err(ProviderError::Unsupported)
+    }
 }

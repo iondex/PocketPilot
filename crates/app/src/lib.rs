@@ -1,4 +1,14 @@
 pub mod config;
+pub mod connections;
 pub mod credentials;
+#[cfg(feature = "discord")]
+pub mod discord_service;
+#[cfg(feature = "discord")]
+pub mod discord_store;
+pub mod ledger;
+pub mod otp;
 pub mod pairing;
+pub mod probe;
+pub mod reload;
+pub mod service;
 pub mod storage;
