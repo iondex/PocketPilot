@@ -83,3 +83,32 @@ codex app-server generate-json-schema --out /tmp/pocketpilot-schema
 - 没有为 Claude 宣称具体支持能力。
 
 上述事项被转化为 [实施计划](04-mvp-plan.md) 中的 P0 门禁和验收矩阵。设计完成不等于这些行为已经被证明。
+
+## 7. 补充需求的资料与静态核对
+
+新增资料对应 06–08 文档；机器可读的固定版本/审阅范围见 [revision-observations.json](research/revision-observations.json)。
+
+### Codex 与 SSH 配置
+
+- 实际读取 [OpenAI Remote connections](https://developers.openai.com/codex/remote-connections.md)：桌面发现 SSH alias、通过远程登录 shell 管理 app-server；不由此断言存在公开的本地多主机聚合 RPC。
+- 本机 `man ssh`：-G 评估 Host/Match 后输出配置并退出。`man ssh_config`：Include、Match、PreferredAuthentications、KbdInteractiveAuthentication 的语义。只用 `ssh -G -F /dev/null localhost` 验证无配置网络连接的输出，**没有读取真实 SSH 文件或尝试 OTP 登录**。
+- [russh client 源码](https://github.com/warp-tech/russh/blob/e5d80a07dc554480b6ea3b2e14adfc190407b627/russh/src/client/mod.rs)：keyboard-interactive start/respond、partial_success、keepalive/inactivity 配置。
+- [totp-rs 文档](https://docs.rs/totp-rs/latest/totp_rs/)：TOTP 算法与 secret 类型；只是库能力核对，没有读取实际 seed 或生成真实 OTP。
+
+### Lark
+
+- 实际完整读取 [Thread Introduction](https://open.larksuite.com/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/thread-introduction)：thread_id、reply_in_thread、group_message_type=thread、按 thread 分页历史与新旧群类型差异。
+- [官方 Python SDK WS sample](https://github.com/larksuite/oapi-sdk-python/blob/0d9749a4728446a0ffa2e8374b37b5e1ce1cfd9c/samples/ws/sample.py)：消息事件、新版 card.action.trigger 与 ws.Client 的组合。
+- [官方 WS client](https://github.com/larksuite/oapi-sdk-python/blob/0d9749a4728446a0ffa2e8374b37b5e1ce1cfd9c/lark_oapi/ws/client.py)：心跳、帧组包、事件分发；[reply model](https://github.com/larksuite/oapi-sdk-python/blob/0d9749a4728446a0ffa2e8374b37b5e1ce1cfd9c/lark_oapi/api/im/v1/model/reply_message_request_body.py)：reply_in_thread、uuid 字段。
+- 尝试打开多个官方 REST、WS、callback 动态页面，部分只有导航或明确 404，未将它们当成已读取完整规格。没有假定 uuid 的幂等窗口、所有版本/地区的回调一致性、卡片永久可更新或具体限额。
+
+### Claude 与 shim 候选
+
+- 实际读取 [Claude Code headless](https://code.claude.com/docs/en/headless)、[CLI reference](https://code.claude.com/docs/en/cli-reference)、[Sessions](https://code.claude.com/docs/en/sessions)：stream-json、resume/replay user、SIGTERM/EOF 与 transcript 格式限制。
+- 实际读取 [Streaming vs single mode](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode)：长驻 streaming input、消息排队；不将排队解释为已验证 Codex steer。
+- [codex-acp-gateway README](https://github.com/mmonad/codex-acp-gateway/blob/81db00d32207c3333cd05ab6463099ae21fc0d46/README.md)、[acp_proxy.rs](https://github.com/mmonad/codex-acp-gateway/blob/81db00d32207c3333cd05ab6463099ae21fc0d46/src/acp_proxy.rs)、[lib.rs](https://github.com/mmonad/codex-acp-gateway/blob/81db00d32207c3333cd05ab6463099ae21fc0d46/src/lib.rs)：直接 Rust 协议转换候选，断线 EOF/kill 与退出循环的限制。
+- [Claude ACP adapter](https://github.com/agentclientprotocol/claude-agent-acp/tree/c0af592d252e6bd072b53407f618a9dd4cd02797)：README 与 package.json，确认 TypeScript/官方 Agent SDK 后端；没有执行它或核对其全部进程清理代码。
+- [ACP Rust SDK](https://github.com/agentclientprotocol/rust-sdk/tree/f5c0eef0972bbda8e75a151aeb088642911b3568)：官方 ACP Rust 支持，协议与 Codex wire 有区别。
+- [claude-agent-sdk-rs subprocess](https://github.com/tyrchen/claude-agent-sdk-rs/blob/2af170209806aaa4f3d90651463ced80626fc870/src/internal/transport/subprocess.rs)：Drop/start_kill 和 stdin shutdown；[另一个 Rust SDK](https://github.com/Wally869/claude_agent_sdk_rust/tree/c716c96787f4a3d08650cbb925f08d4f77327beb) 只核对 README/元数据。
+
+候选 SDK 的“production-ready”是作者自述，不作为 PocketPilot 结论；许可证、版本、协议语义与生命周期需采用前审查。新增 crates 元数据已合并到 crates-snapshot.json。未安装、编译或运行这些候选，未升级 CLI，未创建 Lark 资源。

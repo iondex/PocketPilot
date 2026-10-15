@@ -2,6 +2,8 @@
 
 日期：2026-10-15。本文把「官方协议支持」「本机静态验证」「源码行为」「尚待实际验证」分开。研究范围是 Rust 实现的 Telegram + Codex MVP，不在本阶段实现机器人。
 
+修订部署前提：本机已有管理本地和 SSH 任务的 Codex 体系，PocketPilot 默认本机启动；它聚合允许实例，不假定一个本地 RPC endpoint 代理所有远程任务。SSH 的 desktop/CLI/PocketPilot 应连相同远端 daemon。详见 [部署与生命周期契约](06-deployment-config-ssh.md)。
+
 ## 1. 结论
 
 方案可以基于 Codex app server 实现，但必须先证明 PocketPilot 与桌面/CLI 接入的是**同一个运行实例**。不能以「能列出同样的 thread ID」代替这项证明。
@@ -10,7 +12,7 @@
 
 1. 手工登记 host 和工作区；自动发现只给建议。
 2. 通过现有 app-server endpoint 或 `codex app-server proxy` 加入已有服务。
-3. 用只读 API 浏览会话；用户选择后才执行订阅/恢复。
+3. 用只读 API 浏览/观察会话；只有用户明确续轮时才能把历史 resume 作为准备动作。
 4. 运行中的 thread 使用 `turn/steer`；空闲 thread 使用 `turn/start`。
 5. 持久化 Telegram 绑定和消息投递记录；断线后核对状态与历史，绝不重放结果未知的写请求。
 6. 在支持版本、三端共享和断线语义验证通过前，降级为历史只读浏览。
@@ -59,7 +61,7 @@
 
 因此示例中的新字段不能无条件发送给所有版本。官网页面也不能当成某个本机二进制的契约。完整字段名和 schema SHA-256 见 [protocol-observations.json](research/protocol-observations.json)。
 
-MVP 首先支持通过验收的明确版本 profile；不把 0.149.1 自动纳入可控制版本。若适配旧历史模式，应作为单独兼容工作，并完成同一套行为验收。
+MVP 只支持实施时最新、通过验收的 Codex profile，不做旧版 legacy history 兼容。用户允许必要的 CLI 升级；升级和服务切换是维护步骤，PocketPilot 不在自身生命周期中自动重启活跃 daemon。
 
 PocketPilot 的 Workspace ID 与桌面的 projectId 独立。手动登记 cwd 不等于在桌面创建或分配项目；如果目标桌面需要额外的私有项目登记才能展示新 thread，必须在 P0 查明受支持的流程。不能直接改桌面状态文件来补齐归属，也不能把 PocketPilot 分组成功误报为桌面工作区归属成功。
 
@@ -95,7 +97,7 @@ PocketPilot 的 Workspace ID 与桌面的 projectId 独立。手动登记 cwd �
 flowchart LR
   TG[Telegram] <--> PP[PocketPilot]
   PP <-->|本地 proxy 或已有 endpoint| S1[本地常驻 app-server]
-  PP <-->|OpenSSH + proxy| S2[远程常驻 app-server]
+  PP <-->|SSH + proxy，支持 OTP| S2[远程常驻 app-server]
   CLI[CLI remote] <--> S2
   DESK[Desktop 受支持接入方式] <--> S2
 ```
@@ -106,14 +108,14 @@ flowchart LR
 
 ### 4.3 SSH proxy
 
-示意命令（远程程序路径须由本地配置确定）：
+普通 public-key profile 的示意命令（远程程序路径须由本地配置确定；不用于自动 OTP profile）：
 
 ```sh
 ssh -T \
   -o BatchMode=yes \
   -o StrictHostKeyChecking=yes \
-  -o ServerAliveInterval=15 \
-  -o ServerAliveCountMax=3 \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=6 \
   pilot-host /absolute/path/to/codex app-server proxy
 ```
 
@@ -122,6 +124,8 @@ ssh -T \
 常驻服务预先由机器的服务管理器或 Codex daemon 管理。PocketPilot 不负责服务生命周期；endpoint 不存在时返回「未连接到服务」，不执行 bootstrap/start/restart/stop。服务配置和 desktop 接入准备是明确的安装前置条件。
 
 若只有已存在 WebSocket，可用 OpenSSH `-L` 转发到远程 loopback；监听绑定本地 loopback，验证转发是否成功。纯 WebSocket 不通过公网明文暴露。SSH 复用现有 ssh_config、known_hosts、密钥与 ProxyJump，默认不启用 agent forwarding。
+
+配置 TOTP seed 的 keyboard-interactive profile 使用 russh 原生认证回调 + totp-rs，分别设置 connect/auth/proxy/RPC 超时；不使用 BatchMode 命令伪称支持 OTP。详见 [SSH 与 OTP](06-deployment-config-ssh.md)。
 
 ## 5. 会话共享、订阅与“不影响状态”的精确定义
 
@@ -132,16 +136,16 @@ ssh -T \
 | 操作 | 允许的变化 |
 | --- | --- |
 | 列表、状态、历史浏览 | 不 resume，不启动任务 |
-| 绑定/加入会话 | 新增客户端订阅；未加载的历史会话可能被 resume 到内存；UI 显式说明 |
+| 绑定/进入会话 | 只读状态/历史观察；不自动加载存储历史，不改变执行对象 |
 | 用户发消息 | 当前 turn 接收 steer，或空闲会话开始下一 turn |
 | title 缩短、解绑、关闭 Telegram topic | 仅改变 PocketPilot/Telegram 元数据，不修改原 thread 名称、归档、配置 |
-| 重连、桥接器退出 | 不发送取消、不重启服务、不结束远程 daemon |
+| 启停、崩溃、热更新、重连 | 不 resume/start/steer/审批回复/unsubscribe；不停止或重启服务 |
 
 不能字面承诺“任何 session 状态都不改变”：用户要求继续/新建会话本来就会改变历史与运行状态。这里的硬约束是**不做用户消息之外的任务中断、替换或配置变更**。
 
 已查阅固定源码版本的 warm resume 走原运行对象的 rejoin 路径，并向新连接重放待处理服务端请求；loaded thread 的配置覆盖可能被忽略并警告。PocketPilot 仍必须不发送覆盖，而不是依赖服务忽略它们。
 
-源码的空闲卸载条件同时要求「没有订阅者」「不 active」「经过宽限期」。这支持 active 工作不因普通取消订阅立即卸载的设计方向。但并未实际验证当前二进制，尤其不能推断 pending approval 断线必然安全。未知版本不可控制，支持版本必须通过故障矩阵。
+源码的空闲卸载条件同时要求「没有订阅者」「不 active」「经过宽限期」。这有助于理解服务端断线语义，但 PocketPilot 不主动发 unsubscribe，也不能由此推断 pending approval 断线必然安全。未知版本不可控制，支持版本必须通过故障矩阵。warm resume 是已知源码行为；由于没有 atomic loaded-only 条件，它不作为后台自动恢复观察的默认动作。
 
 ## 6. 状态与消息
 
@@ -178,15 +182,13 @@ ssh -T \
 4. `clientUserMessageId` 是关联标识。字段存在不证明服务器提供幂等执行保证。
 5. 仅本地 per-thread 串行不能排除 desktop/CLI 的同时写入，服务端 turn 前置条件仍然必要。
 
-## 8. 审批与问题输入
+## 8. 审批与问题输入：只观察
 
-不能通过设置 approvalPolicy=never 来省掉审批。也不能忽略服务端 request 后永久显示“运行中”。
+根据新增四类动作限制，MVP 只显示 waitingOnApproval/waitingOnUserInput 和待请求摘要，不从 Telegram 发送批准、拒绝、取消或 RPC 问题回答。不能设置 approvalPolicy=never 省掉审批，也不能把等待状态永远显示成生成中。用户在 desktop/CLI 原端处理；resolved 事件只更新状态。
 
-MVP 支持的请求类别应包括 command/file approval 和常见 user input；提供「本次允许」「稍后在桌面处理」。不暴露 cancel、不默认 decline、不提供会话永久授权。新版本权限申请、MCP elicitation 等未实现类型：显示需要原端处理，保留 pending，不伪造成功或拒绝。
+服务端 request 仍须解析和关联 epoch，不能发通用错误导致服务取消。PocketPilot 不接管动态工具宿主。若附加连接会抢占原端审批路由、未回应/断线会自动取消，当前组合不符合生命周期约束，必须使用只读观察或限制控制，不能靠自动答复解决。
 
-必须验证多端收到同一请求时的解析与一次性决议：桌面已批准后 Telegram 卡片变为已处理；旧按钮不能再操作。请求只在当前连接 epoch 内有效，重连后等待服务器重新提供该请求，不用旧 JSON-RPC id 作答。
-
-某些动态工具需要原客户端执行；PocketPilot 不替代其宿主，也不执行任意工具请求。没有原端承接能力时标记受限，会话可能等待。若协议对未回应/断线会自动取消任务，该组合不能通过严格不中断的 MVP 门禁。
+普通文本仍可作为用户续轮/steer 输入，但不会冒充特定 RPC request 的答案。历史入口、最后用户输入/最终输出与单条集合规则见 [08](08-history-and-delivery.md)。
 
 ## 9. 备选方案取舍
 

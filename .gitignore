@@ -1,8 +1,10 @@
 /target/
 /.env
 /.env.*
-!/.env.example
 /pocketpilot.local.toml
+/pocketpilot.toml
+/secrets.toml
+/config/private/
 *.db
 *.db-shm
 *.db-wal

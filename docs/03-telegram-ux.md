@@ -68,7 +68,7 @@ Host: 开发机          Agent: Codex
 [ 保存 ] [ 修改 ]
 ```
 
-这一步只登记，不启动会话。Host/SSH endpoint 初始在本机 TOML 配置；不允许从 Telegram 任意输入服务器命令、SSH options 或可执行文件路径。工作区路径限制在该 host 预配置的允许根目录下；校验 `..`、空字节、相对路径。远程 symlink 归属必须由只读验证或显式登记确认，不能只做字符串 starts_with。
+这一步只登记，不启动会话。Host 从本机 SSH config 发现并由 PocketPilot TOML allowlist 授权；工作区登记经 ConfigWriter 原子写入 TOML 再热更新，DB 只存派生索引；不允许从 Telegram 任意输入服务器命令、SSH options 或可执行文件路径。工作区路径限制在该 host 预配置的允许根目录下；校验 `..`、空字节、相对路径。远程 symlink 归属必须由只读验证或显式登记确认，不能只做字符串 starts_with。
 
 可增加「从已有会话发现路径」：列出未登记 cwd 候选，用户选定后仍走保存流程。明确标为候选，不称“全部工作区”。无会话的项目不会出现。
 
@@ -91,16 +91,16 @@ PP · 选择会话                 1/4
 
 点击某项先展示详情：完整标题、host、cwd、thread 短 ID、真实状态及更新时间、当前是否已绑定。
 
-- 已验证 loaded thread：按钮「连接到此会话」，说明加入原会话、若等待期间已卸载则可能加载历史；添加订阅不开始新 turn。
-- 存储历史且未加载：按钮「恢复并连接」，说明会在此服务加载该历史；只有可证明 ownership 的共享实例允许。
+- 已验证 loaded thread：按钮「进入此会话」，只读读取状态与历史，不自动 resume。
+- 存储历史且未加载：先显示最近输入/最终输出；用户发新任务时明确“继续历史会话”，允许在该动作内 resume + turn/start。
 - 活跃状态 ownership 不明：仅「查看历史」「连接诊断」，不提供继续按钮。
 - 已绑定：直接返回 topic 链接，不创建副本。
 
-Codex 当前没有原子 loaded-only resume，详情页不能承诺“绝不触发历史加载”。用户未同意加载时只读浏览；是否允许重连时加载同一历史也随 binding 明确保存。MVP 同一 topic 永远只关联同一 thread；解绑后要连接另一个 thread 必须新建 topic，避免迟到文本串台。
+Codex 当前没有原子 loaded-only resume，所以进入、绑定和重连使用只读观察，不先 resume 获取事件流。只有明确创建/续轮/steer 持有修改许可。MVP 同一 topic 永远只关联同一 thread；解绑后要连接另一个 thread 必须新建 topic，避免迟到文本串台。
 
-绑定是外部资源 saga：先预留 operation/唯一键，创建未绑定 topic，保存返回 ID，再 join，验证成功后建立 binding。失败时 topic 显示“尚未连接”，用户可重试**已知未执行步骤**或清理空 topic；不删除/归档 Codex thread。某步超时未知时暂停核对，不再自动创建第二个 topic。
+绑定是外部资源 saga：先预留 operation/唯一键，创建未绑定 topic，保存返回 ID，再只读验证 session，成功后建立 binding。失败时 topic 显示“尚未连接”，用户可重试**已知未执行步骤**或清理空 topic；不删除/归档 Codex thread。某步超时未知时暂停核对，不再自动创建第二个 topic。
 
-新绑定默认只显示最近 5 条已完成可见文本和当前 active 文本（若可得），标记“历史摘录”；完整历史用 `/history` 分页。不是把旧历史默认全部灌进群。实时绑定以后每条可见 user/agent 文本按队列同步，历史默认显示条数不限制实时转发覆盖范围。
+新绑定空闲会话显示最后用户输入和对应 agent 最终输出，忽略中间说明；进入活跃会话时，全部可读历史合成一个集合。短集合一条纯文本，超长用一条完整 Markdown 附件，不逐条刷历史。真正新 thread 无历史时明确提示。最终输出识别、当前轮无 final 和分页快照边界见 [08](08-history-and-delivery.md)。
 
 ## 6. 新建会话
 
@@ -116,7 +116,7 @@ Codex 当前没有原子 loaded-only resume，详情页不能承诺“绝不触�
 [ 创建并发送 ] [ 修改 ]
 ```
 
-顺序：持久化 provisioning → 创建 topic 保存 ID → thread/start 保存 thread ID → join/bind → 新 operation 发送首条消息。thread/start 与首条消息分开记录，避免首条消息未知时再次创建 thread。空 thread 是否持久化/桌面可见属于版本验收事项；首条消息成功后才宣告“会话已创建并可继续”。
+顺序：持久化 provisioning → 创建 topic 保存 ID → thread/start 保存 thread ID → 只读核对并 bind → 新 operation 发送首条消息。thread/start 与首条消息分开记录，避免首条消息未知时再次创建 thread。空 thread 是否持久化/桌面可见属于版本验收事项；首条消息成功后才宣告“会话已创建并可继续”。
 
 新建专用 profile 可在安装时明确设 model/approval/sandbox；默认继承服务/工作区配置。界面不把“关闭审批”作为便捷默认。输入短标题只存在 PocketPilot，既有 Codex 标题不被改写；新线程在 desktop 的标题可能由首条消息产生，验收需核对展示效果。
 
@@ -141,10 +141,10 @@ Thread: a13f5b     当前轮: 77cd21
 | 展示 | 含义 | 输入行为 |
 | --- | --- | --- |
 | 🟢 正在运行 | active 且可确认当前 turn | 普通文本作为 steer |
-| 🟡 等待审批 | active + waitingOnApproval | 审批卡优先；允许普通补充但说明不能代替审批 |
-| 🟡 等待回答 | active + waitingOnUserInput | 用问题卡回答；普通文本不冒充 RPC 问题答案 |
+| 🟡 等待审批 | active + waitingOnApproval | 提示去原端审批；普通补充不能代替审批 |
+| 🟡 等待回答 | active + waitingOnUserInput | 提示去原端回答；普通文本不冒充 RPC 问题答案 |
 | ⚪ 空闲 | 此共享实例 idle | 普通文本开始下一轮 |
-| ⚫ 历史未加载 | notLoaded | 用户明确恢复后才允许发送 |
+| ⚫ 历史未加载 | notLoaded | 用户明确续轮后才在该动作内 resume + start |
 | 🔴 最近一轮失败 | last turn failed；runtime 单独显示 | 可继续，但不自动重试旧任务 |
 | 🔴 服务错误 | systemError | 限制控制，诊断后恢复 |
 | ❔ 状态未知/已断线 | stale、离线或 ownership 未验证 | 保存本地草稿或拒绝发送，不自动补发 |
@@ -176,7 +176,7 @@ topic 标题：工作区短名 + 清理空白后的原名称/本地 alias + 会�
 | 命令 | 行为 |
 | --- | --- |
 | `/status` | 拉取真实状态并更新卡片 |
-| `/history` | 查看可见文本历史并分页，不执行 resume |
+| `/history` | 分页读取后输出一个历史集合，超限一条附件，不执行 resume |
 | `/info` | 完整标题、workspace、host、thread、状态年龄与接入模式 |
 | `/ask 文本` | 明确将文本交给 agent；支持发送以斜杠开头的内容 |
 | `/steer 文本` | 仅追加到捕获的当前 turn |
@@ -217,34 +217,21 @@ topic 标题：工作区短名 + 清理空白后的原名称/本地 alias + 会�
 
 Telegram 原输入与 provider 返回的 userMessage 通过 clientId/operation 关联，只做送达确认；其他客户端的用户输入标“Codex 用户（其他客户端）”。不靠文本字符串相同推断来自 Telegram，不把 bot message 送回 provider。
 
-默认纯文本，避免 MarkdownV2 转义错误导致消息丢失；后续可增加受限 HTML renderer。长消息按段落/行拆分，保守控制每片不超过约 3500 UTF-16 code units，为 `(1/3)` 标签留空间；不能截断丢正文。超长代码按纯文本逐片发送；可选附件导出以后添加，不能只发摘要替代原文。
+默认纯文本，避免 MarkdownV2 转义错误。短时同 session 文本按配置窗口和阈值合并，保留 role/阶段边界；默认 2 秒窗口、3 条阈值、最长等待 5 秒。历史集合和合并结果超长时用一条完整 Markdown 附件，不能截断或只发摘要。精确分片是用户显式选择的备用方式，详见 [08](08-history-and-delivery.md)。
 
 Telegram 官方建议限制包括每 chat 约每秒 1 条、群每分钟 20 条、总体约每秒 30 条。**同一 supergroup 的不同 topics 共享群级预算**。采用 per-bot + per-chat 限速，初值保守为群每分钟 18 条，真实 429 按 retry_after；编辑与发送、标题/状态更新也进入受控调度，不假定编辑无限额。
 
-多个 session 密集 commentary 时，完整消息同步可能延迟。状态卡展示积压数量/年龄；控制台分页与标题更新可合并，消息正文不可丢弃或无限饿死。审批提醒和明确错误优先，同时给普通文本公平预算。
+多个 session 密集 commentary 时，完整消息同步可能延迟。状态卡展示积压数量/年龄；控制台分页与标题更新可合并，消息正文不可丢弃或无限饿死。等待状态提醒和明确错误优先，同时给普通文本公平预算。
 
-## 10. 审批和用户问题
+## 10. 审批和用户问题：原端处理
 
-审批卡仅呈现作出决定所必需的信息：
+状态卡显示“等待审批/用户回答”，必要时显示请求摘要和“请在 desktop/CLI 处理”。不提供批准、拒绝、取消或 RPC 问题回答按钮。PocketPilot 只允许创建、续轮、steer 和只读查看，不通过答复请求改变原端状态。
 
-```text
-Codex 正在等待本次命令批准
-命令: cargo test --workspace
-目录: 已登记的工作区
-原因: 验证修改
-
-[ 仅允许这一次 ] [ 稍后在桌面处理 ]
-```
-
-这是必要的交互，不是工具调用流式输出。允许前再次验证用户、请求 ID/epoch、session/turn、请求未被其他端处理；不暴露 cancel/decline/永久授权。服务返回 availableDecisions 时只展示确实支持的允许项。
-
-问题卡按协议提供选项和自由输入。用户输入与具体 request 绑定；回复问题卡的文本走 answer，不同时又被当作普通 steer。普通文本默认 Continue 语义，无法代替审批请求。MCP URL elicitation、额外权限等未支持类型提示去桌面处理；不自动打开 URL 或确认权限。
-
-桌面先完成审批时，收到 serverRequest/resolved 后禁用按钮并显示“已在其他端处理”。重启后旧卡片全部失效，等新连接重放请求再生成新卡。若原端无法处理，明确显示受限/等待，不设超时自动拒绝。
+收到 resolved 事件或只读状态变化后更新卡片；未知请求不自动回复错误或拒绝，也不把普通文本当 RPC answer。若原端无法承接请求，显示受限/等待，不通过变更 approvalPolicy 或关闭连接清理请求。
 
 ## 11. 解绑、topic 被关闭与资源异常
 
-解绑确认说明：“仅解除 Telegram 绑定，Codex 会话继续运行”。若存在 active turn/待处理请求，本地停止接收新消息但保留连接观察直到允许安全释放；不在此时主动 unsubscribe。现有其他客户端正常工作；进程本身退出仍必须满足版本断线验收。
+解绑确认说明：“仅解除 Telegram 绑定，Codex 会话继续运行”。停止接收新消息并移除本地观察登记；任何状态都不发 unsubscribe，不通过解除绑定改变远端会话。现有其他客户端正常工作；进程本身退出仍必须满足版本断线验收。
 
 用户手动关闭 topic：不发 agent 操作。绑定标 suspended，积压保留且提示控制台；用户可重新打开恢复。不要自动 reopen 对抗用户操作。手动删除 topic：标 orphaned，停止投递，可在控制台显式创建新 topic 并重新绑定；不自动复制大量历史。
 

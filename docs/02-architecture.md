@@ -9,7 +9,7 @@ PocketPilot 是会话的附加客户端和聊天平台桥接器。Codex 继续�
 边界独立于三个变化方向：
 
 - AgentProvider：Codex/未来 Claude 的会话行为。
-- ChatPlatform：Telegram/未来 Discord 的用户交互和消息投递。
+- ChatPlatform：Telegram/未来 Lark、Discord 的用户交互和消息投递。
 - RpcTransport：本地 proxy、SSH proxy、WebSocket 的连接和 framing。
 
 运行时采用单进程 Tokio 服务、SQLite 持久化和 bounded actor 队列。MVP 不需要 Redis、Kafka、HTTP 管理后台、动态插件 ABI 或分布式调度。
@@ -49,7 +49,7 @@ flowchart TB
 | Observation | 服务端状态 + active turn + 连接 epoch + 观察时间 + freshness |
 | TextItem | session + turn + item ID + role/phase + 可见文本 + 完成标记 |
 | Operation | 用户一次操作的持久化 ID、输入地址、执行模式、结果与不确定性 |
-| PendingRequest | agent 发来的审批/输入请求；仅当前连接 epoch 可回答 |
+| PendingRequest | agent 发来的审批/输入请求；仅观察，由 desktop/CLI 原端处理 |
 
 同一远程 thread 在不同 host/provider 中可同名；ID 不跨实例合并。instance 的 runtime ownership 需要受测连接 profile 和安装记录验证。initialize 不提供通用、可靠的进程身份认证；不能靠响应版本字符串证明两连接属于同一进程。
 
@@ -75,11 +75,10 @@ pub struct ProviderCapabilities {
     pub multi_client: bool,
     pub survives_client_disconnect: bool,
     pub correlation_ids: bool,
-    pub request_support: RequestSupport,
+    pub request_observation: RequestObservationSupport,
 }
 
-pub enum HistorySupport { Legacy, Paginated, Unavailable }
-pub enum JoinPolicy { LoadedOnly, AllowLoadStored }
+pub enum HistorySupport { Paginated, Unavailable }
 pub enum SendMode {
     Continue,                      // 当前上下文或下一轮；由应用服务解析
     SteerExact { turn: TurnId },    // 不得默默跨 turn
@@ -94,14 +93,12 @@ pub trait AgentProvider: Send + Sync {
         -> Result<SessionSnapshot, ProviderError>;
     async fn history(&self, query: HistoryQuery)
         -> Result<Page<TextItem>, ProviderError>;
-    async fn join(&self, session: &SessionRef, policy: JoinPolicy)
+    async fn observe(&self, session: &SessionRef)
         -> Result<SessionSnapshot, ProviderError>;
     async fn create(&self, request: CreateSession)
         -> Result<SessionSnapshot, ProviderError>;
     async fn send(&self, request: SendRequest)
         -> Result<SendReceipt, ProviderError>;
-    async fn answer(&self, request: PendingRequestRef, answer: UserDecision)
-        -> Result<AnswerReceipt, ProviderError>;
     async fn release_observation(&self, session: &SessionRef)
         -> Result<(), ProviderError>;
     fn take_events(&self)
@@ -109,15 +106,15 @@ pub trait AgentProvider: Send + Sync {
 }
 ```
 
-`take_events` 是实例级单消费者事件源，第二次调用明确失败。创建 stream 后再列/加入 session，避免事件丢失；事件汇聚器按 session 分发。断线在同一 stream 中产生连接事件，连接 supervisor 负责重建底层 transport；不会偷偷创建新 agent 服务。
+`take_events` 是实例级单消费者事件源，第二次调用明确失败。创建 stream 后再列/观察 session，避免事件丢失；事件汇聚器按 session 分发。断线在同一 stream 中产生连接事件，连接 supervisor 负责重建底层 transport；不会偷偷创建新 agent 服务。
 
-`join` 的定义：只加入该实例原 thread；LoadedOnly 不能在另一个实例冷启动同历史 thread。AllowLoadStored 仅在已验证共享实例、用户明确继续历史会话时允许加载。provider 的 snapshot 不隐式 join。`release_observation` 只释放本桥接器观察，在活跃或待请求时延迟 explicit unsubscribe；连接退出由受测服务保证工作存活。
+`observe`、snapshot、history 全部只读，不隐式 resume；默认状态/历史轮询。只有受测协议提供真正无加载副作用的订阅，才可作为观察优化。`release_observation` 只删除本地观察登记，不发送 thread/unsubscribe。当前协议没有 atomic loaded-only resume，不能通过 loaded/list 后再 resume 伪装只读附着。
 
-当前查阅的 Codex resume 没有原子的“仅 loaded 才 join”前置条件；先 loaded/list 再 resume 存在 TOCTOU。因此 Codex MVP 的严格 LoadedOnly 返回 Unsupported，不能伪装实现。实际连接按钮说明“加入原会话，必要时加载历史”，用户明确授权后才使用 AllowLoadStored，并持久化 `allow_reload_on_reconnect`；未授权冷加载的重连只能只读观察/请求确认。可信单实例的 warm-first 分支保证加入尚在运行的原对象；这是与 loaded-only 不同的保证。
+send 的续轮路径可在用户明确动作内 resume 未加载历史，再发 turn/start；不能在程序启动、重连、reload 或恢复积压操作时执行该准备。运行中 steer 取得 active turn ID 后直接发给同一实例，不能为了订阅先冷恢复。创建返回的合法订阅可使用，但不能由重启触发重新创建。
 
 接口**没有 stop、interrupt、kill、rollback、fork、archive 或服务重启**。create 必须使用登记 Workspace 和明确的新会话配置；不能用它实现 resume。现有会话的 SendRequest 不含 model/cwd/sandbox 覆盖字段。
 
-`UserDecision` MVP 只支持单次批准和对应请求的用户回答；没有 Cancel、Decline、AcceptForSession。稍后处理是本地 UI 动作，不发送 provider decision。批准是真实用户操作，不是桥接器自动决策。
+Provider 接口没有 answer/approve；服务端 request 只解析、显示和等待原端处理。MVP 只允许创建、续轮、steer、只读查看四类业务动作。
 
 ### 3.2 Provider 事件与错误
 
@@ -165,7 +162,7 @@ Inbound 由 adapter 自己接收，再转成统一的 `UserCommand` envelope；�
 
 传输层只连接、收发 wire 消息和报告连接终止。Codex adapter 拥有 JSON-RPC dispatcher，负责 ID、pending map、超时、双向请求、版本 profile 和事件解析。
 
-发送器的请求方法使用强类型 `AllowedCodexRequest` enum，不允许上层传任意 method 字符串。基础白名单：initialize、thread/list/read/loaded/list/resume/start、适用版本的历史 API、turn/start/steer。延迟 unsubscribe、必要的只读诊断方法需单独审计。响应服务端 request 走单独的强类型回复通道，不能用“白名单不含审批方法”为由丢弃请求。
+发送器使用强类型 `AllowedCodexRequest`，且按上下文分为只读 ObserverPermit 与用户动作 MutationPermit；不能只靠一张全局字符串白名单。观察许可只有 initialize、thread/list/read/loaded/list 和当前分页历史 API。thread/start、thread/resume、turn/start/steer 只能在明确的创建/续轮/steer operation 内使用；后台启停/重连/reload 不持有 MutationPermit。审批回复和 thread/unsubscribe 不在许可内；服务端 request 仍解析并显示，不能自动返回取消/错误决议。
 
 禁止路径包括 `turn/interrupt`、thread rollback/revert/delete/archive/fork/compact、backgroundTerminal terminate/clean、process kill、shellCommand、command/exec、写配置/写文件、daemon stop/restart、给 agent PID 发信号。程序不提供原始 RPC 透传命令。
 
@@ -173,7 +170,7 @@ Inbound 由 adapter 自己接收，再转成统一的 `UserCommand` envelope；�
 
 每个 provider instance：一个 ConnectionSupervisor、一个读循环、一个有界写队列、一个 RPC dispatcher 和事件归一化器。SSH 每个 host 复用连接；不同 instance 的 agent 会话不按工作区重复初始化。
 
-每个已绑定 session：一个 actor，序列化 PocketPilot 的发送、审批、状态核对和 binding 变更。等待 RPC 的过程中继续接收事件与服务端 request；不能拿全局 Mutex 等网络。
+每个已绑定 session：一个 actor，序列化 PocketPilot 的发送、状态核对和 binding 变更，观察审批/问题状态。等待 RPC 的过程中继续接收事件与服务端 request；不能拿全局 Mutex 等网络。
 
 取消 token 分两级：PocketPilot 服务级和**本地连接任务级**；都不能转换成 agent interrupt。SSH/proxy 子进程是桥接器所有，daemon/agent 子进程不是。退出可以回收本地 proxy，但必须先确认连接消失不会触发任务取消的受测保证。
 
@@ -200,13 +197,13 @@ Inbound 由 adapter 自己接收，再转成统一的 `UserCommand` envelope；�
 
 Freshness 保存 observed_at 和连接 epoch。推荐新鲜状态窗口 15 秒，绑定会话定期低频核对（默认 30 秒，带 jitter，按实例限流）；发消息前主动核对，必要时获取 live turn 快照。超过窗口可显示“最后状态”，控制需要最新核对，不把 silence 当完成。
 
-快照/事件竞态处理：每次重连提升 epoch，旧 epoch 事件作废；join 前就开始 buffer 新事件。适配受测版本的 resume 响应与通知顺序，再合并 buffer；发现冲突时重新读状态/活跃 turn。没有通用服务端全局 revision，不能用本地 receive time 或 updatedAt 当强一致版本号。历史 item 通过 ID 与完成标志合并，completed 文本优先于 delta。
+快照/事件竞态处理：每次重连提升 epoch，旧 epoch 事件作废；观察前建立事件缓冲（如连接有合法订阅），否则使用只读轮询核对。用户动作中 resume 的响应与通知按受测版本顺序合并；发现冲突重新读状态/活跃 turn。没有通用服务端全局 revision，不能用本地 receive time 或 updatedAt 当强一致版本号。历史 item 通过 ID 与完成标志合并，completed 文本优先于 delta。
 
-活跃 turn ID 来自受测版本的 live resume snapshot、turn/started 或支持 live 状态的 turns API。metadata-only resume 的 active 标记不保证带 turn ID。拿不到 ID 时显示“运行中，暂不能追加”，不猜 ID、不用时间最新的已完成 turn 代替。
+活跃 turn ID 优先来自受测版本的只读 live turns API；合法既有订阅的 turn/started 或用户明确续轮内 resume snapshot 可作补充。不能为取得 ID 在后台 resume；metadata-only active 标记不保证带 turn ID。拿不到 ID 时显示“运行中，暂不能追加”，不猜 ID、不用时间最新的已完成 turn 代替。
 
 ## 6. 持久化
 
-SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署。迁移由 sqlx 管理；数据只存 PocketPilot 目录，不修改 Codex DB/rollout。TOML 管静态 host/路径/策略，DB 管运行期注册与绑定；配置 ID 是稳定 UUID，两者重名冲突启动时报错，不静默覆盖。
+SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署。迁移由 sqlx 管理；数据只存 PocketPilot 目录，不修改 Codex DB/rollout。TOML 是全部设置、host/workspace 和授权的权威；DB 管派生注册索引、绑定与投递，不能另存独立授权。配置 ID 是稳定 UUID。新增 ConfigSnapshot/ConfigWriter、notify + arc-swap 热更新及原子授权检查见 [06](06-deployment-config-ssh.md)。
 
 建议表：
 
@@ -222,7 +219,7 @@ SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署�
 | operations | operation_id、stable_event_key/action_nonce 唯一、session_key、binding_revision、connection_epoch、mode、expected_turn_id、state、receipt/error |
 | text_items | instance/thread/turn/item 唯一；role、phase、canonical_text、final、client_id |
 | deliveries / outbox | binding、item、render_revision、chunk_index 唯一；payload、state、next_attempt_at、platform_message_id |
-| pending_requests | instance + epoch + rpc_request_id；session、turn、kind、resolved、reply_state |
+| pending_requests | instance + epoch + rpc_request_id；session、turn、kind、observed_at、resolved；只观察 |
 | ui_actions | opaque nonce、authorized user/chat、binding revision、operation scope、expiry、used_at |
 | provisionings | operation_id、desired session/topic、known external IDs、state/unknown_reason |
 
@@ -259,7 +256,7 @@ RPC 写入前事务记录 Dispatching。进程崩溃遗留 Dispatching 按 Outco
 
 ## 8. 出站文本与 Telegram 一致性
 
-`TextItemObserved` → upsert 权威文本 → 计算 delivery intent → 同一事务写 outbox。Sender 独立限速投递，成功保存 message ID。按 session/turn/item 序列展示，外部 agent 没有可证明全局顺序时按服务事件/历史顺序保持，不用 ID 字典序假定时间顺序。
+`TextItemObserved` → upsert 权威文本 → DeliveryAggregator 形成批次/历史集合 → 同一事务封存成员和 outbox。Sender 独立限速投递，成功保存 message ID。按 session/turn/item 序列展示，外部 agent 没有可证明全局顺序时按服务事件/历史顺序保持，不用 ID 字典序假定时间顺序。message_batches/batch_items/history_bundles 与超长单附件规则见 [08](08-history-and-delivery.md)。
 
 本 topic 用户消息已经在 Telegram 可见，匹配 clientId 后只补“已送达”状态，不再原样复读。CLI/desktop 发来的 userMessage 加来源标签转发；未知来源标为“Codex 用户”，不凭文本相同判定回声。多平台绑定时只排除原始输入位置，其他授权位置仍可同步。
 
@@ -279,8 +276,8 @@ create topic、create thread 也不是跨系统事务：使用 provisioning saga
 
 1. 增加 epoch，所有原状态标 stale；原连接在途写操作标 OutcomeUnknown。
 2. 重新连接 proxy/endpoint，initialize；只建立一个受控读循环。
-3. 恢复已绑定 session 的观察，优先 warm join；检查持久化的加载授权，不能把先前 loaded-only 意图自动升级为冷恢复授权，也不能为同历史 thread 启新服务。
-4. 核对 active turn、状态、pending requests；只用新 epoch 的请求回答。
+3. 恢复当前配置仍允许的已绑定 session 的只读观察；不 resume、不 unsubscribe、不启动新服务。没有无副作用订阅时使用状态/历史轮询，不把重连当作续轮授权。
+4. 核对 active turn、状态、pending requests；只保留新 epoch 的请求观察，不发送 answer/approve/decline/cancel。
 5. 从分页历史重叠读取上次末尾及当前 active turn 的 items，upsert 去重；历史水位不能只用时间戳。
 6. 若无稳定 cursor/历史可能变化，从较早锚点重新分页并按 ID 去重；不能假设翻页只追加不更新。
 7. 无法证明断线区间连续性时就生成“可能遗漏消息”的 gap 提示，不要求先找到具体缺项；即使历史回补没发现缺项也不能显示完整覆盖。所有 gate 满足后才恢复新输入，积压旧输入仍需确认。
@@ -289,13 +286,15 @@ SSH keepalive用于探测连接，无法保证服务永不中断。丢失 SSH �
 
 ## 10. 扩展边界
 
-Claude 后续 adapter 必须自行证明列会话、真实 live 状态、可追加输入、断线存活等能力；没有 steer 的 provider 返回 Unsupported，不以“停止再 resume”模拟 steer。Claude 的运行 SDK/权限模型在该阶段独立调研，本文不声称与 Codex 等价。
+Claude 后续可通过远端 Rust shim 兼容 Codex wire 子集，保留不同 provider 身份与 capabilities；不保证完整 Codex Desktop 兼容。没有真正 steer 的 provider 返回 Unsupported，不以“停止再 resume”模拟。独立 daemon/executor、CLI stream-json、ownership 和 EOF 边界见 [07](07-future-adapters.md)。
 
 Discord adapter 把 workspace 映射为 category、session 为 text channel，使用同样的 inbox/operations/outbox。平台拥有能力多不代表 provider 可停止；管理员权限不绕过应用的 host/workspace 授权。
 
+Lark adapter 使用 region/tenant/chat/thread/root-message 地址、根状态卡和线程回复；能力和 Rust 生态取舍见 [07](07-future-adapters.md)。SSH backend 增加 russh/TOTP，传输超时逐 host 配置，不能把系统 OpenSSH 等同于自动 keyboard-interactive 支持。
+
 ## 11. 日志与诊断
 
-统一 tracing，tracing-subscriber JSON 输出，RUST_LOG 控制级别；第三方 log 日志桥接到 tracing。span 字段含 operation_id、instance_id、内部 workspace_id、thread/turn/item ID、epoch、method、耗时、结果分类。用户/平台 ID 可在日志中哈希化，避免泄漏聊天范围。
+统一 tracing，tracing-subscriber JSON 输出，config 的 logging.filter 控制级别和热更新，不依赖 RUST_LOG/.env；第三方 log 桥接到 tracing。span 字段含 operation_id、instance_id、内部 workspace_id、thread/turn/item ID、epoch、config_generation、method、耗时、结果分类。用户/平台 ID 可哈希化。TOTP seed、动态 code、密码、secret config 路径/正文和实际展开认证响应不进入日志。
 
 禁止默认记录 token、Authorization、完整 URL（Telegram token 在 URL path）、SSH 命令展开后的秘密、全文、配置内容、原始 RPC body、工具输出。错误显示结构化错误码和经清理摘要，不直接打印 reqwest/teloxide 的含 token URL。DEBUG 也必须脱敏。
 
