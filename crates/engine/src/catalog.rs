@@ -143,56 +143,21 @@ impl Catalog {
         cwd: &str,
         name: Option<&str>,
     ) -> Result<Workspace, ConfigError> {
-        if let Some(existing) = config
-            .workspaces
-            .iter()
-            .find(|w| w.provider_id == provider && w.cwd == cwd)
-        {
-            return Ok(existing.clone());
-        }
-        let id = uuid::Uuid::new_v4().to_string();
-        let basename = Path::new(cwd)
-            .file_name()
-            .and_then(|p| p.to_str())
-            .unwrap_or("workspace");
-        let name = name.filter(|n| !n.trim().is_empty()).unwrap_or(basename);
-        let mut short_name = name.to_owned();
-        if config.workspaces.iter().any(|w| w.short_name == short_name) {
-            short_name = format!("{name}-{}", &id[..6]);
-        }
-        let workspace = Workspace {
-            id,
-            provider_id: provider.into(),
-            name: name.into(),
-            short_name,
-            cwd: cwd.into(),
-            additional_cwds: vec![],
-        };
-        let mut next = config.clone();
-        next.workspaces.push(workspace.clone());
-        next.validate()?;
-        let payload = serde_json::to_string(&workspace).map_err(|_| ConfigError::Invalid)?;
-        sqlx::query("INSERT INTO catalog_workspaces(id,provider_id,payload) VALUES(?,?,?) ON CONFLICT DO NOTHING")
-            .bind(&workspace.id)
-            .bind(provider)
-            .bind(payload)
-            .execute(&self.pool)
-            .await
-            .map_err(|_| ConfigError::Io)?;
-        let row=sqlx::query("SELECT payload FROM catalog_workspaces WHERE provider_id=? AND json_extract(payload,'$.cwd')=?")
-            .bind(provider).bind(cwd).fetch_one(&self.pool).await.map_err(|_|ConfigError::Duplicate)?;
-        let workspace: Workspace =
-            serde_json::from_str(row.get("payload")).map_err(|_| ConfigError::Invalid)?;
-        tracing::info!(workspace_id=%workspace.id,provider_id=provider,"workspace added");
-        Ok(workspace)
+        self.register_workspace(config, provider, cwd, name, false)
+            .await?
+            .ok_or(ConfigError::Invalid)
     }
 
     pub async fn remove_workspace(&self, id: &str) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;
+        sqlx::query("INSERT INTO workspace_exclusions(provider_id,cwd) SELECT provider_id,json_extract(payload,'$.cwd') FROM catalog_workspaces WHERE id=? ON CONFLICT DO NOTHING")
+            .bind(id).execute(&mut *tx).await.map_err(|_|StoreError::Database)?;
         sqlx::query("DELETE FROM catalog_workspaces WHERE id=?")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|_| StoreError::Database)?;
+        tx.commit().await.map_err(|_| StoreError::Database)?;
         tracing::info!(
             workspace_id = id,
             "workspace removed from catalog; remote session unchanged"
@@ -222,6 +187,11 @@ pub fn restrict(config: &mut Config) {
             })
     });
 }
+
+#[path = "workspace_discovery.rs"]
+mod workspace_discovery;
+
+pub use workspace_discovery::WorkspaceDiscovery;
 
 #[cfg(test)]
 #[path = "catalog_tests.rs"]

@@ -169,3 +169,12 @@ rust-i18n 4 提供编译期中英文 YAML，显式 locale 参数避免全局语�
 Logo 按用户最新要求仅交付生成 prompt，未调用图像 API或安装头像，文件为 docs/design/logo-prompt.md。全 workspace 115 项测试通过（Telegram 72、共享 i18n 2、session 5、CLI 1）；全 feature/all-targets Clippy -D warnings 与 fmt 通过。真实用户话题未用于删除测试；原生生命周期检查仍由隔离 fixture 覆盖。
 
 发布构建验证：macOS arm64 binary 10,733,664 字节，SHA-256 `5bef83a73941b0fa27c559cbec0212856b362167ced06ee54164713f5cc8705d`。真实独立临时配置验证 CLI 中英文业务错误；新版桥接已重启并确认 Telegram ready，getMyCommands 回读 zh/en 各 10 项且无 unbind/cleartopics。配对、catalog 与绑定沿用原状态库；没有重启 Codex daemon。
+
+
+## 工作区遗漏与分页修复
+
+截图的九项来自初始手工登记的 catalog，既没有自动发现会话 cwd，也没有工作区级分页；因此未登记的 cpet-proposal 不会出现。只读本地 catalog 断言复现缺失；SSH 在允许的 /root 范围内确认 /root/research/cpet-proposal 存在。已通过正式 CLI 登记该明确指定的目录，不向 agent 发送任何请求。
+
+回归先复现十个已登记工作区没有下一页，再补普通和 /new 共用八项分页及计数。另用分页 AgentProvider fixture 将目标项目置于第二页，校验活跃/普通/归档 metadata、范围过滤、去重、名称/ID 保留和显式移除排除；发现不使用 read/history/execute。后台补齐以及工作区页 /refresh 已接入现有共享连接，均不启动或停止原生会话。源代码继续物理平铺，排除表直接加在根 schema.sql，没有 migration。
+
+全 workspace 118 项测试（Telegram 74、engine 6）、fmt、全 feature/all-targets Clippy 与无默认 feature app Clippy 通过。发布构建 10,814,752 字节，SHA-256 `dc7e320da55042180b998cba4261776453a945560d377d0cc78a364c46bc3899`。桥接已重启且 Telegram ready；真实 anjie-bsc-arb 会话 metadata 发现跨 3 页完成，新增 11 个入口，连同已补登的 cpet-proposal 共 21 个工作区。原复现断言已通过；配对保留，未停止或续轮任何原生会话。

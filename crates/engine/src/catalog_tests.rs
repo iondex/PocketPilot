@@ -8,6 +8,179 @@ fn configuration(path: &Path, text: &str) -> Config {
 
 const ROOT: &str = "[[hosts]]\nid='host'\nname='fixture'\ntransport='local_proxy'\nallowed_workspace_roots=['/projects']\n";
 
+struct PagedWorkspaceAgent {
+    instance: String,
+    queries: std::sync::Mutex<Vec<(bool, Option<String>)>>,
+}
+
+#[async_trait::async_trait]
+impl session::AgentProvider for PagedWorkspaceAgent {
+    fn capabilities(&self) -> session::Capabilities {
+        session::Capabilities {
+            list: true,
+            ..Default::default()
+        }
+    }
+
+    async fn list(
+        &self,
+        query: session::SessionQuery,
+    ) -> Result<session::Page<session::Session>, session::ProviderError> {
+        assert!(query.cwd.is_none());
+        self.queries
+            .lock()
+            .unwrap()
+            .push((query.archived, query.cursor.clone()));
+        let (paths, next) = match (query.archived, query.cursor.as_deref()) {
+            (false, None) => (
+                vec![
+                    "/projects/existing",
+                    "/projects/shared-worktree",
+                    "/outside/forbidden",
+                ],
+                Some("second".into()),
+            ),
+            (false, Some("second")) => (
+                vec![
+                    "/projects/cpet-proposal",
+                    "/projects/cpet-proposal",
+                    "/projects/../outside",
+                ],
+                None,
+            ),
+            (true, None) => (vec!["/projects/archived-only"], None),
+            _ => panic!("unexpected paging request"),
+        };
+        Ok(session::Page {
+            data: paths
+                .into_iter()
+                .enumerate()
+                .map(|(i, cwd)| session::Session {
+                    reference: session::SessionRef {
+                        instance: self.instance.clone(),
+                        thread: format!("thread-{i}"),
+                    },
+                    title: "fixture".into(),
+                    native_title: None,
+                    cwd: cwd.into(),
+                    status: session::RuntimeStatus::NotLoaded,
+                    active_turn: None,
+                    updated_at: None,
+                })
+                .collect(),
+            next_cursor: next,
+        })
+    }
+
+    async fn read(&self, _: &str) -> Result<session::Session, session::ProviderError> {
+        panic!("workspace discovery must only list metadata")
+    }
+
+    async fn history(&self, _: &str) -> Result<session::History, session::ProviderError> {
+        panic!("workspace discovery must not load history")
+    }
+
+    async fn execute(
+        &self,
+        _: session::provider::Mutation,
+    ) -> Result<session::provider::Receipt, session::ProviderError> {
+        panic!("workspace discovery must not mutate a session")
+    }
+}
+
+#[tokio::test]
+async fn discovers_projects_beyond_first_session_page_and_preserves_explicit_removal() {
+    let dir = tempfile::tempdir().unwrap();
+    let catalog = Catalog::open(dir.path()).await.unwrap();
+    let provider = catalog
+        .discover(
+            "host",
+            codex::discovery::Endpoint {
+                binary: "/bin/codex".into(),
+                socket: "/tmp/control.sock".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let mut config = configuration(&dir.path().join("pocketpilot.toml"), ROOT);
+    catalog.load(&mut config).await.unwrap();
+    let mut existing = catalog
+        .add_workspace(
+            &config,
+            &provider.id,
+            "/projects/existing",
+            Some("Custom project name"),
+        )
+        .await
+        .unwrap();
+    existing
+        .additional_cwds
+        .push("/projects/shared-worktree".into());
+    sqlx::query("UPDATE catalog_workspaces SET payload=? WHERE id=?")
+        .bind(serde_json::to_string(&existing).unwrap())
+        .bind(&existing.id)
+        .execute(&catalog.pool)
+        .await
+        .unwrap();
+    let agent = PagedWorkspaceAgent {
+        instance: provider.id.clone(),
+        queries: std::sync::Mutex::new(vec![]),
+    };
+    let report = catalog
+        .discover_workspaces(&config, &provider.id, &agent)
+        .await
+        .unwrap();
+    assert!(report.complete && report.pages == 3 && report.added == 2);
+    catalog.load(&mut config).await.unwrap();
+    assert_eq!(config.workspaces.len(), 3);
+    assert!(
+        config
+            .workspaces
+            .iter()
+            .any(|w| w.cwd == "/projects/cpet-proposal")
+    );
+    assert_eq!(
+        config
+            .workspaces
+            .iter()
+            .find(|w| w.id == existing.id)
+            .unwrap()
+            .name,
+        "Custom project name"
+    );
+    let removed = config
+        .workspaces
+        .iter()
+        .find(|w| w.cwd == "/projects/cpet-proposal")
+        .unwrap()
+        .clone();
+    catalog.remove_workspace(&removed.id).await.unwrap();
+    catalog
+        .discover_workspaces(&config, &provider.id, &agent)
+        .await
+        .unwrap();
+    catalog.load(&mut config).await.unwrap();
+    assert!(
+        !config
+            .workspaces
+            .iter()
+            .any(|w| w.id == removed.id || w.cwd == removed.cwd)
+    );
+    catalog
+        .add_workspace(&config, &provider.id, &removed.cwd, None)
+        .await
+        .unwrap();
+    catalog.load(&mut config).await.unwrap();
+    assert!(config.workspaces.iter().any(|w| w.cwd == removed.cwd));
+    assert!(
+        agent
+            .queries
+            .lock()
+            .unwrap()
+            .contains(&(false, Some("second".into())))
+    );
+}
+
 #[tokio::test]
 async fn catalog_administration_coexists_with_the_bridge_and_keeps_stable_ids() {
     let dir = tempfile::tempdir().unwrap();

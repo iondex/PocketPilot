@@ -223,3 +223,5 @@ _version: 1
 "discord.option.confirm": "Confirm creation and first input"
 "tg.input.recovered": "The previous request is unconfirmed and was not resent. Check /status before sending again."
 "tg.language.usage": "🌐 Chinese: /language zh-CN\nEnglish: /language en"
+"tg.workspace.page": "Registered %{total} · showing %{start}–%{end}"
+"tg.workspace.incomplete": "More projects are being discovered. This list may be incomplete; refresh shortly."

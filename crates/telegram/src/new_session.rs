@@ -39,20 +39,24 @@ impl Service {
         snapshot: &Snapshot,
         host_id: &str,
     ) -> Result<(), Error> {
+        self.new_workspace_page(input, snapshot, host_id, 0).await
+    }
+
+    pub(super) async fn new_workspace_page(
+        &self,
+        input: &Input,
+        snapshot: &Snapshot,
+        host_id: &str,
+        offset: usize,
+    ) -> Result<(), Error> {
+        let (snapshot, incomplete) = self.workspace_snapshot(input, snapshot, host_id).await?;
         let Some(host) = snapshot.config.hosts.iter().find(|h| h.id == host_id) else {
-            return self.new_hosts(input, snapshot).await;
+            return self.new_hosts(input, &snapshot).await;
         };
-        let choices = snapshot
-            .config
-            .workspaces
+        let page = super::workspace_picker::page(&snapshot.config, host_id, offset);
+        let mut choices: Vec<_> = page
+            .entries
             .iter()
-            .filter(|w| {
-                snapshot
-                    .config
-                    .providers
-                    .iter()
-                    .any(|p| p.id == w.provider_id && p.host_id == host.id)
-            })
             .map(|w| Choice {
                 label: format!(
                     "📁 {} · {}",
@@ -65,9 +69,29 @@ impl Service {
                 },
             })
             .collect();
+        if let Some(offset) = page.next {
+            choices.push(Choice {
+                label: UiText::id("nav.next"),
+                action: Action::NewHostPage {
+                    id: host_id.into(),
+                    offset,
+                },
+            });
+        }
+        let mut note = format!(
+            "{}\n\n{}",
+            crate::i18n::tr(input, "tg.new.choose_workspace"),
+            page.counter(input)
+        );
+        if incomplete {
+            note.push_str(&format!(
+                "\n{}",
+                crate::i18n::tr(input, "tg.workspace.incomplete")
+            ));
+        }
         self.show_navigation(
             input,
-            snapshot,
+            &snapshot,
             Menu {
                 heading: format!(
                     "✨ {} › {}",
@@ -75,11 +99,21 @@ impl Service {
                     crate::i18n::tr(input, "nav.workspaces")
                 )
                 .into(),
-                note: UiText::id("tg.new.choose_workspace"),
+                note: note.into(),
                 choices,
-                back: Action::NewSession,
-                refresh: Action::NewHost {
+                back: if page.offset > 0 {
+                    Action::NewHostPage {
+                        id: host_id.into(),
+                        offset: page
+                            .offset
+                            .saturating_sub(super::workspace_picker::PAGE_SIZE),
+                    }
+                } else {
+                    Action::NewSession
+                },
+                refresh: Action::NewHostPage {
                     id: host.id.clone(),
+                    offset: page.offset,
                 },
                 scope: None,
             },

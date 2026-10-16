@@ -164,3 +164,12 @@ Telegram 不支持原生 HTML table。最多三列、显示宽度不超过 38 �
 BotCommandScope 官方仅支持 default、各聊天集合、单聊天及聊天成员等七种范围，没有 message_thread_id。整个私聊共享同一命令菜单；/help 按实际绑定状态显示上下文帮助，不在切换话题时反复覆盖整聊命令。
 
 语言和类型化错误见 [共享 i18n](i18n.md)。官方来源：[BotCommandScope](https://core.telegram.org/bots/api#botcommandscope)。
+
+
+## 13. 工作区来源与分页
+
+主机下的项目从应用 catalog 读取，不等同于服务器文件系统目录列表。后台从该主机已有共享 Codex 服务的活跃、普通和归档会话 cwd 自动发现；每种会话列表完整读取后续 cursor，按 provider/cwd 去重并限制在允许根路径内。没有会话的新目录仍用 /add 登记。显式 /remove 写入发现排除记录，后台不会把该入口立即加回来；显式 /add 可重新恢复。已有名称、ID 和 worktree 配置不被发现过程覆盖。
+
+普通浏览与 /new 共用工作区分页：按名称、路径、ID 稳定排序，每页八项，超出时提供「下一页」。显示已登记总数，0 返回上一页或上级；选择项绑定完整 workspace ID，重名不会改变路由。旧 Host/NewHost 导航仍可读取，新翻页使用独立 Action，不引入数据库 migration。
+
+后台每五分钟重新发现，失败后约三十秒重试；每台主机串行扫描，所有主机的后台发现任务最多四个，不阻塞 catalog 快照定期更新。工作区页 /refresh 会执行一次有十二秒等待预算的只读发现，超时显示已有项目并提示可能尚未完整。扫描只调用列表和已加载会话元数据读取，不调用 resume、turn/start 或 steer。目录直接扫描不作为默认自动来源。

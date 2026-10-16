@@ -21,7 +21,7 @@
 
 Telegram runtime 只组装任务；commands/input/routing/binding/navigation/new_session/topics/history_view/management/observation/delivery/inbox 分担职责。持久收发进一步分为 inbox_store/outbox/ledger。Discord 使用对应平铺模块。engine::operations 统一处理已获授权写操作的回执与 OutcomeUnknown，平台分别保留授权/时效/绑定检查与 dispatch 原子边界。
 
-根 TOML 与 catalog 合成一个不可变运行快照。provider/workspace 定义在 engine::model；配置反序列化跳过这两个运行字段，拒绝旧 TOML 中的静态目录。catalog 更新约两秒内可见；CAS 发布防止并发配置 reload 把已撤销主机重新带回。
+根 TOML 与 catalog 合成一个不可变运行快照。provider/workspace 定义在 engine::model；配置反序列化跳过这两个运行字段，拒绝旧 TOML 中的静态目录。workspace_discovery 从分页会话 metadata 中补充允许路径内的 cwd，保留手工入口和移除排除记录。catalog 更新约两秒内可见；CAS 发布防止并发配置 reload 把已撤销主机重新带回。
 
 根 schema.sql 是原型期唯一数据库定义，幂等初始化不恢复写操作；稳定 0.1 前不维护 migrations。Codex JSON Schema 与 DTO 仍只由 build.rs 生成到 OUT_DIR。
 

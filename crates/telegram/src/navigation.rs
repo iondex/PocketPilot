@@ -10,6 +10,9 @@ mod topics;
 #[path = "new_session.rs"]
 mod new_session;
 
+#[path = "workspace_picker.rs"]
+mod workspace_picker;
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Choice {
     label: UiText,
@@ -226,20 +229,24 @@ impl Service {
         snapshot: &Snapshot,
         id: &str,
     ) -> Result<(), Error> {
+        self.host_workspace_page(input, snapshot, id, 0).await
+    }
+
+    pub(super) async fn host_workspace_page(
+        &self,
+        input: &Input,
+        snapshot: &Snapshot,
+        id: &str,
+        offset: usize,
+    ) -> Result<(), Error> {
+        let (snapshot, incomplete) = self.workspace_snapshot(input, snapshot, id).await?;
         let Some(host) = snapshot.config.hosts.iter().find(|h| h.id == id) else {
-            return self.workspaces(input, snapshot).await;
+            return self.workspaces(input, &snapshot).await;
         };
-        let choices = snapshot
-            .config
-            .workspaces
+        let page = workspace_picker::page(&snapshot.config, id, offset);
+        let mut choices: Vec<_> = page
+            .entries
             .iter()
-            .filter(|w| {
-                snapshot
-                    .config
-                    .providers
-                    .iter()
-                    .any(|p| p.id == w.provider_id && p.host_id == host.id)
-            })
             .map(|w| Choice {
                 label: format!("📁 {}", w.name).into(),
                 action: Action::Workspace {
@@ -248,9 +255,26 @@ impl Service {
                 },
             })
             .collect();
+        if let Some(offset) = page.next {
+            choices.push(Choice {
+                label: UiText::id("nav.next"),
+                action: Action::HostPage {
+                    id: id.into(),
+                    offset,
+                },
+            });
+        }
+        let mut note = crate::i18n::tr(input, "tg.nav.workspace_actions");
+        note.push_str(&format!("\n\n{}", page.counter(input)));
+        if incomplete {
+            note.push_str(&format!(
+                "\n{}",
+                crate::i18n::tr(input, "tg.workspace.incomplete")
+            ));
+        }
         self.show_navigation(
             input,
-            snapshot,
+            &snapshot,
             Menu {
                 heading: format!(
                     "📁 {} › {}",
@@ -258,10 +282,20 @@ impl Service {
                     crate::i18n::tr(input, "nav.workspaces")
                 )
                 .into(),
-                note: UiText::id("tg.nav.workspace_actions"),
+                note: note.into(),
                 choices,
-                back: Action::Home,
-                refresh: Action::Host { id: id.into() },
+                back: if page.offset > 0 {
+                    Action::HostPage {
+                        id: id.into(),
+                        offset: page.offset.saturating_sub(workspace_picker::PAGE_SIZE),
+                    }
+                } else {
+                    Action::Home
+                },
+                refresh: Action::HostPage {
+                    id: id.into(),
+                    offset: page.offset,
+                },
                 scope: None,
             },
         )
@@ -428,7 +462,13 @@ impl Service {
             Action::Home => self.workspaces(input, snapshot).await,
             Action::NewSession => self.new_hosts(input, snapshot).await,
             Action::NewHost { id } => self.new_workspaces(input, snapshot, &id).await,
+            Action::NewHostPage { id, offset } => {
+                self.new_workspace_page(input, snapshot, &id, offset).await
+            }
             Action::Host { id } => self.host_workspaces(input, snapshot, &id).await,
+            Action::HostPage { id, offset } => {
+                self.host_workspace_page(input, snapshot, &id, offset).await
+            }
             Action::Workspace { id, cursor } => self.sessions(input, snapshot, &id, cursor).await,
             Action::Topics { after } => self.topics(input, snapshot, after).await,
             Action::ConfirmTopicRemoval { topic } => {
@@ -565,14 +605,17 @@ impl Service {
         let Some(menu) = self.store.navigation(self.bot, input).await? else {
             return self.workspaces(input, snapshot).await;
         };
-        let Action::Host { id: host_id } = menu.menu.refresh else {
-            return self
-                .respond(
-                    input,
-                    &input.event_key,
-                    Outbound::ui("tg.workspace.choose_host"),
-                )
-                .await;
+        let host_id = match menu.menu.refresh {
+            Action::Host { id } | Action::HostPage { id, .. } => id,
+            _ => {
+                return self
+                    .respond(
+                        input,
+                        &input.event_key,
+                        Outbound::ui("tg.workspace.choose_host"),
+                    )
+                    .await;
+            }
         };
         let providers: Vec<_> = snapshot
             .config

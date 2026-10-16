@@ -3159,6 +3159,108 @@ async fn message_ids_localize_ui_and_errors_without_translating_literal_user_con
 }
 
 #[tokio::test]
+async fn host_workspace_menu_pages_all_registered_projects_including_cpet_proposal() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let file = &fixture.service.config.path;
+    let mut text = std::fs::read_to_string(file).unwrap();
+    for index in 0..8 {
+        text.push_str(&format!("\n[[workspaces]]\nid='extra-{index}'\nprovider_id='instance'\nname='project-{index}'\nshort_name='P{index}'\ncwd='/workspace/project-{index}'\n"));
+    }
+    text.push_str("\n[[workspaces]]\nid='cpet'\nprovider_id='instance'\nname='cpet-proposal'\nshort_name='CPET'\ncwd='/workspace/cpet-proposal'\n");
+    std::fs::write(file, text).unwrap();
+    fixture.service.config.reload().unwrap();
+    fixture
+        .service
+        .handle(&input(2140, 0, "/start"))
+        .await
+        .unwrap();
+    fixture.choose(2141, "1").await;
+    let first = fixture.outputs().await.pop().unwrap();
+    assert!(
+        first.text.contains("下一页"),
+        "registered workspaces beyond a page need a next-page choice"
+    );
+    fixture.choose(2142, "9").await;
+    let next = fixture.outputs().await.pop().unwrap();
+    assert!(!next.text.contains("下一页"));
+    let cpet = crate::api::escape_markdown("cpet-proposal");
+    assert!(first.text.contains(&cpet) || next.text.contains(&cpet));
+    fixture
+        .service
+        .handle(&input(2143, 9, "/new"))
+        .await
+        .unwrap();
+    fixture.choose(2144, "1").await;
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("下一页")
+    );
+    fixture.choose(2145, "9").await;
+    fixture.choose(2146, "1").await;
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("请发送会话标题")
+    );
+    assert!(
+        fixture.state.lock().await.requests.is_empty(),
+        "paging must not start or load an agent session"
+    );
+}
+
+#[tokio::test]
+async fn refreshing_a_host_reads_workspace_metadata_without_loading_history_or_starting_turns() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let catalog = engine::catalog::Catalog::new(fixture.service.store.pool().clone());
+    let initial = fixture.service.config.snapshot();
+    catalog
+        .save_provider(&initial.config.providers[0])
+        .await
+        .unwrap();
+    catalog
+        .add_workspace(&initial.config, "instance", "/workspace", None)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(2150, 0, "/start"))
+        .await
+        .unwrap();
+    fixture.choose(2151, "1").await;
+    fixture
+        .service
+        .handle(&input(2152, 9, "/refresh"))
+        .await
+        .unwrap();
+    let state = fixture.state.lock().await;
+    assert!(state.requests.contains(&"thread/list"));
+    assert!(state.requests.iter().all(|r| matches!(
+        *r,
+        "initialize" | "initialized" | "thread/loaded/list" | "thread/read" | "thread/list"
+    )));
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("Fixture workspace")
+    );
+}
+
+#[tokio::test]
 async fn native_topic_icons_replace_automatic_status_bubbles_and_agent_markdown_is_rendered() {
     let fixture = Fixture::new().await;
     fixture.pair().await;

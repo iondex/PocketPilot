@@ -30,7 +30,7 @@ cargo build --workspace --locked
 ./target/debug/pocketpilot pair revoke BOT_ID USER_ID
 ```
 
-批准后再次 /start，在固定的「管理」topic 中选择主机、工作区和会话。管理界面使用 Markdown 编号导航，每次输入后新发菜单；0 返回，/refresh 重新获取当前管理页。普通任务文本会被拒绝；只有明确进入新建流程后，下一条文字才作为会话标题。
+批准后再次 /start，在固定的「管理」topic 中选择主机、工作区和会话。管理界面使用 Markdown 编号导航，每次输入后新发菜单；工作区每页 8 项并显示登记总数，0 返回上一页/上级。项目来自手工登记和 Codex 活跃、普通及归档会话的工作目录，按完整 provider/cwd 去重。后台定期补齐；在工作区页 /refresh 会重新扫描会话元数据。普通任务文本会被拒绝；只有明确进入新建流程后，下一条文字才作为会话标题。
 
 /new 按「主机 → 工作区 → 标题 → 确认」创建空会话；也可用 /new HOST/WORKSPACE 标题 或 /new WORKSPACE_ID 标题 快捷创建。同名工作区需指定主机或完整 ID，不会默认挑选一个。首条任务由用户在新话题中发送，活跃会话的输入直接 steer。
 

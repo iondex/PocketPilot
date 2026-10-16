@@ -90,9 +90,17 @@ enum Action {
     Host {
         id: String,
     },
+    HostPage {
+        id: String,
+        offset: usize,
+    },
     NewSession,
     NewHost {
         id: String,
+    },
+    NewHostPage {
+        id: String,
+        offset: usize,
     },
     NewPrompt {
         workspace: String,

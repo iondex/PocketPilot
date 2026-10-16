@@ -117,8 +117,13 @@ impl Service {
             return match action {
                 Action::Home => self.workspaces(input, &snapshot).await,
                 Action::Host { id } => self.host_workspaces(input, &snapshot, &id).await,
+                Action::HostPage { id, offset } => {
+                    self.host_workspace_page(input, &snapshot, &id, offset)
+                        .await
+                }
                 Action::NewSession
                 | Action::NewHost { .. }
+                | Action::NewHostPage { .. }
                 | Action::NewPrompt { .. }
                 | Action::Topics { .. }
                 | Action::ConfirmTopicRemoval { .. }

@@ -152,3 +152,11 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 - 两个主机可有同名且同路径工作区：/new 依次选主机和工作区，标题为元数据，确认前无模型请求。快捷 /new HOST/WORKSPACE 标题 精确定位；无主机的重复名称必须拒绝。
 - /topics 中含批量清理；/topics clear 打开确认。/unbind 和 /cleartopics 不在菜单中，也不能改变绑定。/refresh 只重新获取当前管理页，/help 按话题类型区分。
 - 根 language=en 控制 CLI 业务错误与后台默认语言；Telegram 每用户偏好独立。共享资源只用 ID，保持中英文键与插值参数一致；用户标题或正文恰好为 tg.new.heading 时原样显示。SSH、Codex、配置、存储、配对等错误可按语言展示，日志不使用用户语言。
+
+
+## 工作区完整性与分页
+
+- 准备十个已登记工作区，普通主机页和 /new 均须提供下一页，页计数和 0 返回正确，最后一页不显示下一页。
+- fixture 将 cpet-proposal 放在第二页会话 metadata，并增加重复 cwd、允许范围外路径和只存在归档会话的项目。发现结果必须补齐第二页与归档项目，过滤越界路径，保留已有自定义名称和 ID；AgentProvider read/history/execute 都不允许调用。
+- /remove 一个自动发现入口后重扫不得恢复；显式 /add 可恢复。多主机重名入口仍以 provider/cwd 区分，SQL 事务保证 alias 选择与插入不会相互覆盖。
+- 工作区页 /refresh 只调用原生列表与 includeTurns=false 的元数据读取，不读取历史、resume 或开始 turn。慢连接保留已登记列表并提示尚未完整。

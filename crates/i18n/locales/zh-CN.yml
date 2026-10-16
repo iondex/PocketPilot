@@ -223,3 +223,5 @@ _version: 1
 "discord.option.confirm": "确认创建并发送"
 "tg.input.recovered": "上次请求的处理结果未确认。没有自动重发；请先 /status 核对，必要时重新发送。"
 "tg.language.usage": "🌐 中文：/language zh-CN\nEnglish: /language en"
+"tg.workspace.page": "已登记 %{total} 项 · 当前 %{start}–%{end}"
+"tg.workspace.incomplete": "正在发现更多项目；当前列表可能不完整，请稍后刷新。"

@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS catalog_workspaces (
     payload TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workspace_exclusions (
+    provider_id TEXT NOT NULL REFERENCES catalog_providers(id),
+    cwd TEXT NOT NULL,
+    PRIMARY KEY(provider_id,cwd)
+);
+
 CREATE TABLE IF NOT EXISTS containers (
     bot_id INTEGER NOT NULL,
     chat_id INTEGER NOT NULL,

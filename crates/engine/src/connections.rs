@@ -11,6 +11,10 @@ use tokio::{
 pub enum Error {
     #[error(transparent)]
     Store(#[from] crate::storage::StoreError),
+    #[error(transparent)]
+    Config(#[from] crate::config::ConfigError),
+    #[error(transparent)]
+    Provider(#[from] session::ProviderError),
     #[error("工作区已移除或未配置")]
     Selection,
     #[error("执行实例地址发生变化；请分配新的 provider ID 后重新绑定")]
@@ -27,6 +31,8 @@ impl ::i18n::LocalizedError for Error {
             Self::Selection => ::i18n::Message::new("error.connection.selection"),
             Self::Identity => ::i18n::Message::new("error.connection.identity"),
             Self::Backoff => ::i18n::Message::new("error.connection.backoff"),
+            Self::Config(error) => ::i18n::LocalizedError::message(error),
+            Self::Provider(error) => ::i18n::LocalizedError::message(error),
             Self::Store(error) => ::i18n::LocalizedError::message(error),
             Self::Rpc(error) => ::i18n::LocalizedError::message(error),
         }
@@ -84,10 +90,18 @@ impl Connections {
         workspace: &Workspace,
     ) -> Result<Arc<dyn AgentProvider>, Error> {
         tracing::debug!(workspace_id=%workspace.id,provider_id=%workspace.provider_id,"requesting shared provider connection");
+        self.get_provider(config, &workspace.provider_id).await
+    }
+
+    pub async fn get_provider(
+        &self,
+        config: &Config,
+        id: &str,
+    ) -> Result<Arc<dyn AgentProvider>, Error> {
         let provider = config
             .providers
             .iter()
-            .find(|p| p.id == workspace.provider_id)
+            .find(|p| p.id == id)
             .ok_or(Error::Selection)?;
         let host = config
             .hosts
