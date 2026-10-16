@@ -48,6 +48,7 @@ fn input(id: u32) -> Input {
         topic: 11,
         date: 100,
         text: "hello".into(),
+        attachments: Vec::new(),
         callback: None,
         callback_id: None,
         message_id: id as i32,

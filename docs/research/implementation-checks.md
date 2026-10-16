@@ -178,3 +178,20 @@ Logo 按用户最新要求仅交付生成 prompt，未调用图像 API或安装�
 回归先复现十个已登记工作区没有下一页，再补普通和 /new 共用八项分页及计数。另用分页 AgentProvider fixture 将目标项目置于第二页，校验活跃/普通/归档 metadata、范围过滤、去重、名称/ID 保留和显式移除排除；发现不使用 read/history/execute。后台补齐以及工作区页 /refresh 已接入现有共享连接，均不启动或停止原生会话。源代码继续物理平铺，排除表直接加在根 schema.sql，没有 migration。
 
 全 workspace 118 项测试（Telegram 74、engine 6）、fmt、全 feature/all-targets Clippy 与无默认 feature app Clippy 通过。发布构建 10,814,752 字节，SHA-256 `dc7e320da55042180b998cba4261776453a945560d377d0cc78a364c46bc3899`。桥接已重启且 Telegram ready；真实 anjie-bsc-arb 会话 metadata 发现跨 3 页完成，新增 11 个入口，连同已补登的 cpet-proposal 共 21 个工作区。原复现断言已通过；配对保留，未停止或续轮任何原生会话。
+
+
+## 阶段、输入来源、附件与错误展示（2026-10-16）
+
+`tg.workspace.page` 是内部翻译 ID。旧发布包包含 ID 却缺少该中文翻译，二进制断言复现了资源陈旧；仅更新 YAML 没有使正常构建失效。共享 i18n 现在显式跟踪两个 catalog，资源测试逐键比较编译结果和源值，发布后二进制回读确认分页翻译已包含。
+
+工作区从所有发现会话中取最大 updatedAt，菜单按时间倒序，无时间者最后；时间变动更新快照但不改变授权 hash。会话汇总主目录/worktree 及 native 各页，再整体倒序，并持久固定每次浏览的后续页。fixture 模拟翻页时新增更活跃会话，验证既有快照不重复、不跳项。新增元数据表在根 schema.sql 直接声明，没有 migration。
+
+Telegram 按 phase 区分 💭 中间文本、✅ final_answer、💬 未知阶段。同一原生 session 的外部用户输入以 🧑‍💻 转发，Telegram 自身输入由持久操作 client ID 精确去重。观察 hash 包含 phase，旧游标升级保留已发文本边界；同次连接故障只提示一次，且错误通知不会把尚未读取的历史标为已交付。终态 error 通知和后来的原生轮次错误共用身份，避免同一失败重复投递。
+
+附件展示保留请求正文及 📎 文件名，清理 Desktop 标准附件包装（含转义标题）、路径和说明，但不改原生输入。不读取/下载/展示图片。Telegram 上传仅接受 caption 文字，并明确提示附件内容未转交；纯附件不启动任务。普通发送/编辑关闭链接预览。
+
+只读连接 anjie-bsc-arb 检查 cpet-proposal 最新会话，原生历史有 15 个可见条目、1 条较早轮次错误，最新用户输入所在轮无错误，完整性为 true。解码器现保留原生 error.message 和失败/中断状态；收到的类型化 error 通知进入本地观察缓存，已观察错误按 provider/thread 留存 SQLite。默认 /history 显示最近输入对应的 final 和本轮错误，较早错误提示 /history errors；后者显示最近十条并标 turn ID。未持久化且桥接没有收到的通知不能重建。
+
+全 workspace/all-features 133 项测试通过（Telegram 82、Codex 20、engine 8），fmt、diff 检查、全 feature/all-targets Clippy -D warnings 通过；无默认 feature app Clippy 也通过。真实 cpet 复核仅有列表与历史读取，临时检查程序和可执行产物已移除。问题/限制集中于 [Topics 回顾](telegram-topics.md)。
+
+发布包为 macOS arm64，10,948,384 字节，SHA-256 `0a13d663c98c21b89ca8a16bbeda409884befbaf1e03e37cd922fdeb5c511644`。只重启 launchd 管理的 PocketPilot，确认 Telegram ready、三个共享 app-server 连接成功及工作区 metadata 发现完成；配对 1、绑定 5、provider 3、工作区 32 均保留，已有 25 个工作区具备活动时间。新错误表已记录观察到的错误。没有向既有任务发送测试输入、停止或重启原生 daemon。真实 Telegram 客户端最终观感由用户继续手动复核。

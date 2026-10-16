@@ -15,3 +15,5 @@ pub mod transport;
 pub use provider::Codex;
 pub use rpc::{Client, Error, Event, ReadRequest};
 pub use transport::{Connection, SSHOptions};
+
+mod errors;

@@ -20,14 +20,17 @@ pub struct Codex {
     instance: String,
     client: Client,
     control: bool,
+    errors: crate::errors::Errors,
 }
 
 impl Codex {
     pub fn new(instance: String, client: Client) -> Self {
+        let errors = crate::errors::listen(&client);
         Self {
             instance,
             client,
             control: false,
+            errors,
         }
     }
 
@@ -107,22 +110,38 @@ fn text_item(turn_id: &str, turn_complete: bool, item: p::ThreadItem) -> Option<
             client_id,
             content,
             id,
-        } => TextItem {
-            turn_id: turn_id.into(),
-            item_id: id,
-            role: Role::User,
-            phase: None,
-            text: content
-                .into_iter()
-                .filter_map(|input| match input {
-                    p::UserInput::TextUserInput { text, .. } => Some(text),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-            complete: true,
-            client_id,
-        },
+        } => {
+            let mut text = Vec::new();
+            let mut attachments = Vec::new();
+            for input in content {
+                let name = match input {
+                    p::UserInput::TextUserInput { text: body, .. } => {
+                        text.push(body);
+                        continue;
+                    }
+                    p::UserInput::LocalImageUserInput { path, .. }
+                    | p::UserInput::LocalAudioUserInput { path, .. } => std::path::Path::new(&path)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("attachment")
+                        .to_owned(),
+                    p::UserInput::ImageUserInput(_) => "image".into(),
+                    p::UserInput::AudioUserInput { .. } => "audio".into(),
+                    _ => continue,
+                };
+                attachments.push(session::Attachment { name });
+            }
+            TextItem {
+                turn_id: turn_id.into(),
+                item_id: id,
+                role: Role::User,
+                phase: None,
+                text: text.join("\n"),
+                complete: true,
+                client_id,
+                attachments,
+            }
+        }
         p::ThreadItem::AgentMessage {
             id, phase, text, ..
         } => TextItem {
@@ -140,6 +159,7 @@ fn text_item(turn_id: &str, turn_complete: bool, item: p::ThreadItem) -> Option<
             }),
             text,
             client_id: None,
+            attachments: Vec::new(),
         },
         p::ThreadItem::Plan { id, text } => TextItem {
             turn_id: turn_id.into(),
@@ -149,10 +169,42 @@ fn text_item(turn_id: &str, turn_complete: bool, item: p::ThreadItem) -> Option<
             text,
             complete: turn_complete,
             client_id: None,
+            attachments: Vec::new(),
         },
         _ => return None,
     };
-    (!item.text.is_empty()).then_some(item)
+    (!item.text.is_empty() || !item.attachments.is_empty()).then_some(item)
+}
+
+fn turn_items(turn: p::Turn) -> Vec<TextItem> {
+    let complete = matches!(turn.status, p::TurnStatus::Completed);
+    let error = if let Some(error) = turn.error {
+        Some(("error", error.message))
+    } else {
+        match turn.status {
+            p::TurnStatus::Failed => Some(("turn_failed", String::new())),
+            p::TurnStatus::Interrupted => Some(("turn_interrupted", String::new())),
+            _ => None,
+        }
+    };
+    let mut items = turn
+        .items
+        .into_iter()
+        .filter_map(|item| text_item(&turn.id, complete, item))
+        .collect::<Vec<_>>();
+    if let Some((phase, text)) = error {
+        items.push(TextItem {
+            turn_id: turn.id,
+            item_id: "pp:turn-error".into(),
+            role: Role::Agent,
+            phase: Some(phase.into()),
+            text,
+            complete: true,
+            client_id: None,
+            attachments: vec![],
+        });
+    }
+    items
 }
 
 #[async_trait::async_trait]
@@ -252,6 +304,7 @@ impl AgentProvider for Codex {
                         archived: Some(query.archived),
                         use_state_db_only: Some(true),
                         sort_key: Some(p::ThreadSortKey::UpdatedAt),
+                        sort_direction: Some(p::SortDirection::Desc),
                         source_kinds: Some(vec![
                             p::ThreadSourceKind::Cli,
                             p::ThreadSourceKind::Vscode,
@@ -377,22 +430,19 @@ impl AgentProvider for Codex {
             let mut items = Vec::new();
             let mut bytes = 0_usize;
             for turn in full.thread.turns {
-                let complete = matches!(turn.status, p::TurnStatus::Completed);
-                for value in turn.items {
-                    if let Some(item) = text_item(&turn.id, complete, value) {
-                        bytes = bytes.saturating_add(item.text.len());
-                        if bytes > 64 * 1024 * 1024 {
-                            return Ok(History {
-                                items,
-                                all_pages_read: false,
-                            });
-                        }
-                        items.push(item);
+                for item in turn_items(turn) {
+                    bytes = bytes.saturating_add(item.text.len());
+                    if bytes > 64 * 1024 * 1024 {
+                        return Ok(History {
+                            items,
+                            all_pages_read: false,
+                        });
                     }
+                    items.push(item);
                 }
             }
             return Ok(History {
-                items,
+                items: crate::errors::merge(&self.errors, thread, items),
                 all_pages_read: true,
             });
         }
@@ -417,11 +467,8 @@ impl AgentProvider for Codex {
                 if !matches!(turn.items_view, p::TurnItemsView::Full) {
                     return Err(ProviderError::Incompatible);
                 }
-                let complete = matches!(turn.status, p::TurnStatus::Completed);
-                for value in turn.items {
-                    if let Some(item) = text_item(&turn.id, complete, value)
-                        && seen_items.insert((item.turn_id.clone(), item.item_id.clone()))
-                    {
+                for item in turn_items(turn) {
+                    if seen_items.insert((item.turn_id.clone(), item.item_id.clone())) {
                         bytes = bytes.saturating_add(item.text.len());
                         if bytes > 64 * 1024 * 1024 {
                             return Ok(History {
@@ -444,7 +491,7 @@ impl AgentProvider for Codex {
             }
         }
         Ok(History {
-            items,
+            items: crate::errors::merge(&self.errors, thread, items),
             all_pages_read,
         })
     }
@@ -561,6 +608,38 @@ fn text_input(text: String) -> Result<Vec<p::UserInput>, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_turns_preserve_primary_errors_without_internal_details() {
+        let turn: p::Turn = serde_json::from_str(r#"{"id":"t","status":"failed","itemsView":"full","items":[{"type":"userMessage","id":"u","content":[{"type":"text","text":"question"}]}],"error":{"message":"request failed","additionalDetails":"private transport diagnostics"}}"#).unwrap();
+        let items = turn_items(turn);
+        assert_eq!(items.len(), 2);
+        assert!(items[1].is_error());
+        assert_eq!(items[1].text, "request failed");
+        assert!(
+            !serde_json::to_string(&items)
+                .unwrap()
+                .contains("private transport")
+        );
+        for status in ["failed", "interrupted"] {
+            let turn = serde_json::from_str(&format!(
+                r#"{{"id":"t","status":"{status}","itemsView":"full","items":[]}}"#
+            ))
+            .unwrap();
+            assert!(turn_items(turn)[0].is_error());
+        }
+    }
+
+    #[test]
+    fn user_images_keep_only_metadata_even_without_text() {
+        let item = serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"localImage","path":"/private/attachments/picture.jpg"},{"type":"image","url":"data:image/png;base64,SECRET"}]}"#).unwrap();
+        let item = text_item("t", true, item).unwrap();
+        assert!(item.text.is_empty());
+        assert_eq!(item.attachments[0].name, "picture.jpg");
+        assert_eq!(item.attachments[1].name, "image");
+        let encoded = serde_json::to_string(&item).unwrap();
+        assert!(!encoded.contains("SECRET") && !encoded.contains("/private"));
+    }
 
     #[derive(serde::Deserialize)]
     struct Frame {

@@ -11,6 +11,7 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const ROOTS: &[&str] = &[
+    "ErrorNotification",
     "RequestId",
     "InitializeParams",
     "InitializeResponse",

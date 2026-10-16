@@ -50,6 +50,7 @@ pub fn full_history_in(history: &History, locale: &str) -> String {
 pub struct Interaction<'a> {
     pub user: &'a TextItem,
     pub answers: Vec<&'a TextItem>,
+    pub errors: Vec<&'a TextItem>,
 }
 
 pub fn last_interaction(history: &History) -> Option<Interaction<'_>> {
@@ -70,7 +71,17 @@ pub fn last_interaction(history: &History) -> Option<Interaction<'_>> {
                 && !i.text.trim().is_empty()
         })
         .collect();
-    Some(Interaction { user, answers })
+    let errors = history
+        .items
+        .iter()
+        .skip(user_index + 1)
+        .filter(|i| i.turn_id == user.turn_id && i.is_error())
+        .collect();
+    Some(Interaction {
+        user,
+        answers,
+        errors,
+    })
 }
 
 pub fn latest_interaction(history: &History) -> String {
@@ -193,6 +204,7 @@ mod tests {
             text: text.into(),
             complete: true,
             client_id: None,
+            attachments: Vec::new(),
         }
     }
 

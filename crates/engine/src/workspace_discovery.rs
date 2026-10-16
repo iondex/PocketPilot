@@ -12,6 +12,18 @@ pub struct WorkspaceDiscovery {
 }
 
 impl Catalog {
+    pub async fn touch_workspace(
+        &self,
+        id: &str,
+        updated_at: Option<i64>,
+    ) -> Result<(), StoreError> {
+        if let Some(at) = updated_at.filter(|at| *at > 0) {
+            sqlx::query("UPDATE catalog_workspaces SET payload=json_set(payload,'$.updated_at',?) WHERE id=? AND COALESCE(json_extract(payload,'$.updated_at'),0)<?")
+                .bind(at).bind(id).bind(at).execute(&self.pool).await.map_err(|_|StoreError::Database)?;
+        }
+        Ok(())
+    }
+
     pub(super) async fn register_workspace(
         &self,
         config: &Config,
@@ -103,6 +115,7 @@ impl Catalog {
                     name: name.into(),
                     short_name,
                     additional_cwds: vec![],
+                    updated_at: None,
                 }
             });
         // Avoid alias races across hosts: the SQL transaction owns selection and insertion.
@@ -149,11 +162,14 @@ impl Catalog {
                 .await
                 .map_err(|_| StoreError::Database)?;
         let mut known = HashSet::new();
+        let mut owners = std::collections::HashMap::new();
         for payload in stored {
             let workspace: Workspace =
                 serde_json::from_str(&payload).map_err(|_| StoreError::Database)?;
-            known.insert(workspace.cwd);
-            known.extend(workspace.additional_cwds);
+            for cwd in std::iter::once(workspace.cwd).chain(workspace.additional_cwds) {
+                owners.insert(cwd.clone(), workspace.id.clone());
+                known.insert(cwd);
+            }
         }
         for archived in [false, true] {
             let mut cursor = None;
@@ -175,6 +191,11 @@ impl Catalog {
                 for session in page.data {
                     let cwd = session.cwd;
                     let path = Path::new(&cwd);
+                    if session.reference.instance == provider
+                        && let Some(owner) = owners.get(&cwd)
+                    {
+                        self.touch_workspace(owner, session.updated_at).await?;
+                    }
                     if session.reference.instance != provider
                         || known.contains(&cwd)
                         || !path.is_absolute()
@@ -188,11 +209,13 @@ impl Catalog {
                     {
                         continue;
                     }
-                    if self
+                    if let Some(workspace) = self
                         .register_workspace(config, provider, &cwd, None, true)
                         .await?
-                        .is_some()
                     {
+                        self.touch_workspace(&workspace.id, session.updated_at)
+                            .await?;
+                        owners.insert(cwd.clone(), workspace.id);
                         report.added += 1;
                     }
                     known.insert(cwd);

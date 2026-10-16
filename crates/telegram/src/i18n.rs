@@ -37,13 +37,17 @@ impl Store {
 
 impl crate::runtime::Service {
     pub(super) async fn ui_text(&self, chat: i64, key: &str) -> String {
+        text(&self.ui_locale(chat).await, key)
+    }
+
+    pub(super) async fn ui_locale(&self, chat: i64) -> String {
         let locale = self
             .store
             .locale(self.bot, chat as u64)
             .await
             .ok()
             .flatten();
-        text(
+        normalize(
             locale
                 .as_deref()
                 .unwrap_or(if self.default_locale == "auto" {
@@ -51,8 +55,8 @@ impl crate::runtime::Service {
                 } else {
                     &self.default_locale
                 }),
-            key,
         )
+        .into()
     }
 }
 

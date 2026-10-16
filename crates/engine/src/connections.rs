@@ -376,36 +376,14 @@ pub async fn list_picker(
     store: &crate::storage::Store,
     provider: &dyn AgentProvider,
     workspace: &Workspace,
-    mut cursor: Option<String>,
+    cursor: Option<String>,
     limit: u32,
 ) -> Result<session::Page<session::Session>, session::ProviderError> {
-    let hidden = store
-        .probe_threads(&workspace.provider_id)
-        .await
-        .map_err(|_| session::ProviderError::Disconnected)?;
-    let mut data = Vec::new();
-    let limit = limit.clamp(1, 100) as usize;
-    let mut seen = std::collections::HashSet::new();
-    loop {
-        if !seen.insert(cursor.clone()) {
-            return Err(session::ProviderError::Incompatible);
-        }
-        let page = list_workspace(provider, workspace, cursor, (limit - data.len()) as u32).await?;
-        data.extend(
-            page.data
-                .into_iter()
-                .filter(|s| !hidden.contains(&s.reference.thread)),
-        );
-        cursor = page.next_cursor;
-        if data.len() >= limit || cursor.is_none() {
-            break;
-        }
-    }
-    Ok(session::Page {
-        data,
-        next_cursor: cursor,
-    })
+    session_picker::list(store, provider, workspace, cursor, limit).await
 }
+
+#[path = "session_picker.rs"]
+mod session_picker;
 
 pub fn ssh_options(host: &Host, config: &Config) -> Result<ssh::Options, codex::Error> {
     Ok(ssh::Options {
@@ -516,6 +494,7 @@ mod tests {
             short_name: "ws".into(),
             cwd: "/base".into(),
             additional_cwds: vec!["/worktree".into(), "/worktree".into()],
+            updated_at: None,
         };
         let first = list_workspace(&Paths, &ws, None, 1).await.unwrap();
         assert_eq!(first.data[0].cwd, "/base");

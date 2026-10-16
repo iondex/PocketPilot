@@ -11,7 +11,7 @@
 | 确认验收 | [验收清单](planning/acceptance.md)、[逐项审计](research/acceptance-audit.md) | A01–A52 的行为条件、当前证据与未验证项 |
 | 协议生成 | [构建时生成](design/protocol-generation.md) | build.rs、Codex binary 选择与生成物边界 |
 | 理解接口 | [架构](design/architecture.md) | 领域模型、provider/platform 接口、操作许可、数据与恢复 |
-| 做 Telegram 交互 | [Telegram](design/telegram.md) | 菜单、topic、绑定、新建、状态与用户可见异常 |
+| 做 Telegram 交互 | [Telegram](design/telegram.md)、[Topics 问题回顾](research/telegram-topics.md) | 菜单、topic、绑定、新建、状态与用户可见异常 |
 | 做 Discord 交互 | [Discord 原型](design/discord.md) | category/channel、owner slash、可选运行与原型限制 |
 | 接入本地 Desktop | [本地会话说明](design/local-desktop.md) | 当前限制、已确认入口与后续共享部署验证 |
 | 做配置和连接 | [连接与配置](design/connections-and-config.md) | 根目录单一 TOML、内联 token、CLI 私聊配对、SSH config、OTP、热更新、生命周期 |

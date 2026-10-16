@@ -45,12 +45,12 @@ cargo build --workspace --locked
 ## 建议测试顺序
 
 1. 管理 topic 内 /workspaces 选择工作区，回复序号依次选择主机、工作区和会话；回复 0 返回，/refresh 刷新，每次输入发送新菜单，无内联按钮、空白占位或开发探针条目。新建且尚未进入历史索引的已加载会话也应可见。
-2. 进入空闲会话，确认只显示对应 agent final；进入运行中会话，确认全部可读 agent 正文在一个集合内，长内容为单个附件。用户输入不回显，无“用户/Agent”标签或空历史占位。工具和推理内容不发送。
-3. /status 和 /info 对比原端状态；topic 名只保留原始标题，状态变化更新原生 emoji icon。📁 表示未在该执行实例加载，不是历史读取失败；直接发送文本，空闲时续轮，运行中使用带 expectedTurnId 的 steer。等待审批时也可追加 steer，审批和结构化问答继续在原端处理。
-4. /new WORKSPACE_ID 任务，回复 1 确认后才创建 thread 和首轮；没有停止、取消、重启或审批代答命令。
+2. 进入空闲会话，确认只显示对应 agent final；进入运行中会话，确认全部可读用户与 agent 正文在一个集合内，长内容为单个附件。同一 Telegram 私聊自己已发送的输入不回显，其他客户端输入以 🧑‍💻 展示，无“用户/Agent”标签或空历史占位。工具和推理内容不发送。
+3. /status 和 /info 对比原端状态；topic 名只保留原始标题，状态变化更新原生 emoji icon。💬 表示空闲或未在该执行实例加载，不是历史读取失败；直接发送文本，空闲时续轮，运行中使用带 expectedTurnId 的 steer。等待审批时也可追加 steer，审批和结构化问答继续在原端处理。
+4. /new WORKSPACE_ID 标题，回复 1 确认后才创建并命名空 thread，等待首条输入才启动 turn；没有停止、取消、重启或审批代答命令。
 5. 连续产生几条可见文本，检查合并与私聊共享速率预算；多个 topic 不应各自突破预算。429 按 retry_after 等待。
 6. 修改根 TOML 增删允许的 host/workspace 或调节速率；有效配置自动生效，非法配置保留最后有效版本。已撤销配对、已解除映射或已移除 workspace 的排队动作/投递不得继续执行。
-7. 停掉并重启 PocketPilot，确认原端任务继续运行，桥接不自动 resume/start/steer，也不重发结果未知的请求。重启前的 pending 消息及轮询故障后补收的输入应显示草稿，点击新的确认按钮前不得进入 agent；解绑后旧草稿按钮失效。断网时状态卡应显示连接未知。
+7. 停掉并重启 PocketPilot，确认原端任务继续运行，桥接不自动 resume/start/steer，也不重发结果未知的请求。重启前的 pending 消息及轮询故障后补收的输入应显示草稿，回复新的确认菜单前不得进入 agent；解绑后旧草稿按钮失效。断网时原生 topic icon 应显示未知，并收到一次连接错误提示。
 8. /rename 修改平台显示名，并在原生无标题时补写；移除话题使用 /topics。关闭/删除 topic 后再次添加应创建新容器，原容器不能被换绑到另一个 session。
 
 正常退出使用 Ctrl-C 或 SIGTERM。data_dir、Telegram/Discord token 和 Discord guild 修改需要重启桥接；host/workspace、SSH 认证策略和 delivery 设置支持热更新。日志输出位置/过滤器在启动时装配。
@@ -99,7 +99,7 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 - 修改显示名/速率后继续回复序号，菜单仍可用；修改目标 cwd/实例后，旧创建确认不得执行。
 - 菜单每次按新输入新发；未知发送结果不自动重试。
 - 会话内数字仍是正常 agent 输入，只有管理 topic 将数字解释为导航。
-- 无历史 agent 回复时不发占位；/history 可显式查询 agent 历史，CLI 可导出完整角色记录。
+- 无历史 agent 回复时不发占位；/history 显式查询最近输入和最终结果，/history errors 查看错误记录。
 
 ## 动态工作区与原型数据库
 
@@ -148,7 +148,7 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 ## 表格、动态最近结果、新建定位与共享 i18n
 
 - 窄中文/数字表应等宽对齐；宽表和包含链接的表格应逐条展示且保留首列表头与可点击链接，不截断字段。
-- 原端更新会话后 /history 应直接显示最新用户输入与同轮 final_answer，排除中间说明；运行中且没有最终结果时明确提示，不搭配旧答案。只有主动 /history 回显这份用户输入。
+- 原端更新会话后 /history 应直接显示最新用户输入与同轮 final_answer，排除中间说明；运行中且没有最终结果时明确提示，不搭配旧答案。原端新增的输入以 🧑‍💻 转发；Telegram 自身输入只在主动 /history 时回显。
 - 两个主机可有同名且同路径工作区：/new 依次选主机和工作区，标题为元数据，确认前无模型请求。快捷 /new HOST/WORKSPACE 标题 精确定位；无主机的重复名称必须拒绝。
 - /topics 中含批量清理；/topics clear 打开确认。/unbind 和 /cleartopics 不在菜单中，也不能改变绑定。/refresh 只重新获取当前管理页，/help 按话题类型区分。
 - 根 language=en 控制 CLI 业务错误与后台默认语言；Telegram 每用户偏好独立。共享资源只用 ID，保持中英文键与插值参数一致；用户标题或正文恰好为 tg.new.heading 时原样显示。SSH、Codex、配置、存储、配对等错误可按语言展示，日志不使用用户语言。
@@ -160,3 +160,14 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 - fixture 将 cpet-proposal 放在第二页会话 metadata，并增加重复 cwd、允许范围外路径和只存在归档会话的项目。发现结果必须补齐第二页与归档项目，过滤越界路径，保留已有自定义名称和 ID；AgentProvider read/history/execute 都不允许调用。
 - /remove 一个自动发现入口后重扫不得恢复；显式 /add 可恢复。多主机重名入口仍以 provider/cwd 区分，SQL 事务保证 alias 选择与插入不会相互覆盖。
 - 工作区页 /refresh 只调用原生列表与 includeTurns=false 的元数据读取，不读取历史、resume 或开始 turn。慢连接保留已登记列表并提示尚未完整。
+
+
+## 阶段、外部输入、附件、错误与排序
+
+- 仅在专用会话从 Desktop/CLI 发消息：绑定的 Telegram topic 应收到 🧑‍💻，不得发到别的 topic。Telegram 自己发的输入不重复回显。
+- 中间说明为 💭，明确 final_answer 为 ✅，未知 phase 用 💬；正文相同但从 commentary 变 final 时仍有最终结果。工具与推理不展示。
+- Desktop 附件包装应缩为请求正文和 📎 文件名；不显示本地绝对路径、包装说明或图片。Telegram 图片 caption 只作为文字转发并提示附件未转交，纯图片不启动任务。
+- 原生失败要在实时输出和 /history 出现 ❌；/history errors 显示最近十条，含 turn ID。较早错误不得配到新输入，默认历史提示另查。服务端重试为 ⚠️，桥接不重发任务。
+- 工作区按所属会话最大更新时间倒序，无元数据者最后；会话跨原目录/worktree、loaded/stored 汇总后倒序。翻会话页期间原端新活动不使快照重复/漏项；主动重新打开列表读取新排序。
+- 修改语言 YAML 后 release 必须更新编译资源，界面不能显示 tg.workspace.page 等 ID。旧观察游标升级不刷历史；同次断连只提示一次。
+- 完整问题记录见 [Topics 回顾](research/telegram-topics.md)。

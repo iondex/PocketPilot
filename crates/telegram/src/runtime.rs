@@ -160,6 +160,12 @@ mod observation;
 #[path = "history_view.rs"]
 mod history_view;
 
+#[path = "messages.rs"]
+mod messages;
+
+#[path = "session_errors.rs"]
+mod session_errors;
+
 #[path = "routing.rs"]
 mod routing;
 
@@ -284,7 +290,15 @@ fn item_hashes(history: &History) -> BTreeMap<String, String> {
     history
         .items
         .iter()
-        .map(|item| (item_key(item), digest(&item.text)))
+        .map(|item| {
+            (
+                item_key(item),
+                format!(
+                    "v2:{}",
+                    digest(&serde_json::to_string(item).expect("text item serialization"))
+                ),
+            )
+        })
         .collect()
 }
 

@@ -226,11 +226,34 @@ impl Store {
         source: &str,
         body: &Outbound,
     ) -> Result<(), Error> {
+        self.publish_cursor(binding, items, source, body, true)
+            .await
+    }
+
+    pub(crate) async fn publish_notice(
+        &self,
+        binding: &Binding,
+        items: &BTreeMap<String, String>,
+        source: &str,
+        body: &Outbound,
+    ) -> Result<(), Error> {
+        self.publish_cursor(binding, items, source, body, binding.history_ready)
+            .await
+    }
+
+    async fn publish_cursor(
+        &self,
+        binding: &Binding,
+        items: &BTreeMap<String, String>,
+        source: &str,
+        body: &Outbound,
+        history_ready: bool,
+    ) -> Result<(), Error> {
         let items = serde_json::to_string(items).map_err(|_| Error::Database)?;
         let payload = serde_json::to_string(body).map_err(|_| Error::Database)?;
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
-        let n=sqlx::query("UPDATE bindings SET observed_items=?,history_ready=1 WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1")
-            .bind(items).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision)
+        let n=sqlx::query("UPDATE bindings SET observed_items=?,history_ready=? WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1")
+            .bind(items).bind(history_ready).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision)
             .execute(&mut *tx).await.map_err(|_| Error::Database)?.rows_affected();
         if n != 1 {
             return Err(Error::Transition);

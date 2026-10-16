@@ -97,7 +97,10 @@ impl ConfigFile {
         config.validate()?;
         let hash = catalog_hash(&config, &old.file_hash)?;
         self.catalog_managed.store(true, Ordering::Release);
-        if hash == old.hash {
+        if hash == old.hash
+            && serde_json::to_string(&config.workspaces).ok()
+                == serde_json::to_string(&old.config.workspaces).ok()
+        {
             return Ok(false);
         }
         let previous = self.current.compare_and_swap(
@@ -153,8 +156,12 @@ impl ConfigFile {
 }
 
 fn catalog_hash(config: &Config, file_hash: &str) -> Result<String, ConfigError> {
-    let catalog = serde_json::to_string(&(&config.providers, &config.workspaces))
-        .map_err(|_| ConfigError::Invalid)?;
+    let mut scopes = config.workspaces.clone();
+    for workspace in &mut scopes {
+        workspace.updated_at = None;
+    }
+    let catalog =
+        serde_json::to_string(&(&config.providers, &scopes)).map_err(|_| ConfigError::Invalid)?;
     Ok(digest(&format!("{file_hash}\0{catalog}")))
 }
 
@@ -183,5 +190,56 @@ mod tests {
         std::fs::write(&path, "[delivery]\nburst_threshold=5").unwrap();
         assert!(config.reload().unwrap());
         assert_eq!(config.snapshot().config.delivery.burst_threshold, 5);
+    }
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+
+    #[test]
+    fn workspace_activity_publishes_without_expiring_authorized_menus() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pocketpilot.toml");
+        std::fs::write(&path, "[[hosts]]\nid='h'\nname='host'\ntransport='local_proxy'\nallowed_workspace_roots=['/projects']\n").unwrap();
+        let file = ConfigFile::open(path, |path, text| {
+            let mut config: Config = toml::from_str(text).unwrap();
+            config.prepare(path, text)?;
+            config.providers.push(crate::config::Provider {
+                id: "p".into(),
+                host_id: "h".into(),
+                kind: "codex".into(),
+                connection_mode: "existing_proxy".into(),
+                compatibility_profile: "fixture".into(),
+                control_verified: false,
+                endpoint: None,
+            });
+            config.workspaces.push(crate::config::Workspace {
+                id: "w".into(),
+                provider_id: "p".into(),
+                name: "project".into(),
+                short_name: "project".into(),
+                cwd: "/projects/test".into(),
+                additional_cwds: vec![],
+                updated_at: None,
+            });
+            Ok(ParsedConfig {
+                config,
+                restart_key: String::new(),
+            })
+        })
+        .unwrap();
+        file.publish_catalog(file.snapshot().config.clone())
+            .unwrap();
+        let before = file.snapshot();
+        let mut next = before.config.clone();
+        next.workspaces[0].updated_at = Some(100);
+        assert!(file.publish_catalog(next).unwrap());
+        assert_eq!(file.snapshot().hash, before.hash);
+        assert_eq!(file.snapshot().config.workspaces[0].updated_at, Some(100));
+        let mut next = file.snapshot().config.clone();
+        next.workspaces[0].cwd = "/projects/changed".into();
+        assert!(file.publish_catalog(next).unwrap());
+        assert_ne!(file.snapshot().hash, before.hash);
     }
 }

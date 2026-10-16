@@ -26,4 +26,6 @@ pub struct Workspace {
     pub cwd: String,
     #[serde(default)]
     pub additional_cwds: Vec<String>,
+    #[serde(default)]
+    pub updated_at: Option<i64>,
 }

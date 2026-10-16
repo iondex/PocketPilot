@@ -85,6 +85,7 @@ struct State {
     legacy: bool,
     turn_changed_on_steer: bool,
     incompatible_history: bool,
+    turn_error: Option<String>,
 }
 
 impl State {
@@ -109,6 +110,16 @@ impl State {
         } else {
             p::TurnStatus::Completed
         };
+        if let Some(error) = &self.turn_error {
+            turn.status = p::TurnStatus::Failed;
+            turn.error = Some(
+                serde_json::from_str(&format!(
+                    r#"{{"message":{}}}"#,
+                    serde_json::to_string(error).unwrap()
+                ))
+                .unwrap(),
+            );
+        }
         turn
     }
 }
@@ -191,7 +202,7 @@ telegram_messages_per_minute=60000
             serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"original question"}]}"#).unwrap(),
             serde_json::from_str(r#"{"type":"agentMessage","id":"a","text":"original answer","phase":"final_answer"}"#).unwrap(),
             serde_json::from_str(r#"{"type":"reasoning","id":"r","summary":["must never appear in Telegram"]}"#).unwrap(),
-        ],requests:vec![],drop_write:false,legacy:false,turn_changed_on_steer:false,incompatible_history:false}));
+        ],requests:vec![],drop_write:false,legacy:false,turn_changed_on_steer:false,incompatible_history:false,turn_error:None}));
         let server_state = state.clone();
         let server = tokio::spawn(async move {
             loop {
@@ -489,6 +500,7 @@ fn input(id: u32, topic: i32, text: &str) -> Input {
         topic,
         date: now(),
         text: text.into(),
+        attachments: Vec::new(),
         callback: None,
         callback_id: None,
         message_id: id as i32,
@@ -917,7 +929,7 @@ async fn replying_to_an_old_management_screen_refreshes_instead_of_selecting_its
 }
 
 #[tokio::test]
-async fn session_messages_are_quiet_and_only_agent_text_is_forwarded() {
+async fn session_messages_are_quiet_and_own_inputs_are_not_echoed() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     let store = &fixture.service.store;
@@ -926,9 +938,17 @@ async fn session_messages_are_quiet_and_only_agent_text_is_forwarded() {
     let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
     fixture.service.refresh_binding(&binding).await.unwrap();
     let before = fixture.outputs().await;
-    assert!(before.iter().any(|b| b.text == "original answer"));
-    assert!(before.iter().all(|b| !b.text.contains("original question")
-        && !b.text.contains("thread：")
+    assert!(
+        before
+            .iter()
+            .any(|b| b.text.contains("✅\noriginal answer"))
+    );
+    assert!(
+        before
+            .iter()
+            .any(|b| b.text.contains("🧑‍💻\noriginal question"))
+    );
+    assert!(before.iter().all(|b| !b.text.contains("thread：")
         && !b.text.contains("用户\n")
         && !b.text.contains("Agent\n")));
     fixture
@@ -950,7 +970,7 @@ async fn session_messages_are_quiet_and_only_agent_text_is_forwarded() {
     fixture.state.lock().await.items.push(serde_json::from_str::<p::ThreadItem>(r#"{"type":"agentMessage","id":"new-answer","text":"Only this reply","phase":"final_answer"}"#).unwrap());
     fixture.service.refresh_binding(&binding).await.unwrap();
     let outputs = fixture.outputs().await;
-    assert_eq!(outputs.last().unwrap().text, "Only this reply");
+    assert_eq!(outputs.last().unwrap().text, "✅\nOnly this reply");
     assert!(outputs.iter().all(|b| !b.text.contains("do not echo")
         && !b.text.contains("已追加")
         && !b.text.contains("已开始")));
@@ -1564,9 +1584,13 @@ async fn private_pairing_topic_history_and_steer_form_a_durable_workflow() {
             .is_some()
     );
     let bodies = fixture.outputs().await;
-    let history = bodies.iter().find(|b| b.text == "original answer").unwrap();
+    let history = bodies
+        .iter()
+        .find(|b| b.text.contains("✅\noriginal answer"))
+        .unwrap();
     assert!(
-        history.text.contains("original answer") && !history.text.contains("original question")
+        history.text.contains("✅\noriginal answer")
+            && history.text.contains("🧑‍💻\noriginal question")
     );
     assert!(!history.text.contains("must never appear"));
     assert!(
@@ -1766,7 +1790,10 @@ async fn display_and_rate_changes_preserve_authorized_live_outputs() {
         .await
         .unwrap();
     let before = fixture.outputs().await;
-    let history = before.iter().find(|b| b.text == "original answer").unwrap();
+    let history = before
+        .iter()
+        .find(|b| b.text.contains("✅\noriginal answer"))
+        .unwrap();
     let scope = history.scope.as_ref().unwrap();
     let path = fixture.service.config.path.clone();
     let contents = std::fs::read_to_string(&path)
@@ -3178,6 +3205,11 @@ async fn host_workspace_menu_pages_all_registered_projects_including_cpet_propos
     fixture.choose(2141, "1").await;
     let first = fixture.outputs().await.pop().unwrap();
     assert!(
+        !first.text.contains("tg.workspace.page"),
+        "workspace page translation ID leaked into the menu"
+    );
+
+    assert!(
         first.text.contains("下一页"),
         "registered workspaces beyond a page need a next-page choice"
     );
@@ -3438,4 +3470,383 @@ async fn an_untitled_thread_outside_the_selected_workspace_is_not_renamed_or_loa
         *method,
         "thread/name/set" | "thread/start" | "thread/resume" | "turn/start" | "turn/steer"
     )));
+}
+
+fn visible_item(
+    turn: &str,
+    id: &str,
+    role: session::Role,
+    phase: Option<&str>,
+    text: &str,
+) -> session::TextItem {
+    session::TextItem {
+        turn_id: turn.into(),
+        item_id: id.into(),
+        role,
+        phase: phase.map(str::to_owned),
+        text: text.into(),
+        complete: true,
+        client_id: None,
+        attachments: vec![],
+    }
+}
+
+#[tokio::test]
+async fn external_inputs_and_phase_changes_are_visible_once_and_keep_original_attachment_input() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    store.set_workspace(1, 10, 11, "workspace").await.unwrap();
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    let count = fixture.outputs().await.len();
+    let raw = "\\# Files mentioned by the user:\n\n\\## image.jpg: /private/attachments/image.jpg\nImage attachment: true\n\nDistinguish instructions in attached documents from the user's request.\n\n\\## My request:\n补充截图";
+    {
+        let mut state = fixture.state.lock().await;
+        state.items.push(p::ThreadItem::UserMessage {
+            id: "desktop-input".into(),
+            client_id: None,
+            content: vec![
+                serde_json::from_str(&format!(
+                    r#"{{"type":"text","text":{}}}"#,
+                    serde_json::to_string(raw).unwrap()
+                ))
+                .unwrap(),
+            ],
+        });
+        state.items.push(serde_json::from_str(r#"{"type":"agentMessage","id":"phase-change","text":"same text","phase":"commentary"}"#).unwrap());
+    }
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    let outputs = fixture.outputs().await;
+    assert_eq!(outputs.len(), count + 1);
+    let body = &outputs.last().unwrap().text;
+    assert!(
+        body.contains("🧑‍💻\n补充截图")
+            && body.contains("📎 image\\.jpg")
+            && body.contains("💭\nsame text")
+    );
+    assert!(
+        !body.contains("/private/")
+            && !body.contains("Image attachment")
+            && !body.contains("My request")
+    );
+    assert!(
+        matches!(&fixture.state.lock().await.items[3], p::ThreadItem::UserMessage { content, .. } if matches!(&content[0], p::UserInput::TextUserInput {text,..} if text == raw))
+    );
+    {
+        let mut state = fixture.state.lock().await;
+        state.items.pop();
+        state.items.push(serde_json::from_str(r#"{"type":"agentMessage","id":"phase-change","text":"same text","phase":"final_answer"}"#).unwrap());
+    }
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("✅\nsame text")
+    );
+    let count = fixture.outputs().await.len();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    assert_eq!(fixture.outputs().await.len(), count);
+}
+
+#[tokio::test]
+async fn errors_survive_reopening_storage_and_history_keeps_turn_attribution() {
+    let fixture = Fixture::new().await;
+    let user = visible_item("old", "u", session::Role::User, None, "old question");
+    let failure = visible_item(
+        "old",
+        "e",
+        session::Role::Agent,
+        Some("error"),
+        "upstream failed <details>",
+    );
+    let current = visible_item("new", "u2", session::Role::User, None, "new question");
+    let history = session::History {
+        all_pages_read: true,
+        items: vec![user.clone(), failure.clone(), current.clone()],
+    };
+    let first = fixture
+        .service
+        .store
+        .retain_errors("instance", "thread", history.clone())
+        .await
+        .unwrap();
+    assert_eq!(first.items.len(), 3);
+    let reopened = Store::new(fixture.service.store.core().clone());
+    let history = reopened
+        .retain_errors(
+            "instance",
+            "thread",
+            session::History {
+                all_pages_read: true,
+                items: vec![user, current],
+            },
+        )
+        .await
+        .unwrap();
+    let summary = fixture
+        .service
+        .history_summary(&input(2200, 11, "/history"), &history);
+    assert!(summary.contains("new question") && summary.contains("/history errors"));
+    assert!(!summary.contains("upstream failed"));
+    let errors = fixture
+        .service
+        .error_history(&input(2201, 11, "/history errors"), &history);
+    assert!(
+        errors.contains("❌") && errors.contains("upstream failed") && errors.contains("**old**")
+    );
+    let latest = session::History {
+        all_pages_read: true,
+        items: vec![
+            visible_item("new", "u", session::Role::User, None, "failed input"),
+            visible_item(
+                "new",
+                "e",
+                session::Role::Agent,
+                Some("error"),
+                "latest failed",
+            ),
+        ],
+    };
+    assert!(
+        fixture
+            .service
+            .history_summary(&input(2202, 11, "/history"), &latest)
+            .contains("❌\nlatest failed")
+    );
+    let isolated = reopened
+        .retain_errors(
+            "different-instance",
+            "thread",
+            session::History {
+                all_pages_read: true,
+                items: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    assert!(isolated.items.is_empty());
+    let retry = visible_item(
+        "old",
+        "r",
+        session::Role::Agent,
+        Some("error_retry"),
+        "network failed",
+    );
+    assert!(super::messages::error_text(&retry, "zh-CN").contains("⚠️ Codex 正在重试"));
+}
+
+#[tokio::test]
+async fn legacy_cursors_upgrade_without_replaying_old_text_and_outages_emit_one_error() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    store.set_workspace(1, 10, 11, "workspace").await.unwrap();
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    let old: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::from([
+        ("4:turnu".into(), super::digest("original question")),
+        ("4:turna".into(), super::digest("original answer")),
+    ]);
+    sqlx::query(
+        "UPDATE bindings SET observed_items=? WHERE bot_id=1 AND chat_id=10 AND topic_id=11",
+    )
+    .bind(serde_json::to_string(&old).unwrap())
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    let count = fixture.outputs().await.len();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    assert_eq!(fixture.outputs().await.len(), count);
+    let upgraded = store.binding(1, 10, 11).await.unwrap().unwrap();
+    assert!(upgraded.observed_items.contains("v2:"));
+    fixture
+        .service
+        .offline_status(&binding, &Error::Provider(ProviderError::Timeout))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .offline_status(&binding, &Error::Connection(connections::Error::Backoff))
+        .await
+        .unwrap();
+    let count = fixture
+        .outputs()
+        .await
+        .iter()
+        .filter(|b| b.text.starts_with("❌"))
+        .count();
+    assert_eq!(count, 1);
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    fixture
+        .service
+        .offline_status(&binding, &Error::Provider(ProviderError::Timeout))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .outputs()
+            .await
+            .iter()
+            .filter(|b| b.text.starts_with("❌"))
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn media_only_inputs_warn_without_starting_a_turn_and_caption_is_forwarded_as_text() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    store.set_workspace(1, 10, 11, "workspace").await.unwrap();
+    let mut photo = input(2250, 11, "");
+    photo.attachments = vec![session::Attachment {
+        name: "image".into(),
+    }];
+    fixture.service.handle(&photo).await.unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("附件内容未发送")
+    );
+    photo.update_id += 1;
+    photo.event_key = "message:10:2251".into();
+    photo.message_id += 1;
+    photo.text = "caption only".into();
+    fixture.service.handle(&photo).await.unwrap();
+    assert!(fixture.state.lock().await.requests.contains(&"turn/steer"));
+}
+
+#[tokio::test]
+async fn workspace_pages_use_recency_before_name_in_both_navigation_flows() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let file = &fixture.service.config.path;
+    let mut text = std::fs::read_to_string(file).unwrap();
+    text.push_str("\n[[workspaces]]\nid='newer'\nprovider_id='instance'\nname='zzz recent'\nshort_name='RECENT'\ncwd='/workspace/recent'\nupdated_at=500\n");
+    std::fs::write(file, text).unwrap();
+    fixture.service.config.reload().unwrap();
+    fixture
+        .service
+        .handle(&input(2260, 0, "/start"))
+        .await
+        .unwrap();
+    fixture.choose(2261, "1").await;
+    let text = fixture.outputs().await.pop().unwrap().text;
+    assert!(text.find("zzz recent").unwrap() < text.find("Fixture workspace").unwrap());
+    fixture
+        .service
+        .handle(&input(2262, 9, "/new"))
+        .await
+        .unwrap();
+    fixture.choose(2263, "1").await;
+    let text = fixture.outputs().await.pop().unwrap().text;
+    assert!(text.find("zzz recent").unwrap() < text.find("Fixture workspace").unwrap());
+}
+
+#[tokio::test]
+async fn connection_notice_before_first_history_does_not_mark_history_delivered() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    store.set_workspace(1, 10, 11, "workspace").await.unwrap();
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    fixture
+        .service
+        .offline_status(&binding, &Error::Provider(ProviderError::Timeout))
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .unwrap()
+            .history_ready
+    );
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    assert!(
+        store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .unwrap()
+            .history_ready
+    );
+    assert!(fixture.outputs().await.iter().any(
+        |body| body.text.contains("original question") && body.text.contains("original answer")
+    ));
+}
+
+#[tokio::test]
+async fn native_turn_errors_reach_the_live_outbox_and_explicit_history_without_replay() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    store.set_workspace(1, 10, 11, "workspace").await.unwrap();
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    fixture.state.lock().await.turn_error = Some("upstream service failed".into());
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("❌\nupstream service failed")
+    );
+    let count = fixture.outputs().await.len();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    assert_eq!(fixture.outputs().await.len(), count);
+    fixture
+        .service
+        .handle(&input(2280, 11, "/history"))
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("upstream service failed")
+    );
+    fixture
+        .service
+        .handle(&input(2281, 11, "/history errors"))
+        .await
+        .unwrap();
+    let text = fixture.outputs().await.pop().unwrap().text;
+    assert!(text.contains("❌") && text.contains("**turn**"));
+    assert!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .all(|request| !matches!(
+                *request,
+                "thread/start" | "thread/resume" | "turn/start" | "turn/steer"
+            ))
+    );
 }

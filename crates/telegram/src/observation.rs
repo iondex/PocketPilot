@@ -90,12 +90,16 @@ impl Service {
                 .map_err(|_| ProviderError::Disconnected)?;
             provider.history(thread).await
         };
-        Ok(tokio::time::timeout(
+        let history = tokio::time::timeout(
             Duration::from_secs(snapshot.config.delivery.history_barrier_timeout_seconds),
             work,
         )
         .await
-        .map_err(|_| ProviderError::Timeout)??)
+        .map_err(|_| ProviderError::Timeout)??;
+        Ok(self
+            .store
+            .retain_errors(&workspace.provider_id, thread, history)
+            .await?)
     }
 
     pub(super) async fn offline_status(
@@ -103,6 +107,14 @@ impl Service {
         binding: &Binding,
         error: &Error,
     ) -> Result<(), Error> {
+        let actor = self
+            .connections
+            .actor(
+                &binding.instance_id,
+                &format!("__binding:{}:{}", binding.chat_id, binding.topic_id),
+            )
+            .await;
+        let _guard = actor.lock().await;
         let binding = self
             .store
             .binding(self.bot, binding.chat_id, binding.topic_id)
@@ -111,6 +123,26 @@ impl Service {
         let snapshot = self.config.snapshot();
         let workspace = self.binding_workspace(&snapshot.config, &binding)?;
         tracing::debug!(thread_id=%binding.thread_id,%error,"session status unavailable");
+        let mut observed: BTreeMap<String, String> =
+            serde_json::from_str(&binding.observed_items).map_err(|_| StoreError::Database)?;
+        let message = ::i18n::LocalizedError::message(error);
+        if !observed.contains_key("@connection_error") {
+            observed.insert("@connection_error".into(), message.id.into());
+            let mut body = Outbound::text(format!(
+                "❌ {}",
+                message.render(&self.ui_locale(binding.chat_id).await)
+            ));
+            body.scope = Some(self.output_scope(&snapshot.config, workspace, &workspace.cwd)?);
+            body.binding_revision = Some(binding.revision);
+            self.store
+                .publish_notice(
+                    &binding,
+                    &observed,
+                    &format!("connection-error:{}", uuid::Uuid::new_v4()),
+                    &body,
+                )
+                .await?;
+        }
         self.presence.clear(&binding).await;
         let appearance = crate::presentation::Appearance {
             title: binding.topic_title.clone().unwrap_or_else(|| {
@@ -161,6 +193,12 @@ impl Service {
         current: &session::Session,
         snapshot: &Snapshot,
     ) -> Result<(), Error> {
+        if let Err(error) = engine::catalog::Catalog::new(self.store.pool().clone())
+            .touch_workspace(&workspace.id, current.updated_at)
+            .await
+        {
+            tracing::debug!(%error,"workspace activity metadata unavailable");
+        }
         let ttl = Duration::from_secs(
             snapshot
                 .config
@@ -247,11 +285,13 @@ impl Service {
             }
         };
         if !binding.history_ready {
-            let text = if matches!(current.status, RuntimeStatus::Active { .. }) {
-                session::delivery::agent_history(&history)
-            } else {
-                session::delivery::latest_agent_answer(&history)
-            };
+            let text = self
+                .initial_messages(
+                    binding,
+                    &history,
+                    matches!(current.status, RuntimeStatus::Active { .. }),
+                )
+                .await?;
             let mut body = Outbound::agent(text);
             body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
             body.binding_revision = Some(binding.revision);
@@ -268,27 +308,49 @@ impl Service {
         let old: BTreeMap<String, String> =
             serde_json::from_str(&binding.observed_items).map_err(|_| StoreError::Database)?;
         let mut new = old.clone();
+        new.remove("@connection_error");
         new.extend(item_hashes(&history));
+        let upgrading = old.values().all(|hash| !hash.starts_with("v2:"));
+        let latest_turn = history
+            .items
+            .iter()
+            .rfind(|i| i.role == session::Role::User)
+            .map(|i| i.turn_id.as_str());
+        let own = self.store.own_client_ids(binding).await?;
         let changed = history
             .items
             .iter()
-            .filter(|i| old.get(&item_key(i)) != new.get(&item_key(i)))
+            .filter(|item| {
+                let key = item_key(item);
+                let previous = old.get(&key);
+                if previous == new.get(&key)
+                    || previous
+                        .is_some_and(|h| !h.starts_with("v2:") && *h == super::digest(&item.text))
+                {
+                    return false;
+                }
+                if item.role == session::Role::User
+                    && item.client_id.as_ref().is_some_and(|id| own.contains(id))
+                {
+                    return false;
+                }
+                if upgrading && item.is_error() && Some(item.turn_id.as_str()) != latest_turn {
+                    return false;
+                }
+                true
+            })
             .collect::<Vec<_>>();
-        if changed.is_empty() {
-            return Ok(());
-        }
+        let locale = self.ui_locale(binding.chat_id).await;
         let text = changed
             .iter()
-            .filter(|i| i.role == session::Role::Agent)
-            .map(|i| i.text.as_str())
+            .map(|item| super::messages::render(item, &locale))
             .collect::<Vec<_>>()
             .join("\n\n");
-        let visible_members = changed
-            .iter()
-            .filter(|i| i.role == session::Role::Agent)
-            .count();
+        let visible_members = changed.len();
         if text.is_empty() {
-            self.store.observe(binding, &new).await?;
+            if new != old {
+                self.store.observe(binding, &new).await?;
+            }
             return Ok(());
         }
         let mut body = Outbound::agent(text);

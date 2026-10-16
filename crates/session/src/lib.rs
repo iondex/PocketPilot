@@ -1,5 +1,7 @@
 pub mod delivery;
 
+pub mod content;
+
 pub mod model;
 
 pub mod operation;

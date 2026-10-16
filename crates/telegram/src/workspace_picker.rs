@@ -38,9 +38,9 @@ pub(super) fn page<'a>(
         })
         .collect::<Vec<_>>();
     entries.sort_by(|a, b| {
-        a.name
-            .to_lowercase()
-            .cmp(&b.name.to_lowercase())
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
             .then_with(|| a.cwd.cmp(&b.cwd))
             .then_with(|| a.id.cmp(&b.id))
     });

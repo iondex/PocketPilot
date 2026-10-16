@@ -88,6 +88,22 @@ pub struct TextItem {
     pub text: String,
     pub complete: bool,
     pub client_id: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+}
+
+impl TextItem {
+    pub fn is_error(&self) -> bool {
+        matches!(
+            self.phase.as_deref(),
+            Some("error" | "error_retry" | "turn_failed" | "turn_interrupted")
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Serialize)]

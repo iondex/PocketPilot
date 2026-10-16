@@ -89,6 +89,17 @@ impl Service {
                 .await?;
         }
 
+        if !input.attachments.is_empty() {
+            self.respond(
+                &scoped,
+                &format!("attachments:{}", input.event_key),
+                Outbound::ui("tg.attachment.text_only"),
+            )
+            .await?;
+            if input.text.trim().is_empty() {
+                return Ok(());
+            }
+        }
         let off_topic = scoped.topic == 0 && scoped.callback.is_none();
         if off_topic {
             scoped = self.management_input(&scoped, &snapshot).await?;
@@ -287,7 +298,11 @@ impl Service {
                     let history = self
                         .history(provider.as_ref(), workspace, &binding.thread_id, &snapshot)
                         .await?;
-                    self.history_summary(input, &history)
+                    if args.trim() == "errors" {
+                        self.error_history(input, &history)
+                    } else {
+                        self.history_summary(input, &history)
+                    }
                 } else {
                     let host = snapshot
                         .config

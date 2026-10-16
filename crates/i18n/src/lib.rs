@@ -1,4 +1,9 @@
 //! Shared message IDs and explicit locales; never changes a process-global language.
+// Make catalog-only edits invalidate normal/release builds, not only unit tests.
+const _: &str = include_str!("../locales/en.yml");
+
+const _: &str = include_str!("../locales/zh-CN.yml");
+
 rust_i18n::i18n!("locales", fallback = "zh-CN");
 
 pub fn normalize(locale: &str) -> &'static str {
@@ -100,6 +105,16 @@ mod tests {
             if id == "_version" {
                 continue;
             }
+            assert_eq!(
+                text("zh-CN", id),
+                value.as_str().unwrap(),
+                "compiled catalog: {id}"
+            );
+            assert_eq!(
+                text("en", id),
+                en[id].as_str().unwrap(),
+                "compiled catalog: {id}"
+            );
             let placeholders = |s: &str| {
                 s.split("%{")
                     .skip(1)

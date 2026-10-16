@@ -49,6 +49,25 @@ CREATE TABLE IF NOT EXISTS workspace_exclusions (
     PRIMARY KEY(provider_id,cwd)
 );
 
+CREATE TABLE IF NOT EXISTS session_list_snapshots (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    instance_id TEXT NOT NULL,
+    paths TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_errors (
+    instance_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    observed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY(instance_id,thread_id,turn_id,item_id)
+);
+
 CREATE TABLE IF NOT EXISTS containers (
     bot_id INTEGER NOT NULL,
     chat_id INTEGER NOT NULL,

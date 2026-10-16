@@ -158,13 +158,9 @@ impl Service {
         };
         let after = provider.read(thread).await?;
         connections::require_workspace(&after.cwd, workspace)?;
-        let text = if matches!(current.status, RuntimeStatus::Active { .. })
-            || matches!(after.status, RuntimeStatus::Active { .. })
-        {
-            session::delivery::agent_history(&history)
-        } else {
-            session::delivery::latest_agent_answer(&history)
-        };
+        let active = matches!(current.status, RuntimeStatus::Active { .. })
+            || matches!(after.status, RuntimeStatus::Active { .. });
+        let text = self.initial_messages(&binding, &history, active).await?;
         let mut body = Outbound::agent(text);
         body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
         body.binding_revision = Some(binding.revision);

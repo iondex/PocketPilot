@@ -12,7 +12,8 @@ use teloxide::{
     requests::Request,
     types::{
         AllowedUpdate, ChatAction, ChatId, CustomEmojiId, InlineKeyboardButton,
-        InlineKeyboardMarkup, InputFile, MessageId, ParseMode, ThreadId, Update, UpdateKind,
+        InlineKeyboardMarkup, InputFile, LinkPreviewOptions, MessageId, ParseMode, ThreadId,
+        Update, UpdateKind,
     },
 };
 use tokio::sync::OnceCell;
@@ -32,6 +33,8 @@ pub struct Input {
     pub topic: i32,
     pub date: i64,
     pub text: String,
+    #[serde(default)]
+    pub attachments: Vec<session::Attachment>,
     pub callback: Option<String>,
     pub callback_id: Option<String>,
     pub message_id: i32,
@@ -52,7 +55,11 @@ pub fn input(update: &Update) -> Option<Input> {
             if user.is_bot || m.sender_chat.is_some() {
                 return None;
             }
-            (m, user, m.text()?.to_owned(), None, None)
+            let body = m.text().or_else(|| m.caption()).unwrap_or("");
+            if body.is_empty() && m.document().is_none() && m.photo().is_none() {
+                return None;
+            }
+            (m, user, body.to_owned(), None, None)
         }
         UpdateKind::CallbackQuery(q) => {
             if q.from.is_bot {
@@ -91,6 +98,25 @@ pub fn input(update: &Update) -> Option<Input> {
         topic: message.thread_id.map_or(0, |t| t.0.0),
         date: message.date.timestamp(),
         text,
+        attachments: if callback.is_none() {
+            let mut files = Vec::new();
+            if let Some(document) = message.document() {
+                files.push(session::Attachment {
+                    name: document
+                        .file_name
+                        .clone()
+                        .unwrap_or_else(|| "attachment".into()),
+                });
+            }
+            if message.photo().is_some() {
+                files.push(session::Attachment {
+                    name: "image".into(),
+                });
+            }
+            files
+        } else {
+            Vec::new()
+        },
         callback,
         callback_id,
         message_id: message.id.0,
@@ -319,7 +345,8 @@ impl Api {
         let mut request = self
             .bot
             .send_message(ChatId(chat), text)
-            .reply_markup(markup);
+            .reply_markup(markup)
+            .link_preview_options(no_preview());
         if let Some(mode) = mode {
             request = request.parse_mode(mode);
         }
@@ -361,7 +388,8 @@ impl Api {
         let mut request = self
             .bot
             .edit_message_text(ChatId(chat), MessageId(message), text)
-            .reply_markup(markup);
+            .reply_markup(markup)
+            .link_preview_options(no_preview());
         if markdown {
             request = request.parse_mode(ParseMode::MarkdownV2);
         }
@@ -519,6 +547,16 @@ impl Api {
     }
 }
 
+fn no_preview() -> LinkPreviewOptions {
+    LinkPreviewOptions {
+        is_disabled: true,
+        url: None,
+        prefer_small_media: false,
+        prefer_large_media: false,
+        show_above_text: false,
+    }
+}
+
 pub fn escape_markdown(text: &str) -> String {
     teloxide::utils::markdown::escape(text)
 }
@@ -636,5 +674,27 @@ mod tests {
             "\"id\":-100,\"type\":\"supergroup\",\"title\":\"Group\"",
         );
         assert!(input(&serde_json::from_str(&group).unwrap()).is_none());
+    }
+
+    #[test]
+    fn media_captions_are_text_and_images_never_become_urls_or_downloads() {
+        let update = r#"{"update_id":1,"message":{"message_id":7,"message_thread_id":11,"date":100,"from":{"id":10,"is_bot":false,"first_name":"User"},"chat":{"id":10,"type":"private","first_name":"User"},"photo":[{"file_id":"private-file","file_unique_id":"unique","width":640,"height":480}],"caption":"read this caption"}}"#;
+        let event = input(&serde_json::from_str(update).unwrap()).unwrap();
+        assert_eq!(event.text, "read this caption");
+        assert_eq!(event.topic, 11);
+        assert_eq!(event.attachments[0].name, "image");
+        assert!(
+            !serde_json::to_string(&event)
+                .unwrap()
+                .contains("private-file")
+        );
+        let photo_only = update.replace(",\"caption\":\"read this caption\"", "");
+        assert!(
+            input(&serde_json::from_str(&photo_only).unwrap())
+                .unwrap()
+                .text
+                .is_empty()
+        );
+        assert!(no_preview().is_disabled);
     }
 }
