@@ -2,7 +2,7 @@
 
 Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 topic 管理本地/SSH app-server 会话。提供可选 Discord 原型；Lark 和 Claude shim 保留后续规划。
 
-**Telegram 功能链路已接通，SSH 共享实例控制已验证，等待你测试真实私聊交互。** 包括 CLI 配对、工作区与会话菜单、topic 绑定、历史集合、创建/续轮/steer、状态卡、持久收发与消息合并、OpenSSH/TOTP 和根配置热更新。具体部署状态与验证边界见 [测试入口](docs/testing.md) 和 [验证记录](docs/research/implementation-checks.md)。
+**Telegram 功能链路已接通，SSH 共享实例控制已验证，等待你测试真实私聊交互。** 包括 CLI 配对、工作区与会话菜单、topic 绑定、历史集合、创建/续轮/steer、topic emoji、持久收发与消息合并、OpenSSH/TOTP 和根配置热更新。具体部署状态与验证边界见 [测试入口](docs/testing.md) 和 [验证记录](docs/research/implementation-checks.md)。
 
 ## 运行
 
@@ -30,9 +30,9 @@ cargo build --workspace --locked
 ./target/debug/pocketpilot pair revoke BOT_ID USER_ID
 ```
 
-批准后再次 /start，在固定的「PocketPilot · 管理」topic 中选择工作区和已有会话。管理界面使用 Markdown 编号导航：回复序号依次选择主机、工作区和会话，0 返回，/refresh 刷新；普通任务文本会被拒绝。新建使用 /new WORKSPACE_ID 任务，回复 1 确认后创建；已绑定的会话 topic 内直接发送文本即可续轮或 steer。topic 名保持稳定，运行状态显示在固定状态卡。/status、/history、/info、/rename 和 /unbind 均可使用。
+批准后再次 /start，在固定的「管理」topic 中选择工作区和已有会话。管理界面使用 Markdown 编号导航，每次输入后新发菜单：回复序号依次选择主机、工作区和会话，0 返回，/refresh 刷新；普通任务文本会被拒绝。新建使用 /new WORKSPACE_ID 标题，回复 1 确认后创建空会话；首条任务由用户在会话 topic 发送；已绑定的会话 topic 内直接发送文本即可续轮或 steer。topic 只保留截短的原始标题，状态用原生 emoji icon 表示，/status 查看详情。/status、/history、/info、/rename 和 /unbind 均可使用。私聊命令菜单启动时自动注册中英文说明。管理首页或 /topics 可列出已记录话题，确认后删除 Telegram 话题与聊天记录，Codex 会话继续保留；客户端手动删除可在 /topics 或 /refresh 时同步。/cleartopics 确认后清除全部已记录会话话题，保留管理入口及原生会话。
 
-Telegram 会话只展示 agent 正文，不回显用户输入，不加角色标签或“开始新一轮”通知；emoji 状态卡保持简洁。空闲首次显示对应 final，活跃历史为单个 agent 文本集合，超长用一个附件；CLI 完整导出保留全部角色。工具和推理不转发。短时输出进入持久批次，同一私聊的所有 topics 共享速率预算。
+Telegram 会话只展示 agent 正文，不回显用户输入，不加角色标签或“开始新一轮”通知；topic emoji 表达状态，运行时持续续期“正在输入”，不自动发送空闲状态卡。空闲首次显示对应 final，活跃历史为单个 agent 文本集合，超长用一个附件；内部完整历史模型保留全部角色。工具和推理不转发。短时输出进入持久批次，同一私聊的所有 topics 共享速率预算。
 
 ## 约定
 
@@ -73,3 +73,11 @@ tracing 可同时输出到终端和日志文件，支持 daily/hourly 轮转与 
 cargo build -p app --release --no-default-features --locked
 ./target/release/pocketpilot serve
 ```
+
+## Telegram 展示与语言
+
+菜单状态只显示 emoji。topic 使用原生 emoji icon：⚡️ 运行、💬 空闲、👀 等待审批、❓ 等待输入、📁 未加载、❗️ 异常、⁉️ 未知。仅状态变化时更新，并由投递队列合并、限速。topic 标题仅显示最多 40 个可见字符的原始标题，不拼主机/路径/ID；详细身份信息由 /status 返回。
+
+新建时填写的内容只作为标题，不发送给 agent，也不启动一轮。原生标题为空时，通过官方 thread/name/set 补写；已有原生标题不覆盖，后台观察/重连不补写。Agent Markdown 使用 pulldown-cmark 解析后转换为 Telegram HTML，表格转为逐项内容；超长仍发送原始 Markdown 附件。
+
+中英文 UI 使用 rust-i18n，偏好按 bot/user 独立持久化。/language zh-CN 切换中文，/language en 切换英文；默认中文，telegram.default_locale 可选 zh-CN、en 或 auto。语言资源编译进 binary，运行时仍只读取根 TOML。

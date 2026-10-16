@@ -72,10 +72,13 @@ enum Method {
     Start(p::TurnStartParams),
     #[serde(rename = "turn/steer")]
     Steer(p::TurnSteerParams),
+    #[serde(rename = "thread/name/set")]
+    SetName(p::ThreadSetNameParams),
 }
 
 struct State {
     status: p::ThreadStatus,
+    native_name: Option<String>,
     items: Vec<p::ThreadItem>,
     requests: Vec<&'static str>,
     drop_write: bool,
@@ -88,6 +91,7 @@ impl State {
     fn thread(&self) -> p::Thread {
         let mut thread: p::Thread = serde_json::from_str(THREAD).unwrap();
         thread.status = self.status.clone();
+        thread.name = self.native_name.clone();
         if self.legacy {
             thread.history_mode = p::ThreadHistoryMode::Legacy;
         }
@@ -183,7 +187,7 @@ telegram_messages_per_minute=60000
             .unwrap();
         let api =
             Api::local_fixture("1:abcdefghijklmnopqrstuvwxyz".into(), &telegram.uri()).unwrap();
-        let state=Arc::new(Mutex::new(State{status:p::ThreadStatus::Active(vec![]),items:vec![
+        let state=Arc::new(Mutex::new(State{native_name:Some("Fixture title".into()),status:p::ThreadStatus::Active(vec![]),items:vec![
             serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"original question"}]}"#).unwrap(),
             serde_json::from_str(r#"{"type":"agentMessage","id":"a","text":"original answer","phase":"final_answer"}"#).unwrap(),
             serde_json::from_str(r#"{"type":"reasoning","id":"r","summary":["must never appear in Telegram"]}"#).unwrap(),
@@ -269,12 +273,25 @@ telegram_messages_per_minute=60000
                                 )
                                 .await;
                             }
+                            Method::SetName(params) => {
+                                assert_eq!(params.thread_id, "thread");
+                                state.requests.push("thread/name/set");
+                                state.native_name = Some(params.name);
+                                reply(
+                                    &mut socket,
+                                    frame.id.unwrap(),
+                                    serde_json::from_str::<p::ThreadSetNameResponse>("{}").unwrap(),
+                                )
+                                .await;
+                            }
                             Method::Create(params) => {
                                 assert_eq!(params.cwd.as_deref(), Some("/workspace"));
                                 assert!(
                                     params.approval_policy.is_none() && params.sandbox.is_none()
                                 );
                                 state.requests.push("thread/start");
+                                state.native_name = None;
+                                state.items.clear();
                                 state.status = p::ThreadStatus::Idle;
                                 let response:p::ThreadStartResponse=serde_json::from_str(&format!(r#"{{"thread":{THREAD},"approvalPolicy":"on-request","approvalsReviewer":"user","cwd":"/workspace","model":"fixture","modelProvider":"fixture","sandbox":{{"type":"readOnly"}}}}"#)).unwrap();
                                 reply(&mut socket, frame.id.unwrap(), response).await;
@@ -376,6 +393,8 @@ telegram_messages_per_minute=60000
             }
         });
         let service = Arc::new(Service {
+            presence: super::presence::Presence::default(),
+            default_locale: "zh-CN".into(),
             config,
             connections: Arc::new(Connections::new(store.core().clone())),
             store,
@@ -389,12 +408,21 @@ telegram_messages_per_minute=60000
         Mock::given(method("POST")).and(path_regex("(?i).*/createforumtopic$")).respond_with(|request:&wiremock::Request| {
             #[derive(Deserialize)] struct Topic {name:String}
             let topic:Topic=serde_json::from_slice(&request.body).unwrap();
-            let id=if topic.name=="PocketPilot · 管理" {9}else{11};
+            let id=if topic.name=="管理" {9}else{11};
             ResponseTemplate::new(200).set_body_string(format!(r#"{{"ok":true,"result":{{"message_thread_id":{id},"name":"fixture","icon_color":7322096}}}}"#))
         }).mount(&telegram).await;
         Mock::given(method("POST")).and(path_regex("(?i).*/(sendmessage|senddocument|editmessagetext)$")).respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":{"message_id":700,"date":100,"chat":{"id":10,"type":"private","first_name":"Fixture"},"text":"fixture"}}"#)).mount(&telegram).await;
         Mock::given(method("POST"))
             .and(path_regex("(?i).*/(editforumtopic|answercallbackquery)$"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":true}"#),
+            )
+            .mount(&telegram)
+            .await;
+        Mock::given(method("POST")).and(path_regex("(?i).*/getforumtopiciconstickers$"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":[{"file_id":"f","file_unique_id":"u","width":100,"height":100,"type":"custom_emoji","is_animated":false,"is_video":false,"emoji":"⚡️","custom_emoji_id":"busy"},{"file_id":"g","file_unique_id":"v","width":100,"height":100,"type":"custom_emoji","is_animated":false,"is_video":false,"emoji":"💬","custom_emoji_id":"idle"},{"file_id":"h","file_unique_id":"w","width":100,"height":100,"type":"custom_emoji","is_animated":false,"is_video":false,"emoji":"📁","custom_emoji_id":"folder"}]}"#)).mount(&telegram).await;
+        Mock::given(method("POST"))
+            .and(path_regex("(?i).*/(sendchataction|deletemessage)$"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":true}"#),
             )
@@ -454,6 +482,7 @@ telegram_messages_per_minute=60000
 fn input(id: u32, topic: i32, text: &str) -> Input {
     Input {
         update_id: id,
+        locale: None,
         event_key: format!("message:10:{id}"),
         user: 10,
         chat: 10,
@@ -542,7 +571,7 @@ async fn failed_history_does_not_flip_a_known_runtime_or_repeatedly_rename_the_t
         "history failure caused {renames} repeated topic renames"
     );
     assert!(
-        binding.status_text.unwrap().contains("运行中"),
+        binding.status_text.as_deref() == Some("⚡️"),
         "readable runtime was replaced by unknown"
     );
 }
@@ -639,7 +668,7 @@ async fn management_topic_is_separate_and_unbound_messages_never_reach_an_agent(
 }
 
 #[tokio::test]
-async fn numbered_navigation_edits_one_markdown_screen_without_inline_buttons() {
+async fn numbered_navigation_sends_a_new_markdown_screen_without_inline_buttons() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     fixture
@@ -654,33 +683,27 @@ async fn numbered_navigation_edits_one_markdown_screen_without_inline_buttons() 
         .find(|b| b.navigation_id.is_some())
         .unwrap();
     assert!(home.markdown && home.buttons.is_empty());
-    assert!(home.text.contains("*主机*"));
+    assert!(home.text.contains("🌐 主机"));
     fixture.choose(211, "1").await;
-    let workspaces = fixture.outputs().await.into_iter().last().unwrap();
-    assert!(workspaces.text.contains("工作区"));
-    assert_eq!(workspaces.edit_message, Some(777));
-    assert!(workspaces.buttons.is_empty());
+    let workspace = fixture.outputs().await.into_iter().last().unwrap();
+    assert!(workspace.text.contains("工作区"));
+    assert!(workspace.edit_message.is_none());
     fixture.choose(212, "1").await;
     let sessions = fixture.outputs().await.into_iter().last().unwrap();
-    assert!(sessions.text.contains("🔵 运行中"));
+    assert!(sessions.text.contains("⚡"));
+    assert!(!sessions.text.contains("运行中"));
     assert!(sessions.text.contains("新建会话"));
     let (stop, receiver) = watch::channel(false);
     let worker = tokio::spawn(fixture.service.clone().deliver(receiver));
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        if fixture
-            .telegram
-            .received_requests()
-            .await
-            .unwrap()
-            .iter()
-            .any(|r| {
-                r.url
-                    .path()
-                    .to_ascii_lowercase()
-                    .ends_with("/editmessagetext")
-            })
-        {
+        let pending: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM deliveries WHERE state IN ('pending','dispatching')",
+        )
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap();
+        if pending == 0 {
             break;
         }
         assert!(Instant::now() < deadline);
@@ -688,35 +711,32 @@ async fn numbered_navigation_edits_one_markdown_screen_without_inline_buttons() 
     }
     stop.send(true).unwrap();
     worker.await.unwrap();
-
     #[derive(Deserialize)]
-    struct Edit {
-        message_id: i32,
-        parse_mode: String,
+    struct Sent {
+        parse_mode: Option<String>,
         reply_markup: Markup,
     }
-
     #[derive(Deserialize)]
     struct Markup {
         inline_keyboard: Vec<Vec<serde::de::IgnoredAny>>,
     }
     let requests = fixture.telegram.received_requests().await.unwrap();
-    let edit: Edit = serde_json::from_slice(
-        &requests
-            .iter()
-            .find(|r| {
-                r.url
-                    .path()
-                    .to_ascii_lowercase()
-                    .ends_with("/editmessagetext")
-            })
-            .unwrap()
-            .body,
-    )
-    .unwrap();
-    assert_eq!(edit.message_id, 777);
-    assert_eq!(edit.parse_mode, "MarkdownV2");
-    assert!(edit.reply_markup.inline_keyboard.is_empty());
+    assert!(!requests.iter().any(|r| {
+        r.url
+            .path()
+            .to_ascii_lowercase()
+            .ends_with("/editmessagetext")
+    }));
+    let menus = requests
+        .iter()
+        .filter(|r| r.url.path().to_ascii_lowercase().ends_with("/sendmessage"))
+        .filter(|r| {
+            let sent: Sent = serde_json::from_slice(&r.body).unwrap();
+            assert!(sent.reply_markup.inline_keyboard.is_empty());
+            sent.parse_mode.as_deref() == Some("MarkdownV2")
+        })
+        .count();
+    assert_eq!(menus, 3);
     fixture.choose(213, "0").await;
     assert!(
         fixture
@@ -940,7 +960,7 @@ async fn session_messages_are_quiet_and_only_agent_text_is_forwarded() {
         .await
         .unwrap();
     let info = fixture.outputs().await.into_iter().last().unwrap();
-    assert!(info.text.contains("🔵"));
+    assert!(info.text.contains("⚡"));
     assert!(!info.text.contains("观察时间") && !info.text.contains("thread："));
 }
 
@@ -958,6 +978,7 @@ async fn opening_a_session_without_agent_text_does_not_send_an_empty_history() {
     assert!(
         outputs
             .iter()
+            .filter(|b| b.appearance.is_none())
             .all(|b| !b.text.is_empty() && !b.text.contains("会话历史"))
     );
     assert!(
@@ -978,7 +999,7 @@ async fn opening_a_session_without_agent_text_does_not_send_an_empty_history() {
 }
 
 #[tokio::test]
-async fn deleted_management_message_is_replaced_only_after_a_known_edit_rejection() {
+async fn menus_do_not_depend_on_editing_deleted_management_messages() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     fixture
@@ -1007,7 +1028,7 @@ async fn deleted_management_message_is_replaced_only_after_a_known_edit_rejectio
                     .ends_with("/editmessagetext")
             })
             .count();
-        if edits > 0 && sends >= 3 {
+        if edits == 0 && sends >= 3 {
             break;
         }
         assert!(
@@ -1655,6 +1676,13 @@ async fn new_session_requires_confirmation_and_an_unloaded_session_resumes_only_
             .requests
             .contains(&"thread/start")
     );
+    {
+        let state = fixture.state.lock().await;
+        assert!(!state.requests.contains(&"turn/start"));
+        assert!(state.requests.contains(&"thread/name/set"));
+        assert_eq!(state.native_name.as_deref(), Some("first task"));
+        assert!(state.items.is_empty());
+    }
     fixture.state.lock().await.status = p::ThreadStatus::NotLoaded;
     fixture
         .service
@@ -2021,9 +2049,14 @@ async fn explicit_start_replaces_only_a_definitively_missing_management_topic() 
     Mock::given(method("POST")).and(path_regex("(?i).*/editforumtopic$"))
         .respond_with(ResponseTemplate::new(400).set_body_string(r#"{"ok":false,"error_code":400,"description":"Bad Request: message thread not found"}"#))
         .with_priority(1).mount(&fixture.telegram).await;
-    Mock::given(method("POST")).and(path_regex("(?i).*/createforumtopic$"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":{"message_thread_id":19,"name":"PocketPilot · 管理","icon_color":7322096}}"#))
-        .with_priority(1).mount(&fixture.telegram).await;
+    Mock::given(method("POST"))
+        .and(path_regex("(?i).*/createforumtopic$"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"ok":true,"result":{"message_thread_id":19,"name":"管理","icon_color":7322096}}"#,
+        ))
+        .with_priority(1)
+        .mount(&fixture.telegram)
+        .await;
     fixture
         .service
         .handle(&input(1301, 0, "/start"))
@@ -2075,4 +2108,946 @@ async fn uncertain_management_topic_check_does_not_create_another_topic() {
         1
     );
     assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn english_and_chinese_preferences_are_persistent_and_peer_scoped() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1500, 0, "/language en"))
+        .await
+        .unwrap();
+    let english = fixture.outputs().await.into_iter().last().unwrap();
+    assert!(english.text.contains("Hosts"));
+    assert!(!english.text.contains("主机"));
+    let mut next = input(1501, 0, "/start");
+    next.locale = Some("zh-CN".into());
+    fixture.service.handle(&next).await.unwrap();
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("Hosts")
+    );
+    let code = fixture
+        .service
+        .store
+        .pairing()
+        .request_pairing(1, 20, 20, true, now())
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .pairing()
+        .approve_pairing(&code, now())
+        .await
+        .unwrap();
+    let mut other = input(1502, 0, "/start");
+    other.user = 20;
+    other.chat = 20;
+    other.locale = Some("zh-CN".into());
+    fixture.service.handle(&other).await.unwrap();
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("主机")
+    );
+    assert_eq!(
+        fixture
+            .service
+            .store
+            .locale(1, 10)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("en")
+    );
+    assert_eq!(
+        fixture
+            .service
+            .store
+            .locale(1, 20)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("zh-CN")
+    );
+}
+
+#[tokio::test]
+async fn management_creation_and_existing_topic_repair_keep_the_icon_out_of_the_title() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1800, 0, "/start"))
+        .await
+        .unwrap();
+    // An existing address can belong to an older version with an emoji in its name.
+    fixture
+        .service
+        .handle(&input(1801, 0, "/start"))
+        .await
+        .unwrap();
+
+    #[derive(Deserialize)]
+    struct TopicAppearance {
+        name: String,
+        icon_custom_emoji_id: String,
+        message_thread_id: Option<i32>,
+    }
+
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    let created: Vec<_> = requests
+        .iter()
+        .filter(|r| {
+            r.url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/createforumtopic")
+        })
+        .collect();
+    assert_eq!(created.len(), 1, "reuse the existing management topic");
+    let created: TopicAppearance = serde_json::from_slice(&created[0].body).unwrap();
+    assert_eq!(created.name, "管理");
+    assert_eq!(created.icon_custom_emoji_id, "folder");
+    let repaired = requests
+        .iter()
+        .find(|r| {
+            r.url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/editforumtopic")
+        })
+        .unwrap();
+    let repaired: TopicAppearance = serde_json::from_slice(&repaired.body).unwrap();
+    assert_eq!(repaired.name, "管理");
+    assert_eq!(repaired.icon_custom_emoji_id, "folder");
+    assert_eq!(repaired.message_thread_id, Some(9));
+    assert_eq!(crate::i18n::text("en", "管理"), "Manage");
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn topic_removal_requires_confirmation_and_only_removes_the_telegram_association() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1900, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    let before = fixture.state.lock().await.requests.clone();
+    // Unbound topics must remain manageable until they are actually deleted.
+    fixture.service.store.unbind(1, 10, 11).await.unwrap();
+    Mock::given(method("POST"))
+        .and(path_regex("(?i).*/deleteforumtopic$"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":true}"#))
+        .expect(1)
+        .mount(&fixture.telegram)
+        .await;
+    fixture
+        .service
+        .handle(&input(1901, 9, "/topics"))
+        .await
+        .unwrap();
+    fixture.choose(1902, "1").await;
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("全部聊天记录")
+    );
+    assert!(
+        fixture
+            .telegram
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| !r
+                .url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/deleteforumtopic"))
+    );
+    fixture.choose(1903, "1").await;
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .service
+            .store
+            .topic(1, 10, "instance", "thread")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .service
+            .store
+            .begin_topic(1, 10, "instance", "thread")
+            .await
+            .unwrap(),
+        "a fresh topic may be created for the same native session"
+    );
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM deliveries WHERE topic_id=11 AND state='pending'")
+            .fetch_one(&fixture.service.store.pool)
+            .await
+            .unwrap();
+    assert_eq!(pending, 0);
+    assert_eq!(
+        fixture.state.lock().await.requests,
+        before,
+        "topic management must not touch the agent"
+    );
+    fixture.service.store.recover_inbox(1).await.unwrap();
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .iter()
+            .any(|o| o.text.contains("Codex 会话继续保留"))
+    );
+    #[derive(Deserialize)]
+    struct Target {
+        chat_id: i64,
+        message_thread_id: i32,
+    }
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    let request = requests
+        .iter()
+        .find(|r| {
+            r.url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/deleteforumtopic")
+        })
+        .unwrap();
+    let target: Target = serde_json::from_slice(&request.body).unwrap();
+    assert_eq!((target.chat_id, target.message_thread_id), (10, 11));
+}
+
+#[tokio::test]
+async fn manually_deleted_topics_sync_without_treating_closed_or_uncertain_topics_as_deleted() {
+    for (description, removed) in [
+        ("Bad Request: message thread not found", true),
+        ("Bad Request: TOPIC_CLOSED", false),
+        ("Bad Request: TOPIC_NOT_MODIFIED", false),
+        ("Bad Request: unrelated failure", false),
+    ] {
+        let fixture = Fixture::new().await;
+        fixture.pair().await;
+        fixture
+            .service
+            .handle(&input(1920, 0, "/open workspace thread"))
+            .await
+            .unwrap();
+        let before = fixture.state.lock().await.requests.clone();
+        Mock::given(method("POST"))
+            .and(path_regex("(?i).*/editforumtopic$"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(format!(
+                r#"{{"ok":false,"error_code":400,"description":"{description}"}}"#
+            )))
+            .with_priority(1)
+            .mount(&fixture.telegram)
+            .await;
+        fixture
+            .service
+            .handle(&input(1921, 9, "/topics"))
+            .await
+            .unwrap();
+        assert_eq!(
+            fixture
+                .service
+                .store
+                .binding(1, 10, 11)
+                .await
+                .unwrap()
+                .is_none(),
+            removed,
+            "{description}"
+        );
+        assert_eq!(
+            fixture
+                .service
+                .store
+                .topic(1, 10, "instance", "thread")
+                .await
+                .unwrap()
+                .is_none(),
+            removed,
+            "{description}"
+        );
+        assert_eq!(fixture.state.lock().await.requests, before);
+        let requests = fixture.telegram.received_requests().await.unwrap();
+        #[derive(Deserialize)]
+        struct Check {
+            name: Option<String>,
+            icon_custom_emoji_id: Option<String>,
+        }
+        let last = requests
+            .iter()
+            .rev()
+            .find(|r| {
+                r.url
+                    .path()
+                    .to_ascii_lowercase()
+                    .ends_with("/editforumtopic")
+            })
+            .unwrap();
+        let check: Check = serde_json::from_slice(&last.body).unwrap();
+        assert!(
+            check.name.is_none() && check.icon_custom_emoji_id.is_none(),
+            "existence checks must preserve user metadata"
+        );
+    }
+}
+
+#[tokio::test]
+async fn uncertain_topic_deletion_is_not_replayed_and_cannot_reactivate_the_old_binding() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1940, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    let before = fixture.state.lock().await.requests.clone();
+    Mock::given(method("POST"))
+        .and(path_regex("(?i).*/deleteforumtopic$"))
+        .respond_with(ResponseTemplate::new(502))
+        .expect(1)
+        .mount(&fixture.telegram)
+        .await;
+    fixture
+        .service
+        .handle(&input(1941, 9, "/topics"))
+        .await
+        .unwrap();
+    fixture.choose(1942, "1").await;
+    fixture.choose(1943, "1").await;
+    fixture.service.store.recover_inbox(1).await.unwrap();
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .service
+            .store
+            .bind(1, 10, 11, "instance", "thread")
+            .await
+            .is_err()
+    );
+    let state: String = sqlx::query_scalar("SELECT state FROM topic_removals")
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "outcome_unknown");
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .iter()
+            .any(|o| o.text.contains("删除结果未确认"))
+    );
+    assert_eq!(fixture.state.lock().await.requests, before);
+}
+
+#[tokio::test]
+async fn delayed_topic_removal_confirmation_needs_a_new_confirmation() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1960, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(1961, 9, "/topics"))
+        .await
+        .unwrap();
+    fixture.choose(1962, "1").await;
+    let id: String = sqlx::query_scalar("SELECT id FROM navigation")
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(&id, 777, now())
+        .await
+        .unwrap();
+    let mut stale = input(1963, 9, "1");
+    stale.requires_confirmation = true;
+    fixture.service.handle(&stale).await.unwrap();
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("全部聊天记录")
+    );
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .telegram
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| !r
+                .url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/deleteforumtopic"))
+    );
+}
+
+#[tokio::test]
+async fn topic_removal_cannot_target_another_private_chat_or_the_management_topic() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1980, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    let code = fixture
+        .service
+        .store
+        .pairing()
+        .request_pairing(1, 20, 20, true, now())
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .pairing()
+        .approve_pairing(&code, now())
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .begin_topic(1, 20, "instance", "other")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .end_topic(1, 20, "instance", "other", "accepted", Some(22))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .remove_topic(&input(1981, 9, "1"), &fixture.service.config.snapshot(), 22)
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .service
+            .remove_topic(&input(1982, 9, "1"), &fixture.service.config.snapshot(), 9)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        fixture.service.store.management_topic(1, 10).await.unwrap(),
+        Some(9)
+    );
+    assert_eq!(
+        fixture
+            .service
+            .store
+            .topic(1, 20, "instance", "other")
+            .await
+            .unwrap(),
+        Some(22)
+    );
+    assert!(
+        fixture
+            .telegram
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| !r
+                .url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/deleteforumtopic"))
+    );
+}
+
+#[tokio::test]
+async fn localized_command_menus_are_registered_only_for_private_chats() {
+    let fixture = Fixture::new().await;
+    Mock::given(method("POST"))
+        .and(path_regex("(?i).*/setmycommands$"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":true}"#))
+        .expect(3)
+        .mount(&fixture.telegram)
+        .await;
+    fixture
+        .service
+        .api
+        .register_commands("zh-CN")
+        .await
+        .unwrap();
+    #[derive(Deserialize)]
+    struct Scope {
+        #[serde(rename = "type")]
+        kind: String,
+    }
+    #[derive(Deserialize)]
+    struct Command {
+        command: String,
+        description: String,
+    }
+    #[derive(Deserialize)]
+    struct Menu {
+        language_code: String,
+        scope: Scope,
+        commands: Vec<Command>,
+    }
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    let menus = requests
+        .iter()
+        .filter(|r| {
+            r.url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/setmycommands")
+        })
+        .map(|r| serde_json::from_slice::<Menu>(&r.body).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(menus.len(), 3);
+    for menu in &menus {
+        assert_eq!(menu.scope.kind, "all_private_chats");
+        assert!(menu.commands.iter().any(|c| c.command == "cleartopics"));
+        assert!(menu.commands.iter().all(|c| !matches!(
+            c.command.as_str(),
+            "stop" | "cancel" | "kill"
+        ) && !c.description.starts_with("cmd_")));
+        let start = menu.commands.iter().find(|c| c.command == "start").unwrap();
+        assert_eq!(
+            start.description,
+            if menu.language_code == "en" {
+                "Open management"
+            } else {
+                "打开管理首页"
+            }
+        );
+    }
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn bulk_topic_cleanup_confirms_a_snapshot_and_preserves_new_topics_management_and_native_sessions()
+ {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(2000, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    let before = fixture.state.lock().await.requests.clone();
+    fixture
+        .service
+        .store
+        .begin_topic(1, 10, "instance", "second")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .end_topic(1, 10, "instance", "second", "accepted", Some(12))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .bind(1, 10, 12, "instance", "second")
+        .await
+        .unwrap();
+    Mock::given(method("POST"))
+        .and(path_regex("(?i).*/deleteforumtopic$"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":true}"#))
+        .expect(2)
+        .mount(&fixture.telegram)
+        .await;
+    fixture
+        .service
+        .handle(&input(2001, 9, "/cleartopics"))
+        .await
+        .unwrap();
+    let id: String = sqlx::query_scalar("SELECT id FROM navigation")
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(&id, 777, now())
+        .await
+        .unwrap();
+    let mut delayed = input(2002, 9, "1");
+    delayed.requires_confirmation = true;
+    fixture.service.handle(&delayed).await.unwrap();
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("2 个会话话题")
+    );
+    fixture
+        .service
+        .store
+        .begin_topic(1, 10, "instance", "third")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .end_topic(1, 10, "instance", "third", "accepted", Some(13))
+        .await
+        .unwrap();
+    fixture.choose(2003, "1").await;
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 12)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fixture
+            .service
+            .store
+            .topic(1, 10, "instance", "third")
+            .await
+            .unwrap(),
+        Some(13)
+    );
+    assert_eq!(
+        fixture.service.store.management_topic(1, 10).await.unwrap(),
+        Some(9)
+    );
+    assert_eq!(fixture.state.lock().await.requests, before);
+    let outputs = fixture.outputs().await;
+    assert!(
+        outputs
+            .iter()
+            .any(|o| o.text.contains("已清除 2 个会话话题"))
+    );
+}
+
+#[tokio::test]
+async fn bulk_topic_cleanup_stops_at_an_uncertain_result_without_replaying_or_touching_the_rest() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(2020, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .begin_topic(1, 10, "instance", "second")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .end_topic(1, 10, "instance", "second", "accepted", Some(12))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .bind(1, 10, 12, "instance", "second")
+        .await
+        .unwrap();
+    Mock::given(method("POST"))
+        .and(path_regex("(?i).*/deleteforumtopic$"))
+        .respond_with(ResponseTemplate::new(502))
+        .expect(1)
+        .mount(&fixture.telegram)
+        .await;
+    fixture
+        .service
+        .handle(&input(2021, 9, "/cleartopics"))
+        .await
+        .unwrap();
+    fixture.choose(2022, "1").await;
+    fixture.service.store.recover_inbox(1).await.unwrap();
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 12)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .iter()
+            .any(|o| o.text.contains("已清除 0 / 2") && o.text.contains("不会自动重试"))
+    );
+}
+
+#[tokio::test]
+async fn native_topic_icons_replace_automatic_status_bubbles_and_agent_markdown_is_rendered() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture.state.lock().await.items=vec![serde_json::from_str(r#"{"type":"agentMessage","id":"m","text":"**推荐** [链接](https://example.com)\n\n| 客户端 | 平台 |\n|---|---|\n| **Example** | Android |","phase":"final_answer"}"#).unwrap()];
+    fixture
+        .service
+        .handle(&input(1600, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    let (stop, receiver) = watch::channel(false);
+    let worker = tokio::spawn(fixture.service.clone().deliver(receiver));
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        let pending: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM deliveries WHERE state IN ('pending','dispatching')",
+        )
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap();
+        if pending == 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    #[derive(Deserialize)]
+    struct Sent {
+        message_thread_id: Option<i32>,
+        parse_mode: Option<String>,
+        text: String,
+    }
+    #[derive(Deserialize)]
+    struct TopicEdit {
+        icon_custom_emoji_id: Option<String>,
+    }
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    let session_messages = requests
+        .iter()
+        .filter(|r| r.url.path().to_ascii_lowercase().ends_with("/sendmessage"))
+        .map(|r| serde_json::from_slice::<Sent>(&r.body).unwrap())
+        .filter(|r| r.message_thread_id == Some(11))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        session_messages.len(),
+        1,
+        "the session contains only the agent reply, not a status bubble"
+    );
+    let sent = &session_messages[0];
+    assert_eq!(sent.parse_mode.as_deref(), Some("HTML"));
+    assert!(sent.text.contains("<b>推荐</b>"));
+    assert!(sent.text.contains("<b>平台</b>: Android"));
+    assert!(!sent.text.contains("**"));
+    assert!(
+        requests
+            .iter()
+            .filter(|r| r
+                .url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/editforumtopic"))
+            .any(|r| serde_json::from_slice::<TopicEdit>(&r.body)
+                .unwrap()
+                .icon_custom_emoji_id
+                .as_deref()
+                == Some("busy"))
+    );
+    let binding = fixture
+        .service
+        .store
+        .binding(1, 10, 11)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.topic_title.as_deref(), Some("Fixture title"));
+    assert!(binding.status_message_id.is_none());
+}
+
+#[tokio::test]
+async fn typing_is_renewed_without_new_text_and_stops_after_unbinding() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1700, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    let (stop, receiver) = watch::channel(false);
+    let worker = tokio::spawn(fixture.service.clone().typing(receiver));
+    let deadline = Instant::now() + Duration::from_secs(7);
+    loop {
+        let count = fixture
+            .telegram
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| {
+                r.url
+                    .path()
+                    .to_ascii_lowercase()
+                    .ends_with("/sendchataction")
+            })
+            .count();
+        if count >= 2 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "typing was not renewed");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    fixture.service.store.unbind(1, 10, 11).await.unwrap();
+    let before = fixture
+        .telegram
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            r.url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/sendchataction")
+        })
+        .count();
+    tokio::time::sleep(Duration::from_millis(4300)).await;
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    let after = fixture
+        .telegram
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| {
+            r.url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/sendchataction")
+        })
+        .count();
+    assert_eq!(before, after);
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .any(|r| matches!(*r, "thread/resume" | "turn/start" | "turn/steer"))
+    );
+}
+
+#[tokio::test]
+async fn an_untitled_thread_outside_the_selected_workspace_is_not_renamed_or_loaded() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture.state.lock().await.native_name = None;
+    let file = &fixture.service.config.path;
+    let text = std::fs::read_to_string(file)
+        .unwrap()
+        .replace("cwd=\"/workspace\"", "cwd=\"/workspace/other\"");
+    std::fs::write(file, text).unwrap();
+    fixture.service.config.reload().unwrap();
+    assert!(
+        fixture
+            .service
+            .handle(&input(1800, 0, "/open workspace thread"))
+            .await
+            .is_err()
+    );
+    let state = fixture.state.lock().await;
+    assert!(state.native_name.is_none());
+    assert!(!state.requests.iter().any(|method| matches!(
+        *method,
+        "thread/name/set" | "thread/start" | "thread/resume" | "turn/start" | "turn/steer"
+    )));
 }

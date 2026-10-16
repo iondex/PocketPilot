@@ -140,6 +140,25 @@ supports_websockets = false
         .await
         .unwrap()
         .thread;
+    let empty = writer.read(&thread).await.unwrap();
+    assert_eq!(empty.status, RuntimeStatus::Idle);
+    assert!(empty.active_turn.is_none());
+    writer
+        .execute(Mutation::SetTitleIfMissing {
+            thread: thread.clone(),
+            title: "Empty fixture title".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        writer.read(&thread).await.unwrap().native_title.as_deref(),
+        Some("Empty fixture title")
+    );
+    assert!(writer.history(&thread).await.unwrap().items.is_empty());
+    assert!(
+        model.received_requests().await.unwrap().is_empty(),
+        "creating/naming an empty session must not contact the model"
+    );
     let turn = writer
         .execute(Mutation::Start {
             thread: thread.clone(),

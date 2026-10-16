@@ -60,6 +60,11 @@ impl Store {
             return Err(StoreError::NotPaired);
         }
         let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;
+        let removing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM topic_removals WHERE bot_id=? AND chat_id=? AND topic_id=? AND state<>'rejected')")
+            .bind(bot).bind(chat).bind(topic).fetch_one(&mut *tx).await.map_err(|_|StoreError::Database)?;
+        if removing {
+            return Err(StoreError::ContainerConflict);
+        }
         sqlx::query("INSERT INTO containers(bot_id,chat_id,topic_id,instance_id,thread_id) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING")
             .bind(bot).bind(chat).bind(topic).bind(instance).bind(thread).execute(&mut *tx).await.map_err(|_| StoreError::Database)?;
         let row = sqlx::query(

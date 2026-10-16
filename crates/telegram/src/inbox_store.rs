@@ -112,6 +112,8 @@ impl Store {
     }
 
     pub async fn recover_inbox(&self, bot: i64) -> Result<(), Error> {
+        sqlx::query("UPDATE topic_removals SET state='outcome_unknown' WHERE bot_id=? AND state='dispatching'")
+            .bind(bot).execute(&self.pool).await.map_err(|_|Error::Database)?;
         sqlx::query("UPDATE management_topics SET state='outcome_unknown' WHERE bot_id=? AND state='dispatching'")
             .bind(bot).execute(&self.pool).await.map_err(|_|Error::Database)?;
         // Old queued status updates may still contain the previous name/status

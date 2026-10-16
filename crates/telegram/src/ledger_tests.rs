@@ -41,6 +41,7 @@ async fn setup() -> (tempfile::TempDir, Store) {
 fn input(id: u32) -> Input {
     Input {
         update_id: id,
+        locale: None,
         event_key: format!("message:10:{id}"),
         user: 10,
         chat: 10,

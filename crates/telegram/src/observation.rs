@@ -1,4 +1,4 @@
-use super::{Error, Service, item_hashes, item_key, status_text, topic_title};
+use super::{Error, Service, item_hashes, item_key, topic_title};
 use crate::ledger::Binding;
 use crate::ledger::Outbound;
 use engine::config::Workspace;
@@ -111,16 +111,15 @@ impl Service {
         let snapshot = self.config.snapshot();
         let workspace = self.binding_workspace(&snapshot.config, &binding)?;
         tracing::debug!(thread_id=%binding.thread_id,%error,"session status unavailable");
-        let status = "⚫ 暂时离线，正在重连。".to_owned();
-        if binding.status_text.as_deref() == Some(&status) {
-            return Ok(());
-        }
-        let mut body = Outbound::text(status);
-        body.edit_message = binding.status_message_id;
-        body.binding_revision = Some(binding.revision);
-        body.scope = Some(self.output_scope(&snapshot.config, workspace, &workspace.cwd)?);
-        self.store.enqueue_status(&binding, &body).await?;
-        Ok(())
+        self.presence.clear(&binding).await;
+        let appearance = crate::presentation::Appearance {
+            title: binding.topic_title.clone().unwrap_or_else(|| {
+                crate::presentation::title(binding.display_name.as_deref().unwrap_or("会话"))
+            }),
+            emoji: crate::presentation::emoji(&RuntimeStatus::Unknown).into(),
+        };
+        self.queue_appearance(&binding, workspace, &workspace.cwd, appearance, &snapshot)
+            .await
     }
 
     pub(super) async fn history_unavailable(
@@ -132,7 +131,10 @@ impl Service {
         snapshot: &Snapshot,
     ) -> Result<(), Error> {
         tracing::warn!(%error,"session history unavailable; keeping independently observed runtime");
-        let mut body = Outbound::text("⚠️ 历史暂不可用，请稍后 /history。");
+        let mut body = Outbound::text(
+            self.ui_text(binding.chat_id, "⚠️ 历史暂不可用，请稍后 /history。")
+                .await,
+        );
         body.scope = Some(self.output_scope(&snapshot.config, workspace, cwd)?);
         body.binding_revision = Some(binding.revision);
         self.store
@@ -157,30 +159,46 @@ impl Service {
         current: &session::Session,
         snapshot: &Snapshot,
     ) -> Result<(), Error> {
-        let status = status_text(
-            workspace,
-            binding.display_name.as_deref().unwrap_or(&current.title),
-            current.status.label(),
-            &binding.thread_id,
+        let ttl = Duration::from_secs(
+            snapshot
+                .config
+                .delivery
+                .history_barrier_timeout_seconds
+                .saturating_add(90),
         );
-        let title = topic_title(
-            workspace,
-            binding.display_name.as_deref().unwrap_or(&current.title),
-            &binding.thread_id,
-        );
-        let title_changed = binding.topic_title.as_deref() != Some(&title);
-        if binding.status_text.as_deref() != Some(&status) || title_changed {
-            let mut body = Outbound::text(status);
-            body.edit_message = binding.status_message_id;
-            body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
-            body.binding_revision = Some(binding.revision);
-            if title_changed {
-                body.topic_title = Some(title);
-            }
-            // Frequent runtime changes edit one card; Telegram emits a service
-            // message for every topic rename, so status never belongs in its name.
-            self.store.enqueue_status(binding, &body).await?;
+        self.presence.observe(binding, &current.status, ttl).await;
+        let appearance = crate::presentation::Appearance {
+            title: topic_title(
+                workspace,
+                binding.display_name.as_deref().unwrap_or(&current.title),
+                &binding.thread_id,
+            ),
+            emoji: crate::presentation::emoji(&current.status).into(),
+        };
+        self.queue_appearance(binding, workspace, &current.cwd, appearance, snapshot)
+            .await
+    }
+
+    async fn queue_appearance(
+        &self,
+        binding: &Binding,
+        workspace: &Workspace,
+        cwd: &str,
+        appearance: crate::presentation::Appearance,
+        snapshot: &Snapshot,
+    ) -> Result<(), Error> {
+        if binding.topic_title.as_deref() == Some(appearance.title.as_str())
+            && binding.status_text.as_deref() == Some(appearance.emoji.as_str())
+            && binding.status_message_id.is_none()
+        {
+            return Ok(());
         }
+        let mut body = Outbound::text("");
+        body.appearance = Some(appearance);
+        body.remove_status = binding.status_message_id;
+        body.scope = Some(self.output_scope(&snapshot.config, workspace, cwd)?);
+        body.binding_revision = Some(binding.revision);
+        self.store.enqueue_appearance(binding, &body).await?;
         Ok(())
     }
 
@@ -232,7 +250,7 @@ impl Service {
             } else {
                 session::delivery::latest_agent_answer(&history)
             };
-            let mut body = Outbound::text(text);
+            let mut body = Outbound::agent(text);
             body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
             body.binding_revision = Some(binding.revision);
             self.store
@@ -271,7 +289,7 @@ impl Service {
             self.store.observe(binding, &new).await?;
             return Ok(());
         }
-        let mut body = Outbound::text(text);
+        let mut body = Outbound::agent(text);
         body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
         body.binding_revision = Some(binding.revision);
         let time_ms = std::time::SystemTime::now()

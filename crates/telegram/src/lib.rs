@@ -1,4 +1,8 @@
 //! Telegram transport. Only the service command starts receiving or sending messages.
+rust_i18n::i18n!("locales", fallback = "zh-CN");
+
+pub mod i18n;
+
 pub mod api;
 
 pub mod config;
@@ -7,12 +11,18 @@ pub mod credentials;
 
 pub mod ledger;
 
+mod markdown;
+
+pub mod presentation;
+
 pub mod pairing;
 
 pub mod runtime;
 
 pub mod storage;
+
 pub use runtime::Telegram;
+
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use std::time::Duration;
@@ -20,6 +30,8 @@ use teloxide::{ApiError, Bot, RequestError, prelude::Requester, requests::Reques
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Telegram rejected message formatting")]
+    Formatting,
     #[error("Telegram API request failed (credentials and response are redacted)")]
     Request,
     #[error("Telegram API request timed out")]
@@ -40,8 +52,10 @@ pub enum Error {
     NotModified,
     #[error("history exceeds Telegram's single attachment limit")]
     TooLarge,
-    #[error("Telegram topic is closed or no longer available")]
+    #[error("Telegram topic no longer exists")]
     TopicUnavailable,
+    #[error("Telegram topic is closed")]
+    TopicClosed,
     #[error("Telegram message is missing or cannot be edited")]
     MessageUnavailable,
 }
@@ -51,17 +65,21 @@ pub(crate) fn safe_error(error: RequestError) -> Error {
         RequestError::Api(ApiError::Unknown(text)) if text == "Bad Request: TOPIC_NOT_MODIFIED" => {
             Error::NotModified
         }
+        RequestError::Api(ApiError::Unknown(text)) if text == "Bad Request: TOPIC_CLOSED" => {
+            Error::TopicClosed
+        }
         RequestError::Api(ApiError::Unknown(text))
             if matches!(
                 text.as_str(),
-                "Bad Request: TOPIC_CLOSED"
-                    | "Bad Request: message thread not found"
+                "Bad Request: message thread not found"
                     | "Bad Request: MESSAGE_THREAD_NOT_FOUND"
                     | "Bad Request: TOPIC_ID_INVALID"
             ) =>
         {
             Error::TopicUnavailable
         }
+        RequestError::Api(ApiError::CantParseEntities(_)) => Error::Formatting,
+        RequestError::Api(ApiError::MessageToDeleteNotFound) => Error::MessageUnavailable,
         RequestError::Api(ApiError::MessageNotModified) => Error::NotModified,
         RequestError::Api(ApiError::MessageToEditNotFound | ApiError::MessageCantBeEdited) => {
             Error::MessageUnavailable

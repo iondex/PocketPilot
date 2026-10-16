@@ -175,7 +175,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 依赖：W06/W07/W08。归属：telegram menus/topics，session bind/unbind，app ConfigWriter。
 
-- 选择 host/workspace/session、分页搜索、状态卡和短标题；ConfigWriter CAS 原子登记 workspace。
+- 选择 host/workspace/session、分页搜索、topic emoji 和原始短标题；ConfigWriter CAS 原子登记 workspace。
 - 创建 topic saga 持久化每步 ID；结果未知不重复 create。重复绑定返回原 topic，容器不跨 thread 复用。
 - callback nonce 绑定用户/地址/revision/expiry；关闭、删除、权限撤销只影响平台映射。
 - 产物：可只读使用的 Telegram topic 工作流。
@@ -225,7 +225,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 依赖：W03 的目标 profile 通过、W07/W09/W11/W12/W13。归属：session service/actor、codex write mapping、telegram command handling。
 
-- thread/start 与首条 turn 分别记账；已知 thread ID 不重复创建；首条结果未知只核对。
+- thread/start 创建空会话，标题元数据单独补齐；用户在 session topic 明确发送消息才发首条 turn，分别记账；已知 thread ID 不重复创建。
 - 先通过 fake 行为规则，再在显式限定的测试私聊/workspace/session profile 开启隔离写实验；确认写语义、三端可见和断线后执行存活后形成 G3。G3 前不允许普通真实任务借测试入口控制；W03 的 G0 不是写路径认证。
 - 空闲续轮只在明确用户动作内必要时 resume，再 turn/start；不得修改 model/cwd/审批/sandbox。
 - active 使用 turn/steer + expectedTurnId；冲突保留原文本供重新确认，不自动跨轮转投；审批仅显示。

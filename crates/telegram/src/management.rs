@@ -1,6 +1,7 @@
 //! Private management topic routing. This topic never owns an agent session.
 use super::*;
 use crate::ledger::Outbound;
+use crate::presentation::{Appearance, MANAGEMENT_ICON, MANAGEMENT_TITLE};
 use engine::reload::Snapshot;
 
 impl Store {
@@ -50,10 +51,18 @@ impl Service {
             .next()
             .is_some_and(|command| command.split('@').next() == Some("/start"));
         if start && let Some(topic) = existing {
-            // A same-title edit validates this address without renaming it.
+            // Validate this address and repair titles written by older versions.
             match self
                 .api
-                .rename_topic(input.chat, topic, "PocketPilot · 管理")
+                .set_appearance(
+                    input.chat,
+                    topic,
+                    &Appearance {
+                        title: crate::i18n::tr(input, MANAGEMENT_TITLE),
+                        emoji: MANAGEMENT_ICON.into(),
+                    },
+                    None,
+                )
                 .await
             {
                 Ok(()) => {}
@@ -82,7 +91,11 @@ impl Service {
                 }
                 match self
                     .api
-                    .create_topic(input.chat, "PocketPilot · 管理")
+                    .create_topic_with_icon(
+                        input.chat,
+                        &crate::i18n::tr(input, MANAGEMENT_TITLE),
+                        MANAGEMENT_ICON,
+                    )
                     .await
                 {
                     Ok(topic) => {
@@ -118,7 +131,7 @@ impl Service {
             return Err(Error::Expired);
         }
         if topic != input.topic {
-            let body = Outbound::text("已转到「PocketPilot · 管理」topic 处理，请在那里查看结果。");
+            let body = Outbound::text("已转到「管理」topic 处理，请在那里查看结果。");
             // A different command needs its own visible reply in the origin.
             // Re-delivery of the same input still shares one durable source key.
             self.respond(

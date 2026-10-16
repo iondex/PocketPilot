@@ -10,7 +10,7 @@
 | --- | --- |
 | ssh | 原生 SSH 配置、ProxyJump/ProxyCommand、连接参数、askpass、TOTP 与认证导出解析；不依赖 app/engine/codex |
 | session | 统一 AgentProvider、领域模型、允许的 Mutation、历史与消息规则 |
-| codex | 生成 DTO、RPC/framing、只读观察、四类写操作、Codex binary/socket 自动探测 |
+| codex | 生成 DTO、RPC/framing、只读观察、执行写操作和空标题元数据补齐、Codex binary/socket 自动探测 |
 | engine | 全局服务锁、操作账本、共享连接/会话锁、配置快照、catalog 与 Integration trait |
 | telegram | 全部 Telegram API、配对、管理导航、topic、SQL、收发与观察 |
 | discord | 全部 Discord API、owner gateway、category/channel、SQL、收发与观察；可选 runtime feature |
@@ -319,3 +319,10 @@ Lark adapter 使用 region/tenant/chat/thread/root-message 地址、根状态卡
 禁止默认记录 token、Authorization、完整 URL（Telegram token 在 URL path）、SSH 命令展开后的秘密、全文、配置内容、原始 RPC body、工具输出。错误显示结构化错误码和经清理摘要，不直接打印 reqwest/teloxide 的含 token URL。DEBUG 也必须脱敏。
 
 诊断包含重连次数/原因、状态年龄、队列深度、未决审批数、OutcomeUnknown 数、outbox 最老等待时长、429 和投递失败。MVP 通过日志和 CLI doctor/status 展示；以后再加 metrics endpoint。health “进程活着”与 “provider 可控制”分开报告。
+
+
+## 标题元数据的新增许可
+
+按后续明确需求，session::Mutation 增加 SetTitleIfMissing，Codex 从 build.rs 导出的 ThreadSetNameParams/Response 调用 thread/name/set。仅显式新建、打开或重命名时，在 cwd/绑定/权限与新鲜度检查后尝试；执行前再次读取原生 name，非空时保留原名。不发送用户输入、不 resume、不启动或中断 turn。官方 API 没有 compare-and-set 条件，已有标题检查与写入之间仍可能遇到原客户端并发改名；不声称跨客户端原子性。后台观察、进程启停和重连没有此操作许可。
+
+Telegram 的 presentation/markdown/presence/i18n 是独立平铺模块。Appearance 元数据通过持久投递队列、合并与限速，typing 是独立短期 lease；二者均不能调用 AgentProvider::execute。消息正文的 Markdown 与管理菜单 MarkdownV2 是不同的渲染入口。

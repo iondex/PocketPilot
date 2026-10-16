@@ -17,6 +17,12 @@ pub struct Scope {
 pub struct Outbound {
     pub text: String,
     #[serde(default)]
+    pub agent_markdown: bool,
+    #[serde(default)]
+    pub appearance: Option<crate::presentation::Appearance>,
+    #[serde(default)]
+    pub remove_status: Option<i32>,
+    #[serde(default)]
     pub buttons: Vec<Vec<Button>>,
     #[serde(default = "default_pairing_required")]
     pub require_pairing: bool,
@@ -42,9 +48,18 @@ fn default_pairing_required() -> bool {
 }
 
 impl Outbound {
+    pub fn agent(text: impl Into<String>) -> Self {
+        let mut body = Self::text(text);
+        body.agent_markdown = true;
+        body
+    }
+
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            agent_markdown: false,
+            appearance: None,
+            remove_status: None,
             buttons: vec![],
             require_pairing: true,
             edit_message: None,
@@ -276,6 +291,16 @@ impl Store {
         tx.commit().await.map_err(|_| Error::Database)
     }
 
+    pub async fn appearance_receipt(
+        &self,
+        binding: &Binding,
+        appearance: &crate::presentation::Appearance,
+    ) -> Result<(), Error> {
+        sqlx::query("UPDATE bindings SET topic_title=?,status_text=?,status_message_id=NULL WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1")
+            .bind(&appearance.title).bind(&appearance.emoji).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision).execute(&self.pool).await.map_err(|_|Error::Database)?;
+        Ok(())
+    }
+
     pub async fn status_card(
         &self,
         binding: &Binding,
@@ -405,6 +430,17 @@ impl Store {
     ) -> Result<Option<i32>, Error> {
         sqlx::query_scalar("SELECT topic_id FROM topic_requests WHERE bot_id=? AND chat_id=? AND instance_id=? AND thread_id=? AND state='accepted'")
             .bind(bot).bind(chat).bind(instance).bind(thread).fetch_optional(&self.pool).await.map_err(|_| Error::Database)
+    }
+
+    pub async fn enqueue_appearance(
+        &self,
+        binding: &Binding,
+        body: &Outbound,
+    ) -> Result<(), Error> {
+        let payload = serde_json::to_string(body).map_err(|_| Error::Database)?;
+        sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,topic_id,source_key) DO UPDATE SET payload=excluded.payload,state='pending' WHERE deliveries.state<>'dispatching' AND deliveries.payload<>excluded.payload")
+            .bind(uuid::Uuid::now_v7().to_string()).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(format!("appearance:{}:{}",binding.thread_id,binding.revision)).bind(payload).execute(&self.pool).await.map_err(|_|Error::Database)?;
+        Ok(())
     }
 
     pub async fn enqueue_status(&self, binding: &Binding, body: &Outbound) -> Result<(), Error> {

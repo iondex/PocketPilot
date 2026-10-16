@@ -1,4 +1,4 @@
-use super::{Error, Service, item_hashes, status_text, topic_title};
+use super::{Error, Service, item_hashes, topic_title};
 use crate::api::Input;
 use crate::ledger::Outbound;
 use engine::connections;
@@ -13,6 +13,17 @@ impl Service {
         id: &str,
         thread: &str,
     ) -> Result<(), Error> {
+        self.open_named(input, snapshot, id, thread, None).await
+    }
+
+    pub(super) async fn open_named(
+        &self,
+        input: &Input,
+        snapshot: &Snapshot,
+        id: &str,
+        thread: &str,
+        name: Option<&str>,
+    ) -> Result<(), Error> {
         if !self.topics_enabled {
             return Err(Error::TopicsDisabled);
         }
@@ -20,12 +31,46 @@ impl Service {
         let provider = self.connections.get(&snapshot.config, workspace).await?;
         let current = provider.read(thread).await?;
         connections::require_workspace(&current.cwd, workspace)?;
-        self.authorize(input, &snapshot.hash).await?;
-        let topic = match self
+        let existing_topic = self
             .store
             .topic(self.bot, input.chat, &workspace.provider_id, thread)
-            .await?
+            .await?;
+        let saved_name = if current.native_title.is_none() {
+            match existing_topic {
+                Some(topic) => self
+                    .store
+                    .binding(self.bot, input.chat, topic)
+                    .await?
+                    .and_then(|b| b.display_name),
+                None => None,
+            }
+        } else {
+            None
+        };
+        let name = name
+            .filter(|s| !s.trim().is_empty())
+            .or(saved_name.as_deref())
+            .unwrap_or(&current.title);
+        if current.native_title.is_none()
+            && name != "未命名会话"
+            && provider.capabilities().control_verified
+            && !self.delayed(input)
         {
+            self.mutate(
+                input,
+                snapshot,
+                workspace,
+                "set-title",
+                thread,
+                session::provider::Mutation::SetTitleIfMissing {
+                    thread: thread.into(),
+                    title: name.into(),
+                },
+            )
+            .await?;
+        }
+        self.authorize(input, &snapshot.hash).await?;
+        let topic = match existing_topic {
             Some(topic) => topic,
             None => {
                 if !self
@@ -35,7 +80,7 @@ impl Service {
                 {
                     return Err(Error::Unknown);
                 }
-                let title = topic_title(workspace, &current.title, thread);
+                let title = topic_title(workspace, name, thread);
                 match self.api.create_topic(input.chat, &title).await {
                     Ok(topic) => {
                         self.store
@@ -84,6 +129,7 @@ impl Service {
         self.store
             .set_workspace(self.bot, input.chat, topic, &workspace.id)
             .await?;
+        self.store.rename(self.bot, input.chat, topic, name).await?;
         let binding = self
             .store
             .binding(self.bot, input.chat, topic)
@@ -119,7 +165,7 @@ impl Service {
         } else {
             session::delivery::latest_agent_answer(&history)
         };
-        let mut body = Outbound::text(text);
+        let mut body = Outbound::agent(text);
         body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
         body.binding_revision = Some(binding.revision);
         self.store
@@ -130,15 +176,8 @@ impl Service {
                 &body,
             )
             .await?;
-        let mut card = Outbound::text(status_text(
-            workspace,
-            binding.display_name.as_deref().unwrap_or(&after.title),
-            after.status.label(),
-            thread,
-        ));
-        card.scope = Some(self.output_scope(&snapshot.config, workspace, &after.cwd)?);
-        card.binding_revision = Some(binding.revision);
-        self.store.enqueue_status(&binding, &card).await?;
+        self.refresh_status(&binding, workspace, &after, snapshot)
+            .await?;
         self.opened(input, snapshot, workspace, topic).await
     }
 }

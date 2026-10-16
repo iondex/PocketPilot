@@ -12,6 +12,8 @@ publish = false
 async-trait = "0.1"
 base64 = "0.22"
 prost = "0.14"
+pulldown-cmark = { version = "0.13", default-features = false }
+rust-i18n = "4"
 arc-swap = "1"
 notify = "8"
 regex = "1"

@@ -1,25 +1,31 @@
 use crate::{Error, Identity, safe_error};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use teloxide::{
     Bot,
     payloads::{
-        EditForumTopicSetters, EditMessageTextSetters, GetUpdatesSetters, SendDocumentSetters,
-        SendMessageSetters,
+        CreateForumTopicSetters, EditForumTopicSetters, EditMessageTextSetters, GetUpdatesSetters,
+        SendChatActionSetters, SendDocumentSetters, SendMessageSetters,
     },
     prelude::Requester,
     requests::Request,
     types::{
-        AllowedUpdate, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId,
-        ParseMode, ThreadId, Update, UpdateKind,
+        AllowedUpdate, ChatAction, ChatId, CustomEmojiId, InlineKeyboardButton,
+        InlineKeyboardMarkup, InputFile, MessageId, ParseMode, ThreadId, Update, UpdateKind,
     },
 };
+use tokio::sync::OnceCell;
+
+#[path = "command_menu.rs"]
+mod command_menu;
 
 /// Small persisted inputs; unsupported/media/group updates never become user actions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Input {
     pub update_id: u32,
+    #[serde(default)]
+    pub locale: Option<String>,
     pub event_key: String,
     pub user: u64,
     pub chat: i64,
@@ -74,6 +80,7 @@ pub fn input(update: &Update) -> Option<Input> {
     }
     Some(Input {
         update_id: update.id.0,
+        locale: user.language_code.clone(),
         event_key: if callback.is_some() {
             format!("callback:{}", callback_id.as_deref()?)
         } else {
@@ -103,6 +110,7 @@ pub struct Button {
 pub struct Api {
     bot: Bot,
     timeout: Duration,
+    icons: Arc<OnceCell<Vec<(String, CustomEmojiId)>>>,
 }
 
 impl Api {
@@ -124,6 +132,7 @@ impl Api {
         Ok(Self {
             bot: Bot::with_client(token.expose_secret(), client).set_api_url(url),
             timeout: Duration::from_secs(2),
+            icons: Arc::default(),
         })
     }
 
@@ -141,6 +150,7 @@ impl Api {
         Ok(Self {
             bot: Bot::with_client(token.expose_secret(), client),
             timeout: Duration::from_secs(50),
+            icons: Arc::default(),
         })
     }
 
@@ -187,6 +197,105 @@ impl Api {
         buttons: Vec<Vec<Button>>,
         markdown: bool,
     ) -> Result<i32, Error> {
+        self.send_mode(
+            chat,
+            topic,
+            text,
+            buttons,
+            if markdown {
+                Some(ParseMode::MarkdownV2)
+            } else {
+                None
+            },
+        )
+        .await
+    }
+
+    pub async fn send_outbound(
+        &self,
+        chat: i64,
+        topic: i32,
+        body: &crate::ledger::Outbound,
+    ) -> Result<i32, Error> {
+        if body.agent_markdown {
+            self.send_agent(chat, topic, &body.text, body.buttons.clone())
+                .await
+        } else {
+            self.send_formatted(chat, topic, &body.text, body.buttons.clone(), body.markdown)
+                .await
+        }
+    }
+
+    pub async fn send_agent(
+        &self,
+        chat: i64,
+        topic: i32,
+        text: &str,
+        buttons: Vec<Vec<Button>>,
+    ) -> Result<i32, Error> {
+        if text.len() > 45 * 1024 * 1024 {
+            return Err(Error::TooLarge);
+        }
+        if text.encode_utf16().count() > 3800 {
+            return self.send_document(chat, topic, text, buttons).await;
+        }
+        let rendered = crate::markdown::render(text);
+        if rendered.plain.encode_utf16().count() > 3800 || text.encode_utf16().count() > 3800 {
+            return self.send_document(chat, topic, text, buttons).await;
+        }
+        match self
+            .send_mode(
+                chat,
+                topic,
+                &rendered.html,
+                buttons.clone(),
+                Some(ParseMode::Html),
+            )
+            .await
+        {
+            Err(Error::Formatting) => {
+                self.send_mode(chat, topic, &rendered.plain, buttons, None)
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    async fn send_document(
+        &self,
+        chat: i64,
+        topic: i32,
+        text: &str,
+        buttons: Vec<Vec<Button>>,
+    ) -> Result<i32, Error> {
+        if text.len() > 45 * 1024 * 1024 {
+            return Err(Error::TooLarge);
+        }
+        let markup = InlineKeyboardMarkup::new(buttons.into_iter().map(|r| {
+            r.into_iter()
+                .map(|b| InlineKeyboardButton::callback(b.label, b.data))
+        }));
+        let mut request = self
+            .bot
+            .send_document(
+                ChatId(chat),
+                InputFile::memory(text.as_bytes().to_vec()).file_name("session.md"),
+            )
+            .reply_markup(markup);
+        if topic > 0 {
+            request = request.message_thread_id(ThreadId(MessageId(topic)));
+        }
+        Ok(self.call(request).await?.id.0)
+    }
+
+    async fn send_mode(
+        &self,
+        chat: i64,
+        topic: i32,
+        text: &str,
+        buttons: Vec<Vec<Button>>,
+        mode: Option<ParseMode>,
+    ) -> Result<i32, Error> {
         if text.len() > 45 * 1024 * 1024 {
             return Err(Error::TooLarge);
         }
@@ -194,7 +303,7 @@ impl Api {
             row.into_iter()
                 .map(|b| InlineKeyboardButton::callback(b.label, b.data))
         }));
-        if text.encode_utf16().count() > 3800 {
+        if !matches!(mode, Some(ParseMode::Html)) && text.encode_utf16().count() > 3800 {
             let mut request = self
                 .bot
                 .send_document(
@@ -211,8 +320,8 @@ impl Api {
             .bot
             .send_message(ChatId(chat), text)
             .reply_markup(markup);
-        if markdown {
-            request = request.parse_mode(ParseMode::MarkdownV2);
+        if let Some(mode) = mode {
+            request = request.parse_mode(mode);
         }
         if topic > 0 {
             request = request.message_thread_id(ThreadId(MessageId(topic)));
@@ -263,12 +372,20 @@ impl Api {
     }
 
     pub async fn create_topic(&self, chat: i64, title: &str) -> Result<i32, Error> {
-        Ok(self
-            .call(self.bot.create_forum_topic(ChatId(chat), title))
-            .await?
-            .thread_id
-            .0
-            .0)
+        self.create_topic_with_icon(chat, title, "💬").await
+    }
+
+    pub async fn create_topic_with_icon(
+        &self,
+        chat: i64,
+        title: &str,
+        symbol: &str,
+    ) -> Result<i32, Error> {
+        let mut request = self.bot.create_forum_topic(ChatId(chat), title);
+        if let Some(icon) = self.icon(symbol).await {
+            request = request.icon_custom_emoji_id(icon);
+        }
+        Ok(self.call(request).await?.thread_id.0.0)
     }
 
     pub async fn rename_topic(&self, chat: i64, topic: i32, title: &str) -> Result<(), Error> {
@@ -282,6 +399,103 @@ impl Api {
         {
             Ok(_) | Err(Error::NotModified) => Ok(()),
             Err(error) => Err(error),
+        }
+    }
+
+    /// With both optional fields omitted, Telegram preserves the name and icon.
+    pub async fn check_topic(&self, chat: i64, topic: i32) -> Result<(), Error> {
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            self.call(
+                self.bot
+                    .edit_forum_topic(ChatId(chat), ThreadId(MessageId(topic))),
+            ),
+        )
+        .await
+        .map_err(|_| Error::Timeout)?
+        {
+            Ok(_) | Err(Error::NotModified) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn delete_topic(&self, chat: i64, topic: i32) -> Result<(), Error> {
+        self.call(
+            self.bot
+                .delete_forum_topic(ChatId(chat), ThreadId(MessageId(topic))),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn icon(&self, symbol: &str) -> Option<CustomEmojiId> {
+        let icons = self
+            .icons
+            .get_or_init(|| async {
+                match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    self.bot.get_forum_topic_icon_stickers().send(),
+                )
+                .await
+                {
+                    Ok(Ok(stickers)) => stickers
+                        .into_iter()
+                        .filter_map(|s| Some((s.emoji?, s.kind.custom_emoji_id()?.clone())))
+                        .collect(),
+                    _ => {
+                        tracing::warn!("topic icon catalog unavailable; keeping existing icons");
+                        vec![]
+                    }
+                }
+            })
+            .await;
+        let normalized = |s: &str| s.chars().filter(|c| *c != '\u{fe0f}').collect::<String>();
+        icons
+            .iter()
+            .find(|(emoji, _)| normalized(emoji) == normalized(symbol))
+            .map(|(_, id)| id.clone())
+    }
+
+    pub async fn set_appearance(
+        &self,
+        chat: i64,
+        topic: i32,
+        appearance: &crate::presentation::Appearance,
+        current_title: Option<&str>,
+    ) -> Result<(), Error> {
+        let mut request = self
+            .bot
+            .edit_forum_topic(ChatId(chat), ThreadId(MessageId(topic)));
+        if current_title != Some(appearance.title.as_str()) {
+            request = request.name(appearance.title.clone());
+        }
+        if let Some(icon) = self.icon(&appearance.emoji).await {
+            request = request.icon_custom_emoji_id(icon);
+        }
+        match self.call(request).await {
+            Ok(_) | Err(Error::NotModified) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn typing(&self, chat: i64, topic: i32) -> Result<(), Error> {
+        self.call(
+            self.bot
+                .send_chat_action(ChatId(chat), ChatAction::Typing)
+                .message_thread_id(ThreadId(MessageId(topic))),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn remove_status(&self, chat: i64, message: i32) -> Result<(), Error> {
+        match self
+            .call(self.bot.delete_message(ChatId(chat), MessageId(message)))
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(Error::MessageUnavailable | Error::Rejected) => Ok(()),
+            Err(e) => Err(e),
         }
     }
 

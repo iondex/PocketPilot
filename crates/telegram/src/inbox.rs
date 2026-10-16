@@ -84,6 +84,14 @@ impl Service {
                             if let Err(error) = result {
                                 tracing::warn!(%error,"input failed without replay");
                                 let mut response_input = input.clone();
+                                response_input.locale = service
+                                    .store
+                                    .locale(service.bot, input.user)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .or_else(|| input.locale.clone())
+                                    .or_else(|| Some(service.default_locale.clone()));
                                 if input.topic != 0
                                     && service
                                         .store

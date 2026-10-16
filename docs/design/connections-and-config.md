@@ -12,13 +12,13 @@ SSH 的共享条件是相同远程用户、有效控制 socket 和 daemon。Desk
 
 PocketPilot 不启动、升级、重启或停止原生 daemon。缺少共享入口时明确失败，不启动一个共用历史文件的替代服务。当前本地 Desktop 以 stdio 运行且没有公开监听入口，因此既有本地活跃任务尚不能接入；独立本地原生 fixture 的通过不改变这个部署限制。
 
-构建协议使用 Codex 0.162.1，已验证远端 0.161.0 的当前协议。按服务端类型化 historyMode 路由 legacy/full-read 与 paginated/turns-list；这是当前官方协议中的两种历史模式，不承诺任意旧版 CLI 兼容。initialize 开启 experimentalApi 以保留 historyMode 元数据，客户端仍只暴露固定的只读方法和四类写方法。
+构建协议使用 Codex 0.162.1，已验证远端 0.161.0 的当前协议。按服务端类型化 historyMode 路由 legacy/full-read 与 paginated/turns-list；这是当前官方协议中的两种历史模式，不承诺任意旧版 CLI 兼容。initialize 开启 experimentalApi 以保留 historyMode 元数据，客户端仍只暴露固定的只读/执行方法，以及受新鲜用户动作保护的空标题补齐方法。
 
 ## 根目录单一配置
 
 普通设置和秘密都在根目录 pocketpilot.toml；不 include、不读取 .env。示例见 [pocketpilot.example.toml](../../pocketpilot.example.toml)。真实配置被 Git 忽略，使用 0600；数据库及 WAL/SHM 也为 0600。相对文件路径以配置文件目录为基准，远端 cwd 保持目标机器的绝对路径。
 
-Telegram 配置只有 token。bot ID 来自 getMe，私聊用户须经本机 CLI approve，无配置 chat/user 允许列表。SQLite 配对申请表只保存一次性码 hash；投递队列为发送而短暂保存明文，进入终态后清除。更换 bot 按 bot ID 隔离账号数据，不继承旧配对。
+Telegram 凭据只有 token，另有 default_locale=zh-CN/en/auto 控制默认语言。bot ID 来自 getMe，私聊用户须经本机 CLI approve，无配置 chat/user 允许列表。SQLite 配对申请表只保存一次性码 hash；投递队列为发送而短暂保存明文，进入终态后清除。更换 bot 按 bot ID 隔离账号数据，不继承旧配对。
 
 Discord 是可选编译功能，配置 token 和 guild_id。原型只允许该服务器 owner 使用；category 默认对 @everyone 隐藏，对 owner 和 bot 开放。服务器管理员依旧受 Discord 自身权限规则约束，不能把 category 当成隔绝管理员的安全边界。
 
@@ -43,7 +43,7 @@ notify 监听根配置的父目录，处理原子替换；debounce 和周期 res
 | 显示名、Telegram 合并与速率 | 新操作采用当前配置；持久批次已有固定 flush 截止时间 |
 | 密码/seed/认证策略 | 现有连接保持；后续认证读取相同已验证配置 hash |
 | 自动检测到其他 socket / 有效远程用户变化 | 原 provider ID 拒绝重定向，须分配新 ID 并重新绑定 |
-| Telegram/Discord token、Discord guild、data_dir | 整份候选拒绝，需重启桥接后应用 |
+| Telegram token/default_locale、Discord token/guild、data_dir | 整份候选拒绝，需重启桥接后应用 |
 | logging | 启动时装配，需重启桥接应用 |
 | OpenSSH config | 发现时读取，重连时重新解析；不监控全部 Include 文件并主动断开有效连接 |
 

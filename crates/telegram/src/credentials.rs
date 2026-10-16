@@ -27,16 +27,24 @@ mod tests {
     fn accepts_only_a_direct_configured_token() {
         assert!(
             read(&Telegram {
+                default_locale: "zh-CN".into(),
                 token: "123:abcdefghijklmnopqrstuvwxyz".into()
             })
             .is_ok()
         );
         assert!(
             read(&Telegram {
+                default_locale: "zh-CN".into(),
                 token: "$TELEGRAM_BOT_TOKEN".into()
             })
             .is_err()
         );
-        assert!(read(&Telegram { token: "".into() }).is_err());
+        assert!(
+            read(&Telegram {
+                default_locale: "zh-CN".into(),
+                token: "".into()
+            })
+            .is_err()
+        );
     }
 }

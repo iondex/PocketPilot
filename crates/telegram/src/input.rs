@@ -44,10 +44,14 @@ impl Service {
             )
             .await?;
         tracing::info!(workspace_id=%workspace.id,thread_id=%binding.thread_id,"session input requires renewed confirmation");
-        let mut body = Outbound::text(format!(
-            "⚠️ 这条消息尚未发送\n\n{}\n\n核对会话后确认发送。",
-            session::delivery::short_title(text, 80)
-        ));
+        let mut body = Outbound::text(
+            rust_i18n::t!(
+                "draft",
+                locale = crate::i18n::lang(input),
+                text = session::delivery::short_title(text, 80)
+            )
+            .to_string(),
+        );
         body.buttons = vec![vec![button]];
         self.respond(input, &format!("draft:{}", input.event_key), body)
             .await
@@ -145,21 +149,8 @@ impl Service {
             )
             .await?;
         let thread = &receipt.thread;
-        // Each step has its own receipt. A crash never replays create/resume/start.
-        self.mutate(
-            input,
-            snapshot,
-            workspace,
-            "first-turn",
-            thread,
-            Mutation::Start {
-                thread: thread.clone(),
-                text: text.into(),
-                client_id: format!("pp:{}:{}", self.bot, input.event_key),
-            },
-        )
-        .await?;
-        self.open(input, snapshot, id, thread).await
+        self.open_named(input, snapshot, id, thread, Some(text))
+            .await
     }
 
     pub(super) async fn submit(
@@ -261,6 +252,27 @@ impl Service {
             }
             Err(error) => return Err(error),
         };
+        let accepted_status = if matches!(current.status, RuntimeStatus::Active { .. }) {
+            current.status.clone()
+        } else {
+            RuntimeStatus::Active {
+                waiting_on_approval: false,
+                waiting_on_user_input: false,
+            }
+        };
+        self.presence
+            .observe(
+                &binding,
+                &accepted_status,
+                std::time::Duration::from_secs(
+                    snapshot
+                        .config
+                        .delivery
+                        .history_barrier_timeout_seconds
+                        .saturating_add(90),
+                ),
+            )
+            .await;
         tracing::info!(thread_id=%binding.thread_id,turn_id=?receipt.turn,action=label,"session input accepted");
         Ok(())
     }

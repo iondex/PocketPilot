@@ -44,6 +44,8 @@ impl RuntimeStatus {
 pub struct Session {
     pub reference: SessionRef,
     pub title: String,
+    #[serde(default)]
+    pub native_title: Option<String>,
     pub cwd: String,
     pub status: RuntimeStatus,
     /// Metadata may omit this ID for an active session. Use provider.active_turn before steer.

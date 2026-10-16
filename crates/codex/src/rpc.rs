@@ -70,6 +70,11 @@ write_request!(ThreadStartParams, ThreadStartResponse, "thread/start");
 write_request!(ThreadResumeParams, ThreadResumeResponse, "thread/resume");
 write_request!(TurnStartParams, TurnStartResponse, "turn/start");
 write_request!(TurnSteerParams, TurnSteerResponse, "turn/steer");
+write_request!(
+    ThreadSetNameParams,
+    ThreadSetNameResponse,
+    "thread/name/set"
+);
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum Error {

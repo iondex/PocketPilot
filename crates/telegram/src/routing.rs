@@ -59,7 +59,7 @@ impl Service {
             .callback(self.bot, input, &snapshot.hash, &body, now())
             .await?;
         Ok(Button {
-            label: label.into(),
+            label: crate::i18n::tr(input, label),
             data,
         })
     }
@@ -70,6 +70,9 @@ impl Service {
         key: &str,
         mut body: Outbound,
     ) -> Result<(), Error> {
+        if !body.agent_markdown && !body.markdown {
+            body.text = crate::i18n::tr(input, &body.text);
+        }
         body.config_hash = input
             .config_hash
             .clone()

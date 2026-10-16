@@ -462,6 +462,7 @@ mod tests {
                         thread: cwd.clone(),
                     },
                     title: cwd.clone(),
+                    native_title: Some(cwd.clone()),
                     cwd,
                     status: session::RuntimeStatus::Idle,
                     active_turn: None,

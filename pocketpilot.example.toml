@@ -16,6 +16,8 @@ console = true
 [telegram]
 # 只接受私聊；用户必须通过 CLI 完成一次性配对。
 token = "REPLACE_WITH_BOT_TOKEN"
+# zh-CN / en / auto；用户可通过 /language 独立覆盖。
+default_locale = "zh-CN"
 
 # 可选 Discord 原型，编译时启用 --features discord。
 # 只允许此服务器的 owner 使用。

@@ -239,3 +239,19 @@ CREATE TABLE IF NOT EXISTS navigation (
     consumed INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(bot_id,chat_id,topic_id)
 );
+
+CREATE TABLE IF NOT EXISTS preferences (
+    bot_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    locale TEXT NOT NULL CHECK (locale IN ('zh-CN','en')),
+    PRIMARY KEY (bot_id,user_id)
+);
+
+CREATE TABLE IF NOT EXISTS topic_removals (
+    bot_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    topic_id INTEGER NOT NULL,
+    request_key TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('dispatching','accepted','rejected','outcome_unknown')),
+    PRIMARY KEY (bot_id,chat_id,topic_id)
+);

@@ -1,6 +1,6 @@
 # Codex 协议类型生成
 
-全部生成逻辑在 crates/codex/build.rs。构建时调用所选 Codex 的 `app-server generate-json-schema`，筛选只读接口与四类允许写接口的传递引用，再通过 typify 生成 Rust DTO。provider 使用类型化字段，不直接操作 serde_json::Value。
+全部生成逻辑在 crates/codex/build.rs。构建时调用所选 Codex 的 `app-server generate-json-schema`，筛选只读接口与执行写接口和仅补齐空标题的元数据接口的传递引用，再通过 typify 生成 Rust DTO。provider 使用类型化字段，不直接操作 serde_json::Value。
 
 官方 schema、协议投影、版本记录和 protocol.rs 都写入 Cargo OUT_DIR，通常位于 target/debug/build/codex-*/out/。仓库不提交生成的 schema、代码或版本快照，不保留 Python 生成脚本。
 
@@ -29,3 +29,5 @@ schema 兼容仅证明类型可编译；共享实例、实时观察和断线语�
 CodexErrorInfo 的官方 schema 是包含字符串、结构化错误和开放分支的 anyOf。typify 0.5 遇到重叠分支时默认生成 flatten struct，会拒绝合法的字符串错误（例如 other），使包含失败轮次的历史无法读取。build.rs 仅在传给生成器时将该类型建模为按顺序匹配的 untagged union，保留所有官方分支；保存在 OUT_DIR 的投影保持原始 anyOf。错误码仍由 schema 生成，不改成业务 raw JSON。回归测试覆盖已知字符串/对象、未知开放字符串/对象与非法数字。
 
 RPC 解码失败只记录白名单 schema 路径与固定错误类别，不记录响应正文或 serde 错误文本。
+
+标题补齐新增 ThreadSetNameParams/ThreadSetNameResponse 生成根，仍不提交生成产物。空对象响应仅按生成类型反序列化，业务不访问它的扩展内容。

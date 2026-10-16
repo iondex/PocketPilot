@@ -80,6 +80,19 @@ enum Action {
         workspace: String,
         text: String,
     },
+    Topics {
+        after: i32,
+    },
+    ConfirmTopicRemoval {
+        topic: i32,
+    },
+    RemoveTopic {
+        topic: i32,
+    },
+    ConfirmClearTopics,
+    ClearTopics {
+        topics: Vec<i32>,
+    },
     SubmitDraft {
         text: String,
         steer_only: bool,
@@ -110,12 +123,17 @@ mod observation;
 #[path = "routing.rs"]
 mod routing;
 
+#[path = "presence.rs"]
+mod presence;
+
 pub struct Service {
+    presence: presence::Presence,
+    pub(crate) default_locale: String,
     pub(crate) config: Arc<ConfigFile>,
     pub(crate) store: Store,
     pub(crate) connections: Arc<Connections>,
     api: Api,
-    bot: i64,
+    pub(crate) bot: i64,
     topics_enabled: bool,
     pair_attempts: Mutex<HashMap<(u64, bool), Instant>>,
     history_slots: Semaphore,
@@ -172,6 +190,8 @@ async fn run_adapter(
     store.recover_deliveries().await?;
     store.recover_inbox(bot).await?;
     let service = Arc::new(Service {
+        presence: presence::Presence::default(),
+        default_locale: settings.default_locale.clone(),
         config: context.config,
         store,
         connections: context.connections,
@@ -183,9 +203,19 @@ async fn run_adapter(
         started_at: now().saturating_add(1),
     });
     let mut tasks = JoinSet::new();
+    tokio::select! {
+        _ = stop.changed() => return Ok(()),
+        result = service.api.register_commands(&settings.default_locale) => {
+            match result {
+                Ok(()) => tracing::info!("Telegram private command menus registered"),
+                Err(error) => tracing::warn!(%error,"Telegram command registration unavailable; typed commands remain active"),
+            }
+        }
+    }
     tasks.spawn(service.clone().poll(stop.clone()));
     tasks.spawn(service.clone().work(stop.clone()));
     tasks.spawn(service.clone().deliver(stop.clone()));
+    tasks.spawn(service.clone().typing(stop.clone()));
     tasks.spawn(service.observe(stop.clone()));
     tracing::info!(
         bot_id = bot,
@@ -215,23 +245,8 @@ impl Error {
     }
 }
 
-fn topic_title(workspace: &Workspace, title: &str, thread: &str) -> String {
-    format!(
-        "{} · {}",
-        session::delivery::short_title(&format!("{} · {}", workspace.short_name, title), 32),
-        thread
-            .chars()
-            .rev()
-            .take(6)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>()
-    )
-}
-
-fn status_text(_workspace: &Workspace, title: &str, status: &str, _thread: &str) -> String {
-    format!("{}\n{status}", session::delivery::short_title(title, 40))
+fn topic_title(_workspace: &Workspace, title: &str, _thread: &str) -> String {
+    crate::presentation::title(title)
 }
 
 fn item_key(item: &session::TextItem) -> String {

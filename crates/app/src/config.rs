@@ -47,6 +47,13 @@ pub fn parse(path: &Path, text: &str) -> Result<LoadedConfig, ConfigError> {
     {
         return Err(ConfigError::Credentials);
     }
+    if config
+        .telegram
+        .as_ref()
+        .is_some_and(|t| !matches!(t.default_locale.as_str(), "zh-CN" | "zh" | "en" | "auto"))
+    {
+        return Err(ConfigError::Invalid);
+    }
     Ok(LoadedConfig {
         config,
         sources: vec![path.to_owned()],
@@ -61,7 +68,9 @@ pub fn runtime_parser(
     let root = loaded.config;
     let restart_key = engine::digest(&format!(
         "{:?}\0{:?}",
-        root.telegram.as_ref().map(|t| t.token.as_str()),
+        root.telegram
+            .as_ref()
+            .map(|t| (&t.token, &t.default_locale)),
         root.discord.as_ref().map(|d| (&d.token, d.guild_id))
     ));
     Ok(engine::reload::ParsedConfig {
@@ -107,7 +116,8 @@ mod tests {
             !format!(
                 "{:?}",
                 Telegram {
-                    token: "private-value".into()
+                    token: "private-value".into(),
+                    default_locale: "zh-CN".into()
                 }
             )
             .contains("private-value")

@@ -20,3 +20,5 @@ cargo clippy -p app --no-default-features --locked -- -D warnings
 - 不在全局元数据锁中等待网络；每实例建连锁和每会话操作锁可以跨 await，以保证实例及会话串行。队列、并发、响应大小与重连均须有界。
 - 测试验证行为与边界，不复刻实现。真实测试只对自己创建的连接/测试会话断连；不能停止用户 daemon/session。真实秘密仅放 Git 忽略的根 pocketpilot.toml。
 - 稳定 0.1 前直接维护根 schema.sql，不维护 migrations 或运行迁移器。初始化幂等且不清空现有记录；修改已有列时，开发者需明确处理自己的原型状态，不能自动删除用户数据。
+
+Telegram 文案使用 rust-i18n 的显式 locale 参数，不调用全局 set_locale；语言资源放在 locales/，编译进 binary。Agent 正文交给 pulldown-cmark 渲染，不能直接当 MarkdownV2 或可信 HTML 发送。空标题补齐仅限显式用户动作且须先验证实际 cwd，后台不得改原生标题。

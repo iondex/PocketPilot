@@ -32,6 +32,8 @@ const ROOTS: &[&str] = &[
     "TurnStartResponse",
     "TurnSteerParams",
     "TurnSteerResponse",
+    "ThreadSetNameParams",
+    "ThreadSetNameResponse",
 ];
 
 #[derive(Deserialize)]

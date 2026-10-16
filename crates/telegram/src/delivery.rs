@@ -76,6 +76,33 @@ impl Service {
                     continue;
                 }
                 let result = async {
+                    if let Some(message) = body.remove_status {
+                        self.api.remove_status(row.chat_id, message).await?;
+                    }
+                    if let Some(appearance) = &body.appearance {
+                        let binding = self
+                            .store
+                            .binding(self.bot, row.chat_id, row.topic_id)
+                            .await
+                            .ok()
+                            .flatten()
+                            .ok_or(crate::Error::Rejected)?;
+                        self.api
+                            .set_appearance(
+                                row.chat_id,
+                                row.topic_id,
+                                appearance,
+                                binding.topic_title.as_deref(),
+                            )
+                            .await?;
+                        self.store
+                            .appearance_receipt(&binding, appearance)
+                            .await
+                            .map_err(|_| crate::Error::Request)?;
+                    }
+                    if body.text.is_empty() {
+                        return Ok(None);
+                    }
                     if let Some(title) = &body.topic_title {
                         self.api
                             .rename_topic(row.chat_id, row.topic_id, title)
@@ -90,7 +117,7 @@ impl Service {
                             let _ = self.store.topic_title_receipt(&binding, title).await;
                         }
                     }
-                    if let Some(message) = body.edit_message {
+                    let sent = if let Some(message) = body.edit_message {
                         match self
                             .api
                             .edit_formatted(
@@ -108,28 +135,17 @@ impl Service {
                                     || row.source_key.starts_with("status:") =>
                             {
                                 self.api
-                                    .send_formatted(
-                                        row.chat_id,
-                                        row.topic_id,
-                                        &body.text,
-                                        body.buttons.clone(),
-                                        body.markdown,
-                                    )
+                                    .send_outbound(row.chat_id, row.topic_id, &body)
                                     .await
                             }
                             Err(error) => Err(error),
                         }
                     } else {
                         self.api
-                            .send_formatted(
-                                row.chat_id,
-                                row.topic_id,
-                                &body.text,
-                                body.buttons.clone(),
-                                body.markdown,
-                            )
+                            .send_outbound(row.chat_id, row.topic_id, &body)
                             .await
-                    }
+                    };
+                    sent.map(Some)
                 }
                 .await;
                 global = Instant::now() + Duration::from_millis(40);
@@ -142,21 +158,32 @@ impl Service {
                 );
                 match result {
                     Ok(message) => {
-                        tracing::info!(
-                            bot_id = self.bot,
-                            topic_id = row.topic_id,
-                            message_id = message,
-                            edited = body.edit_message.is_some(),
-                            "Telegram message delivered"
-                        );
-                        if let Some(id) = &body.navigation_id {
+                        if let Some(message) = message {
+                            tracing::info!(
+                                bot_id = self.bot,
+                                topic_id = row.topic_id,
+                                message_id = message,
+                                edited = body.edit_message.is_some(),
+                                "Telegram message delivered"
+                            );
+                        } else {
+                            tracing::info!(
+                                bot_id = self.bot,
+                                topic_id = row.topic_id,
+                                "Telegram topic appearance updated"
+                            );
+                        }
+                        if let Some(id) = &body.navigation_id
+                            && let Some(message) = message
+                        {
                             let _ = self.store.navigation_receipt(id, message, now()).await;
                         }
                         let _ = self
                             .store
-                            .delivery_state(&row.id, "dispatching", "delivered", Some(message), 0)
+                            .delivery_state(&row.id, "dispatching", "delivered", message, 0)
                             .await;
-                        if row.source_key.starts_with("status:")
+                        if let Some(message) = message
+                            && row.source_key.starts_with("status:")
                             && let Ok(Some(binding)) = self
                                 .store
                                 .binding(self.bot, row.chat_id, row.topic_id)
@@ -184,6 +211,7 @@ impl Service {
                             } else {
                                 "会话 topic 已关闭或删除；Codex 会话继续运行。请从 /sessions 重新添加，会创建一个新 topic。"
                             });
+                            notice.text = self.ui_text(row.chat_id, &notice.text).await;
                             notice.scope = body.scope.clone();
                             let _ = self
                                 .store
@@ -203,6 +231,7 @@ impl Service {
                             let mut fallback = Outbound::text(
                                 "历史超过 Telegram 单个附件的大小限制，未发送不完整的历史。请在本机使用 sessions history --output 导出完整集合。",
                             );
+                            fallback.text = self.ui_text(row.chat_id, &fallback.text).await;
                             fallback.scope = body.scope.clone();
                             fallback.binding_revision = body.binding_revision;
                             let _ = self
@@ -227,6 +256,7 @@ impl Service {
                             crate::Error::Rejected
                             | crate::Error::Authentication
                             | crate::Error::NoRecipient
+                            | crate::Error::TopicClosed
                             | crate::Error::TopicUnavailable
                             | crate::Error::TooLarge => ("rejected", 0),
                             _ => ("outcome_unknown", 0),

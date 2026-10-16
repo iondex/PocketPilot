@@ -4,6 +4,9 @@ use crate::ledger::{Outbound, Scope};
 use engine::reload::Snapshot;
 use sqlx::Row;
 
+#[path = "topics.rs"]
+mod topics;
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Choice {
     label: String,
@@ -94,15 +97,22 @@ fn md(text: &str) -> String {
 }
 
 impl Menu {
-    fn render(&self) -> String {
-        let mut text = format!("*{}*\n", md(&self.heading));
+    fn render(&self, locale: &str) -> String {
+        let mut text = format!("*{}*\n", md(&crate::i18n::text(locale, &self.heading)));
         if !self.note.is_empty() {
-            text.push_str(&format!("\n{}\n", md(&self.note)));
+            text.push_str(&format!(
+                "\n{}\n",
+                md(&crate::i18n::text(locale, &self.note))
+            ));
         }
         for (index, choice) in self.choices.iter().enumerate() {
-            text.push_str(&format!("\n*{}*  {}", index + 1, md(&choice.label)));
+            text.push_str(&format!(
+                "\n*{}*  {}",
+                index + 1,
+                md(&crate::i18n::text(locale, &choice.label))
+            ));
         }
-        text.push_str("\n\n回复序号选择 · `0` 返回\n`/start` 首页 · `/refresh` 刷新");
+        text.push_str(&crate::i18n::text(locale, "menu_footer"));
         text
     }
 }
@@ -115,24 +125,11 @@ impl Service {
         menu: Menu,
     ) -> Result<(), Error> {
         self.authorize(input, &snapshot.hash).await?;
-        let prior = self.store.navigation(self.bot, input).await?;
         let id = uuid::Uuid::new_v4().to_string();
-        let mut body = Outbound::text(menu.render());
+        let mut body = Outbound::text(menu.render(crate::i18n::lang(input)));
         body.markdown = true;
         body.navigation_id = Some(id.clone());
         body.scope = menu.scope.clone();
-        // A locally cleared bot message may still be editable but invisible.
-        // Explicit /start restores the screen; numbered steps edit that post.
-        let start = input
-            .text
-            .split_whitespace()
-            .next()
-            .is_some_and(|command| command.split('@').next() == Some("/start"));
-        body.edit_message = if start {
-            None
-        } else {
-            prior.and_then(|p| p.message)
-        };
         self.store
             .save_navigation(self.bot, input, &id, &menu)
             .await?;
@@ -151,7 +148,7 @@ impl Service {
     }
 
     pub(super) async fn workspaces(&self, input: &Input, snapshot: &Snapshot) -> Result<(), Error> {
-        let choices = snapshot
+        let mut choices: Vec<_> = snapshot
             .config
             .hosts
             .iter()
@@ -170,11 +167,15 @@ impl Service {
                 },
             })
             .collect();
+        choices.push(Choice {
+            label: "🗂 话题管理".into(),
+            action: Action::Topics { after: 0 },
+        });
         self.show_navigation(
             input,
             snapshot,
             Menu {
-                heading: "主机".into(),
+                heading: "🌐 主机".into(),
                 note: "选择要管理的主机。这里仅接受序号和管理命令。".into(),
                 choices,
                 back: Action::Home,
@@ -217,7 +218,7 @@ impl Service {
             input,
             snapshot,
             Menu {
-                heading: format!("{} › 工作区", host.name),
+                heading: format!("📁 {} › {}", host.name, crate::i18n::tr(input, "工作区")),
                 note: "添加项目：/add /绝对路径 可选名称\n移除入口：/remove 名称".into(),
                 choices,
                 back: Action::Home,
@@ -248,7 +249,7 @@ impl Service {
             .map(|s| Choice {
                 label: format!(
                     "{} · {}",
-                    s.status.label(),
+                    crate::presentation::emoji(&s.status),
                     session::delivery::short_title(&s.title, 40)
                 ),
                 action: Action::Open {
@@ -258,14 +259,14 @@ impl Service {
             })
             .collect::<Vec<_>>();
         choices.push(Choice {
-            label: "＋ 新建会话".into(),
+            label: "✨ 新建会话".into(),
             action: Action::NewPrompt {
                 workspace: workspace.id.clone(),
             },
         });
         if let Some(cursor) = page.next_cursor {
             choices.push(Choice {
-                label: "下一页 →".into(),
+                label: "➡️ 下一页".into(),
                 action: Action::Workspace {
                     id: workspace.id.clone(),
                     cursor: Some(cursor),
@@ -283,7 +284,7 @@ impl Service {
             input,
             snapshot,
             Menu {
-                heading: format!("{} › 会话", workspace.name),
+                heading: format!("💬 {} › {}", workspace.name, crate::i18n::tr(input, "会话")),
                 note: String::new(),
                 choices,
                 back: Action::Host { id: host },
@@ -309,10 +310,19 @@ impl Service {
             input,
             snapshot,
             Menu {
-                heading: format!("{} › 新建会话", workspace.name),
-                note: format!("首条任务\n{text}\n\n回复 1 创建并发送，回复 0 返回。"),
+                heading: format!(
+                    "✨ {} › {}",
+                    workspace.name,
+                    crate::i18n::tr(input, "新建会话")
+                ),
+                note: rust_i18n::t!(
+                    "create_note",
+                    locale = crate::i18n::lang(input),
+                    title = text
+                )
+                .to_string(),
                 choices: vec![Choice {
-                    label: "确认创建并发送".into(),
+                    label: "✨ 确认创建".into(),
                     action: Action::Create {
                         workspace: workspace.id.clone(),
                         text: text.into(),
@@ -341,8 +351,8 @@ impl Service {
             input,
             snapshot,
             Menu {
-                heading: "会话已添加".into(),
-                note: "到对应会话 topic 发送任务。".into(),
+                heading: "✨ 会话已添加".into(),
+                note: "到对应会话 topic 发送第一条消息。".into(),
                 choices: vec![Choice {
                     label: "返回会话列表".into(),
                     action: Action::Workspace {
@@ -371,6 +381,11 @@ impl Service {
             Action::Home => self.workspaces(input, snapshot).await,
             Action::Host { id } => self.host_workspaces(input, snapshot, &id).await,
             Action::Workspace { id, cursor } => self.sessions(input, snapshot, &id, cursor).await,
+            Action::Topics { after } => self.topics(input, snapshot, after).await,
+            Action::ConfirmTopicRemoval { topic } => {
+                self.confirm_topic_removal(input, snapshot, topic).await
+            }
+            Action::ConfirmClearTopics => self.confirm_clear_topics(input, snapshot).await,
             Action::NewPrompt { workspace } => {
                 let Ok(ws) = self.workspace(&snapshot.config, &workspace) else {
                     return self.workspaces(input, snapshot).await;
@@ -379,11 +394,13 @@ impl Service {
                     input,
                     snapshot,
                     Menu {
-                        heading: format!("{} › 新建会话", ws.name),
-                        note: format!(
-                            "使用管理命令填写首条任务：\n/new {} 任务内容",
-                            ws.short_name
-                        ),
+                        heading: format!("✨ {} › {}", ws.name, crate::i18n::tr(input, "新建会话")),
+                        note: rust_i18n::t!(
+                            "create_hint",
+                            locale = crate::i18n::lang(input),
+                            workspace = &ws.short_name
+                        )
+                        .to_string(),
                         choices: Vec::new(),
                         back: Action::Workspace {
                             id: ws.id.clone(),
@@ -482,6 +499,16 @@ impl Service {
                 .confirm_creation(input, snapshot, workspace, text)
                 .await;
         }
+        if let Action::RemoveTopic { topic } = action
+            && (self.delayed(input) || saved.published.is_some_and(|at| input.date < at))
+        {
+            return self.confirm_topic_removal(input, snapshot, topic).await;
+        }
+        if matches!(action, Action::ClearTopics { .. })
+            && (self.delayed(input) || saved.published.is_some_and(|at| input.date < at))
+        {
+            return self.confirm_clear_topics(input, snapshot).await;
+        }
         if !self.store.claim_navigation(&saved.id).await? {
             return Ok(());
         }
@@ -492,6 +519,8 @@ impl Service {
             Action::Create { workspace, text } => {
                 self.create(input, snapshot, &workspace, &text).await
             }
+            Action::RemoveTopic { topic } => self.remove_topic(input, snapshot, topic).await,
+            Action::ClearTopics { topics } => self.clear_topics(input, snapshot, topics).await,
             action => self.show_action(input, snapshot, action).await,
         }
     }

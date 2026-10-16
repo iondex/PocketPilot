@@ -11,6 +11,10 @@ pub enum Mutation {
     Resume {
         thread: String,
     },
+    SetTitleIfMissing {
+        thread: String,
+        title: String,
+    },
     Start {
         thread: String,
         text: String,

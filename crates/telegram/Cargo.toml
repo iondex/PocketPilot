@@ -6,6 +6,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+pulldown-cmark.workspace = true
+rust-i18n.workspace = true
 engine = { path = "../engine" }
 async-trait.workspace = true
 sha2.workspace = true
@@ -20,10 +22,10 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 reqwest.workspace = true
-url = { workspace = true, optional = true }
+url.workspace = true
 
 [features]
-test-support = ["dep:url"]
+test-support = []
 
 [dev-dependencies]
 codex = { path = "../codex" }

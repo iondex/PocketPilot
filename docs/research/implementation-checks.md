@@ -117,3 +117,38 @@ SHA-256：`6d33716c7547bc16eb8c3211629024243b5960cd07f5f0acdbf4389bc5c5c9ff`。
 新增回归先复现 Off-topic 序号不推进菜单和清空本地历史后只编辑旧消息的问题；修复后验证统一导航、普通文本不进入 agent、全新首页、明确删除恢复、未知检查不重复创建。Telegram 50 项测试及全 feature Clippy 通过。官方文档确认 topic 根服务消息被删除可导致整个 topic 删除，View as messages 切换仅适用于超级群；不宣称 Bot API 能强制用户界面跳转。
 
 修复版已重新构建并重启 launchd 托管进程。向原管理 topic 新发菜单后，真实回执中的 requested_topic 与 returned_topic 相同，发送为新消息而非编辑；说明该服务端 topic 此时仍存在，不能再把本地缓存作为唯一证据。当前 binary 10,193,136 字节，SHA-256：`7a4660b1ae2ca58c405188f80e75daa42352dd66d3fa438e35612ec34efb3d81`。客户端话题列表显示需由用户确认。
+
+
+## Emoji 展示、空会话、Markdown 与中英文 UI
+
+按新反馈，菜单每次输入均新发 MarkdownV2 消息，状态只用 emoji；管理入口标题为纯文字「管理」，原生 📁 图标独立设置，避免 emoji 重复。session topic 仅保留最多 40 个 grapheme 的原始标题，不拼工作区/路径/ID。原生图标通过 Telegram 允许的 custom emoji catalog 映射，只有状态或标题变化才投递，待投递状态覆盖合并并复用既有速率限制。自动状态气泡已移除；旧状态卡只按本地拥有权指针清理。/status 返回详细主机、工作区、cwd、thread/provider/turn 与运行状态。
+
+创建参数改为标题：只发 thread/start，不再把标题作为首条 turn/start。新会话等待用户在其 topic 发第一条消息。原生 name 为空时，在新鲜且验证 cwd/权限的显式创建/打开/重命名动作中调用官方 thread/name/set；已有标题保留，后台/重连不改标题。生成根已扩展为官方 ThreadSetNameParams/Response，无提交 schema。真实隔离 Codex fixture 已验证空创建、命名与历史读取均不联系模型，再继续原有多客户端/断线生命周期场景。
+
+typing 使用独立、可失效的 lease，接受输入后立即唤醒，每约 3–4 秒续期，历史读取慢或没有新文本也继续；等待审批/输入、空闲、离线、解绑或撤销范围时停止。真实私聊 topic 的 sendChatAction 已返回成功，mock 回归验证多次续期及解绑后不继续发送。
+
+Agent Markdown 由 pulldown-cmark 解析 GFM，转 Telegram 安全 HTML；表格转逐项字段。HTML/链接转义及协议过滤，明确格式拒绝才降级纯文本，超长仍是一份原始 Markdown。完整 HTTP fixture 验证 bold/link/table 与 parse_mode=HTML，并确认 session 没有自动状态气泡。
+
+rust-i18n 4 提供编译期中英文 YAML，显式 locale 参数避免全局语言竞争；preferences 按 bot/user 持久化。缺省中文，default_locale=auto 才采用 Telegram 语言，/language en 和 /language zh-CN 可独立切换。测试覆盖跨用户隔离、持久偏好优先于客户端语言变化和任务正文不参与 UI 翻译。
+
+已对用户截图唯一标识的 ideas 会话做一次仅空标题的维护：确认原生无 name 后补写并回读一致，没有启动 turn；未修改其他 ideas 会话。新版启动后，真实 topic 缓存已显示原始标题、💬 状态，并退役旧状态卡。其余 agent 执行策略、共享 daemon 与已有任务生命周期均保留。
+
+本轮全 feature 96 项测试、fmt、Clippy -D warnings 通过；无默认 feature 的 app 构建与隔离原生 fixture 均通过。旧消息可用 /history 按当前渲染重新查看。原生标题空值检查与 set API 无跨客户端 CAS，接口限制见架构文档。
+
+
+## 重复管理图标与话题管理
+
+截图中的重复来自原生图标和标题中的 emoji 叠加。管理标题改为纯文字「管理」/Manage，创建时显式选择原生 📁；/start 验证时同步修正旧标题及图标。真实已有管理 topic 已通过 editForumTopic 更新成功，未创建新话题或发送 agent 输入。
+
+官方方法/类型目录核对没有 topics 列表、单项读取或删除服务事件。真实私聊上不带 name/icon 的 editForumTopic 返回成功，作为保留元数据的已知 ID 检查；不把超时/限流或 TOPIC_CLOSED 误判为删除。新增首页话题管理和 /topics，包含已解绑的记录；分页检查明确不存在时退役本地指针。选中后确认删除全部 Telegram 聊天记录，原生 Codex 会话保留。删除账本持久化且绑定权限先失效，未知结果及重启不重放，旧确认重新询问；跨私聊和管理话题拒绝删除。自动化仅删除 fixture 话题，没有删除用户的真实话题。
+
+最终检查覆盖 101 项测试（Telegram 63），全 feature/all-targets Clippy -D warnings、无默认 feature app Clippy、fmt 与 release 构建通过。macOS arm64 binary 为 10,630,928 字节，SHA-256 `f788bdfd5ce845ba3ea1b5727ecae2e2d304de9391f561776ae98fd1d530607d`。新 schema 已在保留原配对/绑定的状态库中初始化；桥接已通过 launchd 重启并确认 Telegram ready，日志继续轮转，未重启 Codex daemon。临时标题维护 CLI 已清理。
+
+
+## 统一静止图标、注册命令与全部清理
+
+按实测反馈，未加载与空闲的会话图标统一为 💬，固定管理 topic 仍用 📁，运行/等待/异常保持各自图标；/status 保留真实加载状态。启动以 AllPrivateChats 注册缺省/zh/en 三份命令说明，失败不阻断手动输入。增加 /cleartopics 及编号菜单入口，显示已记录会话 topic 数量、删除聊天记录范围和保留管理/原生会话的确认。
+
+批量确认固定具体 topic ID，确认后新增的 topic 不会被删除；逐项授权、账本、绑定失效与单项删除共用，删除间隔至少 1.1 秒。遇失败/限流/未知结果停止，不重试、不在重启后继续。fixture 覆盖跨确认新增话题、保留管理和原生会话、旧确认重询及批量未知回执停下；中英文命令的实际 SDK payload、私聊 scope 与无 stop 命令亦有覆盖。没有对真实用户话题执行清除。
+
+本次最终 104 项测试（Telegram 66）、fmt、全 feature/all-targets Clippy 与无默认 feature app Clippy 全部通过。发布构建 10,672,880 字节，SHA-256 `386a28a9dc527c7ef07d4b8bb5c9e6496c3a55c37181ce92cbda7899d624aa6a`；新版桥接已重新启动。真实 getMyCommands 回读确认 zh/en 各 12 项私聊命令；四个已绑定会话的图标更新回执成功，缓存均为 💬。真实用户话题清除仍由用户在 Telegram 内确认。

@@ -72,6 +72,7 @@ pub fn runtime(status: &p::ThreadStatus) -> RuntimeStatus {
 }
 
 fn summary(instance: &str, thread: p::Thread) -> Session {
+    let native_title = thread.name.clone().filter(|name| !name.trim().is_empty());
     let active_turn = thread
         .turns
         .iter()
@@ -82,14 +83,18 @@ fn summary(instance: &str, thread: p::Thread) -> Session {
             instance: instance.into(),
             thread: thread.id,
         },
-        title: thread.name.filter(|s| !s.is_empty()).unwrap_or_else(|| {
-            if thread.preview.is_empty() {
-                "未命名会话".into()
-            } else {
-                thread.preview
-            }
-        }),
+        title: thread
+            .name
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| {
+                if thread.preview.is_empty() {
+                    "未命名会话".into()
+                } else {
+                    thread.preview
+                }
+            }),
         cwd: thread.cwd.to_string(),
+        native_title,
         status: runtime(&thread.status),
         active_turn,
         updated_at: Some(thread.updated_at),
@@ -449,6 +454,32 @@ impl AgentProvider for Codex {
             return Err(ProviderError::Unsupported);
         }
         match mutation {
+            Mutation::SetTitleIfMissing { thread, title } => {
+                if title.trim().is_empty() {
+                    return Err(ProviderError::Conflict);
+                }
+                let current = self
+                    .client
+                    .call(&p::ThreadReadParams {
+                        thread_id: thread.clone(),
+                        include_turns: Some(false),
+                    })
+                    .await?;
+                if current
+                    .thread
+                    .name
+                    .as_deref()
+                    .is_none_or(|name| name.trim().is_empty())
+                {
+                    self.client
+                        .write(&p::ThreadSetNameParams {
+                            thread_id: thread.clone(),
+                            name: title,
+                        })
+                        .await?;
+                }
+                Ok(Receipt { thread, turn: None })
+            }
             Mutation::Create { cwd } => {
                 let params: p::ThreadStartParams = p::ThreadStartParams::builder()
                     .cwd(Some(cwd))
@@ -655,6 +686,68 @@ mod tests {
                 .await
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn missing_title_is_written_without_starting_a_turn_and_existing_titles_are_preserved() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_util::codec::{Framed, LinesCodec};
+        for existing in [None, Some("Native title")] {
+            let (local, remote) = tokio::io::duplex(16384);
+            let (read, write) = tokio::io::split(local);
+            let provider = Codex::new(
+                "instance".into(),
+                Client::spawn(
+                    Box::new(crate::transport::JsonLines::new(read, write, None)),
+                    std::time::Duration::from_secs(2),
+                ),
+            )
+            .with_control(true);
+            let server = tokio::spawn(async move {
+                let mut stream = Framed::new(remote, LinesCodec::new());
+                let frame: Frame =
+                    serde_json::from_str(&stream.next().await.unwrap().unwrap()).unwrap();
+                assert_eq!(frame.method, "thread/read");
+                let mut thread: p::Thread = serde_json::from_str(THREAD).unwrap();
+                thread.name = existing.map(str::to_owned);
+                let result = p::ThreadReadResponse { thread };
+                stream
+                    .send(format!(
+                        "{{\"id\":{},\"result\":{}}}",
+                        frame.id.unwrap(),
+                        serde_json::to_string(&result).unwrap()
+                    ))
+                    .await
+                    .unwrap();
+                if existing.is_none() {
+                    let frame: Frame =
+                        serde_json::from_str(&stream.next().await.unwrap().unwrap()).unwrap();
+                    assert_eq!(frame.method, "thread/name/set");
+                    let params: p::ThreadSetNameParams =
+                        serde_json::from_str(frame.params.unwrap().get()).unwrap();
+                    assert_eq!(params.name, "Bridge title");
+                    assert_eq!(params.thread_id, "thread");
+                    stream
+                        .send(format!("{{\"id\":{},\"result\":{{}}}}", frame.id.unwrap()))
+                        .await
+                        .unwrap();
+                }
+                assert!(
+                    stream.next().await.is_none(),
+                    "metadata must not start, resume or stop a turn"
+                );
+            });
+            let receipt = provider
+                .execute(Mutation::SetTitleIfMissing {
+                    thread: "thread".into(),
+                    title: "Bridge title".into(),
+                })
+                .await
+                .unwrap();
+            assert!(receipt.turn.is_none());
+            drop(provider);
+            server.await.unwrap();
+        }
     }
 
     #[test]
