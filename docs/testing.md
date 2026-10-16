@@ -70,7 +70,22 @@ cargo build --workspace --locked
 
 ## 当前本机桥接
 
-桥接已按用户请求停止，修复完成后不会自动重启。需要继续测试时在仓库目录显式运行 ./target/debug/pocketpilot serve；不要依赖旧的 var/data/bridge.pid 判断进程是否存活。停止桥接时仅向该进程发送 SIGTERM；不对 Codex daemon 或其进程组发送信号。日志位于 var/logs，配对 CLI 可同时运行。电脑休眠/退出登录等本机环境变化可能使桥接离线，原生任务生命周期仍由其 daemon 管理。
+BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备测试的指示，修复版桥接已重新启动；配对保留，真实管理 topic 与新 session topic 已建立，菜单、历史和输入回执已有成功投递记录。进程号记录在忽略的 var/data/bridge.pid，实际存活仍应检查进程身份。只停止桥接时向该进程发 SIGTERM，不对 Codex daemon 或其进程组发信号。
+
+## 本轮最小回归流程
+
+先测试已有工作正常的 SSH anjie-bsc-arb，本地 Desktop 的接入条件单独见 [本地会话说明](design/local-desktop.md)。
+
+1. 私聊发送 /start，进入「PocketPilot · 管理」。再次 /start 应复用同一管理 topic，不创建 Codex session。此前已经产生的 /start topic 不会自动删除。
+2. 在管理 topic 发“测试消息归属”，确认回复明确提示未发送给 agent。未绑定入口的普通消息也应进入管理提示，不能发给最近使用过的会话。
+3. /workspaces：按钮两列并排。选择 workberth，确认原菜单变成会话列表；点击返回/翻页只编辑原菜单。条目少时不补空按钮，开发探针不显示。
+4. 添加之前报错的旧会话，仅查看历史和 /status。应无 provider protocol is incompatible，历史是一个集合/附件，状态卡独立。「待继续」只是执行实例未加载它，不等于历史不可读。此步骤不向旧会话发送任务。
+5. 在管理 topic 使用 /new workberth 不使用工具，不读写文件，只回复 PP_TEST_OK，点击“创建并发送”。应出现独立 session topic，并能在 Desktop 的同一 SSH 主机下看到该会话。后续写入测试只用这个专用新会话。
+6. 在 session topic 直接发消息，确认只进入该 session。需要验证 steer 时，让这个测试会话输出足够长的无工具文本，在它仍运行时追加一句；应追加到原 turn，不能被中断或重建。空闲时输入则开始下一轮。
+7. /status 查看状态，等待任务完成。topic 名应稳定，状态只更新一张状态卡；历史读取错误若发生也不应在正常/连接未知标题之间循环。
+8. 可选 /unbind：仅解除测试 topic 映射，原生会话继续存在。验证退出/重启时仅操作 PocketPilot；不结束 Desktop 或远端 daemon。
+
+遇到异常时记录所在 topic、操作命令和大致时间即可；不要重复发送结果未知的任务。
 
 ## /start 不再自动产生 Telegram topic 的设置
 

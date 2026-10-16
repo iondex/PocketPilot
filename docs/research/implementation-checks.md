@@ -61,3 +61,9 @@ GitHub Actions 在任何构建步骤开始前被平台拒绝；官方 annotation
 Telegram 官方文档证实：允许用户建 topic 时，客户端会在发送 topic-less 消息之前自动创建 topic。要消除此 /start topic，需在 BotFather 开启 Disallow users to create new threads；getMe 的 allows_users_to_create_topics 用于只读诊断，不由 PocketPilot 擅自改变 BotFather 设置或删除已有聊天。
 
 新增模拟测试覆盖重复历史失败不反复改名、管理/session 隔离、默认输入不发 agent、原消息编辑保留按钮、探针过滤、旧队列标题/按钮恢复，以及管理 topic 创建丢回执不重试。上述新交互仍待用户显式重启后实测。
+
+## 设置确认与第二轮用户测试
+
+用户已开启禁止用户新建 topic，telegram-check 返回 user_topic_creation_enabled=false。按“准备测试流程”的指示已启动修复版桥接，实际管理 topic、新会话 topic、历史、菜单及输入回执已有成功投递记录；初始两次旧投递出现拒绝，不据此宣称所有旧队列都成功。新管理/topic 交互仍按测试流程核对。
+
+本地 Desktop 再次只读确认仍为 stdio，未发现具名 Unix/TCP listener；本机 SSH 端口不可连接。没有重启 Desktop、启动本地 daemon、打开 Remote Login 或改动本机 SSH 配置。共享本机方案的事实与待验证项见 [本地会话说明](../design/local-desktop.md)。

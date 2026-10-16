@@ -13,6 +13,7 @@
 | 理解接口 | [架构](design/architecture.md) | 领域模型、provider/platform 接口、操作许可、数据与恢复 |
 | 做 Telegram 交互 | [Telegram](design/telegram.md) | 菜单、topic、绑定、新建、状态与用户可见异常 |
 | 做 Discord 交互 | [Discord 原型](design/discord.md) | category/channel、owner slash、可选运行与原型限制 |
+| 接入本地 Desktop | [本地会话说明](design/local-desktop.md) | 当前限制、已确认入口与后续共享部署验证 |
 | 做配置和连接 | [连接与配置](design/connections-and-config.md) | 根目录单一 TOML、内联 token、CLI 私聊配对、SSH config、OTP、热更新、生命周期 |
 | 做历史与投递 | [历史与消息](design/history-and-delivery.md) | 最后输入/最终输出、单条历史集合、合并、附件与限速 |
 | 查事实与限制 | [Codex 探索](research/codex-app-server.md)、[资料](research/sources.md) | 静态观察、来源、版本差异和未验证能力 |
