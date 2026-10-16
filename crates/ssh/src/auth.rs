@@ -280,4 +280,27 @@ mod tests {
         record_window(&config, &attempt, 2, 2).unwrap();
         assert!(record_window(&config, &attempt, 3, 2).is_err());
     }
+
+    #[test]
+    fn totp_challenge_patterns_match_context_format_without_account_or_address_literals() {
+        let patterns = vec![r"(?i)^(?:\([^\r\n()]{1,256}\)\s*)?verification code:\s*$".into()];
+        for prompt in [
+            "Verification code: ",
+            "(operator@host.example) Verification code: ",
+            "(other@192.0.2.10) verification code:",
+            "(test@[2001:db8::1]) Verification code: ",
+        ] {
+            assert!(matches(&patterns, prompt).unwrap());
+        }
+        for prompt in [
+            "Password: ",
+            "Approve login (yes/no)?",
+            "Unrecognized challenge: ",
+            "Send verification code: ",
+            "Verification code: do something else",
+            "(context\nextra) Verification code: ",
+        ] {
+            assert!(!matches(&patterns, prompt).unwrap());
+        }
+    }
 }

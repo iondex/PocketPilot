@@ -1,13 +1,14 @@
 # MVP 实施计划
 
-状态：Telegram MVP 的消息、控制、持久化、OTP helper 和热更新已落地；授权 SSH 共享 daemon 已通过专用会话的 active/steer/断线完成验证。真实 Telegram 交互待用户测试，本地既有 Desktop 缺少共享 endpoint。Discord 可选原型已加入，见 [原型说明](../design/discord.md)。
+状态：Telegram MVP 的消息、控制、持久化、OTP helper 和热更新已落地；完整验收仍按目标部署进行，缺少共享入口的 Desktop 活跃实例无法直接接入。Discord 可选原型已加入，见 [原型说明](../design/discord.md)。
 
 下文 W00–W17 保留为设计工作包；描述中的目标接口不全部与当前源码名称一一对应。当前行为与边界以 [验证记录](../research/implementation-checks.md)、[配置实现](../design/connections-and-config.md) 和源码为准。
+
 ## 1. 范围与当前输入
 
 首版是最新受测 Codex + Telegram，默认本机运行，聚合允许的本地/SSH 实例。具备只读列表/状态/历史、topic 绑定、新建、续轮、steer、输出合并、OTP、热更新与恢复。允许的 provider 业务动作仅创建、用户明确续轮、steer、只读查看。
 
-已有输入：token 已迁入根目录私有 pocketpilot.toml 并通过只读账号验证。配置不 include、不读取 .env；Telegram 仅私聊，经 CLI 配对后可用，无 chat/user 配置列表。已登记授权 SSH host 的九个工作区和共享 socket；其他实例需填写已存在的共享入口。
+配置前提：凭据与允许主机写入私有根配置，不 include、不读取 .env。Telegram 仅私聊，经 CLI 配对后可用，无 chat/user 配置列表；实例和工作区由应用状态动态管理。
 
 硬门禁：同一运行实例、无副作用观察、程序断线/退出不结束 agent。无法通过时只开放相应只读能力，并将完整 MVP 标为未完成。Lark、Claude shim、任意旧 Codex 兼容和 agent 生命周期管理不在首版任务中；Discord 按后续请求提供有明确边界的原型。
 
@@ -37,16 +38,17 @@
 
 补充依赖按需加入 tokio-util、futures、toml、uuid、time、tracing-appender、directories、fs2、tempfile；没有实际使用就不引入。锁定 Rust 工具链和 Cargo.lock，确认 MSRV、TLS feature、依赖版本冲突后再固定具体版本。Telegram 不需要 Discord/Claude 的 feature 和依赖随 MVP 一起编译。
 
-SSH 选型采用双后端：openssh 负责普通 key/agent 和复杂 ssh_config 兼容；配置 OTP 时使用 系统 OpenSSH 原生 keyboard-interactive + totp-rs，不能仅依赖 OpenSSH BatchMode。直接读取本机 SSH config/Include 发现 alias，受控 ssh -G 获取有效参数；实际认证链由服务端协商。慢 host 的超时、心跳和认证退避逐台配置，详细规则见 [部署与配置](../design/connections-and-config.md)。
+SSH 统一使用系统 OpenSSH，复用 key/agent 和复杂 ssh_config；OTP 使用原生 keyboard-interactive + totp-rs，不能仅依赖 BatchMode。直接读取本机 SSH config/Include 发现 alias，受控 ssh -G 获取有效参数；实际认证链由服务端协商。慢 host 的超时、心跳和认证退避逐台配置，详细规则见 [部署与配置](../design/connections-and-config.md)。
 
 JSON-RPC 不直接套标准 jsonrpsee server/client：Codex wire 省略 jsonrpc 字段且存在双向服务端请求和特殊 transport。使用 serde 的小型、可测试 dispatcher 对接受测方法；不要为了复用框架改变 wire。Codex 源码的内部 workspace crate 不直接作为 git 依赖引入整个 agent 引擎。build.rs 调用所选 Codex 导出官方 JSON Schema，在 OUT_DIR 筛选只读投影并用 typify 生成 DTO，不提交 schema/生成代码。provider 访问生成类型；RPC 边界只用不透明 RawValue 保留扩展，不在业务层操作 serde_json::Value。
 
 ## 3. crate 与文件边界
 
-当前采用七个简短本地 package：ssh、session、codex、engine、telegram、discord、app，全部 publish=false。app 的 binary 仍叫 pocketpilot。确切职责和依赖方向见 [架构](../design/architecture.md)。
+当前采用八个简短本地 package：i18n、ssh、session、codex、engine、telegram、discord、app，全部 publish=false。app 的 binary 仍叫 pocketpilot。确切职责和依赖方向见 [架构](../design/architecture.md)。
 
 ```text
 crates/
+  i18n/src/       共享文案 ID、语言和类型化错误展示
   ssh/src/        连接、有效配置、认证与 TOTP 导出
   session/src/    统一领域模型、provider 接口与文本规则
   codex/src/      协议、RPC、transport、provider、自动发现
@@ -64,12 +66,12 @@ crates/codex/build.rs  官方 schema/DTO 只生成到 Cargo OUT_DIR
 
 | 阶段 | 工作 | 放行条件 | 当前状态 |
 | --- | --- | --- | --- |
-| P0 | W00–W03：骨架、配置、类型化 RPC 与兼容探针 | 原生本地隔离实验和真实 SSH 共享实例通过；既有本地 Desktop 入口待部署 | 已实现，部分部署未验收 |
+| P0 | W00–W03：骨架、配置、类型化 RPC 与兼容探针 | 验证原生隔离实验与目标共享实例；无共享入口的 Desktop 需另行部署 | 已实现，部分部署未验收 |
 | P1 | W04–W07：远程、持久化、只读 provider、动作许可 | OpenSSH、账本、actor、白名单与未知结果不重发已有行为测试 | 已实现 |
-| P2 | W08–W11：Telegram、绑定、历史与投递 | mock 完整链路通过；实际私聊 topic 收发等待用户 | 代码完成，待用户验收 |
+| P2 | W08–W11：Telegram、绑定、历史与投递 | mock 完整链路通过；实际私聊 topic 收发按目标客户端验收 | 代码完成，待用户验收 |
 | P3 | W12–W14：OTP、热更新、创建/续轮/steer | 实际 SSH 写入/断线完成通过；真实 TOTP 认证与专用连接断连重连已验收 | 代码完成，部分部署未验收 |
 | P4 | W15–W17：恢复、打包与验收 | 重启/unknown/持久批次测试通过；A01–A52 非全量实测 | 部分验收 |
-| D0 | Discord 原型 | owner slash、category/channel、共享锁/操作账本、输出队列；未提供真实凭据 | 原型完成，待真实 guild 验收 |
+| D0 | Discord 原型 | owner slash、category/channel、共享锁/操作账本、输出队列；凭据由部署者提供 | 原型完成，待真实 guild 验收 |
 
 W00–W02 是制作 P0 探针必需的最小骨架，不代表先做完整产品再验证共享能力。可独立实现 fake/持久化/渲染，但 G0 未通过时不对真实任务启用写入。
 
@@ -83,9 +85,9 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 ### W00 · Workspace 与运行骨架
 
-依赖：无。归属：根 Cargo 配置、七个 crates 的 lib/main、工具链与最小 CI。
+依赖：无。归属：根 Cargo 配置、八个 crates 的 lib/main、工具链与最小 CI。
 
-- 维护七个 publish=false package；app 声明 pocketpilot binary，确保 cargo run -p app --bin pocketpilot 的目标清晰。
+- 维护八个 publish=false package；app 声明 pocketpilot binary，确保 cargo run -p app --bin pocketpilot 的目标清晰。
 - 配置共享依赖/TLS feature、lockfile、fmt/clippy；主程序先提供本地帮助，不在初始化时连接服务。
 - 产物：可编译 workspace 与职责一致的空骨架，不拉入 Lark/Claude 依赖；Discord 为独立可选 feature。
 - 验证：workspace build、依赖方向检查、CLI help；无网络/agent 子进程副作用。覆盖 A23/A46 的初始结构约束。
@@ -267,4 +269,4 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 完整 [A01–A52 清单](acceptance.md) 是验收条件唯一来源。报告格式与测试层次见清单；W03 先证明协议能力，W17 汇总行为验收。任何任务中的测试编号不代表已经执行。
 
-当前实现和真实验收以本文开头的阶段表、[实现记录](../research/implementation-checks.md) 和 [逐项审计](../research/acceptance-audit.md) 为准。真实用户已开始测试并反馈问题，修复后桥接保持停止，等待显式重启复测；不以 mock 测试替代真实交付证据。
+当前实现和真实验收以本文开头的阶段表、[实现记录](../research/implementation-checks.md) 和 [逐项审计](../research/acceptance-audit.md) 为准。运行状态由部署者管理，公开文档不记录具体进程与账号状态；不以 mock 测试替代真实交付证据。

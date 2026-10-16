@@ -2,7 +2,7 @@
 
 Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 topic 管理本地/SSH app-server 会话。提供可选 Discord 原型；Lark 和 Claude shim 保留后续规划。
 
-**Telegram 功能链路已接通，SSH 共享实例控制已验证，等待你测试真实私聊交互。** 包括 CLI 配对、工作区与会话菜单、topic 绑定、历史集合、创建/续轮/steer、topic emoji、持久收发与消息合并、OpenSSH/TOTP 和根配置热更新。具体部署状态与验证边界见 [测试入口](docs/testing.md) 和 [验证记录](docs/research/implementation-checks.md)。
+**当前主要支持 Telegram + Codex，完整部署验收仍需按目标环境执行。** 包括 CLI 配对、工作区与会话菜单、topic 绑定、历史集合、创建/续轮/steer、topic emoji、持久收发与消息合并、OpenSSH/TOTP 和根配置热更新。使用步骤与验证边界见 [测试入口](docs/testing.md) 和 [验证记录](docs/research/implementation-checks.md)。
 
 ## 运行
 
@@ -36,11 +36,13 @@ cargo build --workspace --locked
 
 /history 动态读取原生会话，返回最近一次用户输入及同轮最终结果，过滤中间说明；尚无最终结果时明确提示。/status 查看实际状态与完整详情。/topics 管理单个话题，也包含「清除全部会话话题」；/topics clear 可直接进入批量清理确认。删除 Telegram 话题与聊天记录时保留 Codex 会话和固定管理入口。Bot API 无法枚举全部话题，仅管理已记录的话题。
 
-私聊命令列表注册中英文说明。Telegram 不支持按 topic 分配不同的命令列表，/help 则按管理话题或会话话题显示对应说明。/unbind 与 /cleartopics 已移除。
+私聊命令列表注册中英文说明。Telegram 不支持按 topic 分配不同的命令列表，/help 按当前话题显示对应说明。
 
 共享语言资源与类型化错误见 [i18n 设计](docs/design/i18n.md)。Logo 生成用 [这份 prompt](docs/design/logo-prompt.md)。
 
-Telegram 会话只展示 agent 正文，不回显用户输入，不加角色标签或“开始新一轮”通知；topic emoji 表达状态，运行时持续续期“正在输入”，不自动发送空闲状态卡。空闲首次显示对应 final，活跃历史为单个 agent 文本集合，超长用一个附件；内部完整历史模型保留全部角色。工具和推理不转发。短时输出进入持久批次，同一私聊的所有 topics 共享速率预算。
+会话正文以同行 emoji 区分过程、最终结果和错误。同一原生会话的外部用户输入可见，Telegram 自身输入去重；工具和推理不转发。topic icon 表达状态，运行时持续 typing，不发送额外成功 ACK 或空闲状态卡。活跃历史作为一个集合展示，超长用单个 Markdown 附件；短时输出持久合并，同一私聊的全部 topics 共享预算。附件只显示正文和文件名，不预览图片。
+
+/history errors 单独查看近期错误，避免将旧轮次错误配到新输入。
 
 ## 约定
 
@@ -60,7 +62,7 @@ cargo build -p app --features discord --locked
 ./target/debug/pocketpilot serve
 ```
 
-在同一根配置增加 [discord] 的 token 与 guild_id；可以和 Telegram 同进程运行，共享连接/会话锁/写入账本。一个 workspace 一个 category，一个 session 一个 channel，owner 使用 /pp-workspaces、/pp-sessions、/pp-open、/pp-new 和 /pp-ask。完整范围、安装权限与限制见 [Discord 原型](docs/design/discord.md)。当前未提供真实 Discord 凭据，未做真实 guild 联调。
+在同一根配置增加 [discord] 的 token 与 guild_id；可以和 Telegram 同进程运行，共享连接/会话锁/写入账本。一个 workspace 一个 category，一个 session 一个 channel，owner 使用 /pp-workspaces、/pp-sessions、/pp-open、/pp-new 和 /pp-ask。完整范围、安装权限与限制见 [Discord 原型](docs/design/discord.md)。真实服务器的权限与客户端交互需单独验收。
 
 ## 动态目录与日志
 
@@ -73,7 +75,7 @@ provider 是一个现有 agent 执行实例，workspace 是它的项目目录。
 ./target/release/pocketpilot workspaces add --provider PROVIDER_ID --cwd /srv/code/project
 ```
 
-新发现的实例保持只读。完成共享生命周期验证后，可用 providers trust PROVIDER_ID 记录部署确认，--revoke 撤销。测试专用 probe、sessions、state-init、telegram-check CLI 已移除，日常诊断合并到 doctor。
+新发现的实例保持只读。完成共享生命周期验证后，可用 providers trust PROVIDER_ID 记录部署确认，--revoke 撤销。日常诊断使用 doctor，实例与目录使用 providers/workspaces 管理。
 
 tracing 可同时输出到终端和日志文件，支持 daily/hourly 轮转与 retained_files 数量上限。稳定 0.1 前直接维护 [schema.sql](schema.sql)。开发风格见 [CONTRIBUTING.md](CONTRIBUTING.md)，构建体积分析见 [构建说明](docs/build.md)。
 
@@ -84,7 +86,7 @@ cargo build -p app --release --no-default-features --locked
 
 ## Telegram 展示与语言
 
-菜单状态只显示 emoji。topic 使用原生 emoji icon：⚡️ 运行、💬 空闲、👀 等待审批、❓ 等待输入、📁 未加载、❗️ 异常、⁉️ 未知。仅状态变化时更新，并由投递队列合并、限速。topic 标题仅显示最多 40 个可见字符的原始标题，不拼主机/路径/ID；详细身份信息由 /status 返回。
+菜单状态只显示 emoji。topic 使用原生 emoji icon：⚡️ 运行、💬 空闲、👀 等待审批、❓ 等待输入、💬 未加载、❗️ 异常、⁉️ 未知。仅状态变化时更新，并由投递队列合并、限速。topic 标题仅显示最多 40 个可见字符的原始标题，不拼主机/路径/ID；详细身份信息由 /status 返回。
 
 新建时填写的内容只作为标题，不发送给 agent，也不启动一轮。原生标题为空时，通过官方 thread/name/set 补写；已有原生标题不覆盖，后台观察/重连不补写。Agent Markdown 使用 pulldown-cmark 解析后转换为 Telegram HTML，表格转为逐项内容；超长仍发送原始 Markdown 附件。
 

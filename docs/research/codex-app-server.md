@@ -33,20 +33,11 @@
 | SSH 连接 | `ssh … codex app-server proxy`；或 SSH 转发到已有 WebSocket | 必须连接独立存活的服务，SSH 仅承载连接 |
 | 不停止会话 | 不发 interrupt/关闭服务等操作 | 还需验证最后连接消失、待审批请求、远程进程退出等间接路径 |
 
-## 3. 本机验证：版本不是同一个
+## 3. 版本与入口验证
 
-实际检查得到：
+PATH 中的 CLI 与 Desktop 内置服务可能来自不同版本，schema、历史读取模式和共享入口也可能不同。部署前分别核对版本、帮助、协议类型及公开 listener；不要从某台开发机的进程参数推断所有安装均相同。
 
-| 项目 | 观察结果 |
-| --- | --- |
-| PATH 中 Codex CLI | `0.149.1` |
-| 桌面应用内置 Codex | `0.162.0-alpha.17.2` |
-| 本地桌面运行方式 | app-server 进程，进程参数未显式提供 listen endpoint |
-| 默认控制 socket | 检查时不存在；不排除其他私有或自定义连接机制 |
-| 桌面已有远程连接方式 | 多个 SSH 子进程执行 `codex app-server proxy`，并设置 keepalive |
-| 工作目录与目标仓库 | 起初为空；远程 `iondex/PocketPilot` 也是空仓库 |
-
-仅执行版本/帮助、生成 schema、进程和 socket 元数据读取。没有连接真实会话、resume、创建 turn、发送 steer 或重启服务。没有读取/记录真实会话内容或密钥。研究记录不包含个人 SSH 主机名。
+静态检查只读取版本、帮助、schema 和进程/socket 元数据，不执行 resume、创建、steer 或服务重启。实际账号、地址、目录和运行记录保存在私有部署资料中。
 
 从两份二进制分别生成**未加 `--experimental`** 的 JSON Schema：
 

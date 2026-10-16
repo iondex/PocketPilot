@@ -1,6 +1,6 @@
 # Lark 与 Claude 兼容 shim 规划
 
-两者均为后续阶段，本轮只做规划。Telegram + 原生 Codex 仍是首版重点；设计保持 Rust 核心与平台/provider 的独立边界。
+两者均为后续规划。Telegram + 原生 Codex 仍是首版重点；设计保持 Rust 核心与平台/provider 的独立边界。
 
 ## 1. Lark 可行性结论
 
@@ -38,7 +38,7 @@ PlatformAddress 增加 `Lark { region, tenant_id, chat_id, thread_id, root_messa
 
 实际读取的官方 Python SDK 具备 WebSocket client、心跳/重连、分片组包和事件分发，证明可不为消息事件部署公网 webhook。WS 不只是 JSON 文本帧，不能直接把 Telegram poller 替换成一个简单 WebSocket read loop。
 
-本次部分 Lark 动态文档只返回导航或 404，因此已用官方 SDK 源码和可读取的 thread 文档交叉确认。官方 samples/ws/sample.py 确实注册新 `card.action.trigger` 并交给 ws.Client，说明新版卡片长连接已有参考实现；仍须按实际 SDK/地区/应用配置验收，不能把旧协议自动当成同一能力。目标组合未通过时先保留文本命令交互、卡片只读；需要 webhook 则显式部署，不假装本机已有公网入口。
+Lark 能力依据官方文档和 SDK 源码交叉核对。官方 samples/ws/sample.py 确实注册新 `card.action.trigger` 并交给 ws.Client，说明新版卡片长连接已有参考实现；仍须按实际 SDK/地区/应用配置验收，不能把旧协议自动当成同一能力。目标组合未通过时先保留文本命令交互、卡片只读；需要 webhook 则显式部署，不假装本机已有公网入口。
 
 保持 Rust 主进程。生态候选 open-lark 查询时为 0.14.0、约 3.24 万下载，明显少于 Telegram 的 teloxide，不能仅因名字合适就认定成熟。Lark 阶段先审查其 WS/卡片/幂等/脱敏与维护情况：通过则封装成 adapter；不通过则用 reqwest/serde/prost/tokio-tungstenite 适配必要的公开 REST/WS 子集，复用现成 HTTP、TLS、protobuf、重试库，不自写通用网络协议。
 

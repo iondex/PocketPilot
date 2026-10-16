@@ -42,8 +42,8 @@ impl session::AgentProvider for PagedWorkspaceAgent {
             ),
             (false, Some("second")) => (
                 vec![
-                    "/projects/cpet-proposal",
-                    "/projects/cpet-proposal",
+                    "/projects/paged-project",
+                    "/projects/paged-project",
                     "/projects/../outside",
                 ],
                 None,
@@ -137,7 +137,7 @@ async fn discovers_projects_beyond_first_session_page_and_preserves_explicit_rem
         config
             .workspaces
             .iter()
-            .any(|w| w.cwd == "/projects/cpet-proposal")
+            .any(|w| w.cwd == "/projects/paged-project")
     );
     assert_eq!(
         config
@@ -151,7 +151,7 @@ async fn discovers_projects_beyond_first_session_page_and_preserves_explicit_rem
     let removed = config
         .workspaces
         .iter()
-        .find(|w| w.cwd == "/projects/cpet-proposal")
+        .find(|w| w.cwd == "/projects/paged-project")
         .unwrap()
         .clone();
     catalog.remove_workspace(&removed.id).await.unwrap();

@@ -10,9 +10,9 @@ SSH 的共享条件是相同远程用户、有效控制 socket 和 daemon。Desk
 
 本地和远端 Unix socket 均通过官方 `codex app-server proxy --sock` 建立字节隧道，再在隧道上执行 WebSocket 握手和 framing。proxy stdout 不是 JSONL。直接连接支持 loopback WS 或远程 WSS；生产不接受远程明文 WS。64 MiB frame 上限与历史读取预算均有边界检查。
 
-PocketPilot 不启动、升级、重启或停止原生 daemon。缺少共享入口时明确失败，不启动一个共用历史文件的替代服务。当前本地 Desktop 以 stdio 运行且没有公开监听入口，因此既有本地活跃任务尚不能接入；独立本地原生 fixture 的通过不改变这个部署限制。
+PocketPilot 不启动、升级、重启或停止原生 daemon。缺少共享入口时明确失败，不启动一个共用历史文件的替代服务。Desktop 若只提供 stdio 且没有共享监听入口，既有活跃任务无法直接附加；隔离传输测试通过不改变这一条件。
 
-构建协议使用 Codex 0.162.1，已验证远端 0.161.0 的当前协议。按服务端类型化 historyMode 路由 legacy/full-read 与 paginated/turns-list；这是当前官方协议中的两种历史模式，不承诺任意旧版 CLI 兼容。initialize 开启 experimentalApi 以保留 historyMode 元数据，客户端仍只暴露固定的只读/执行方法，以及受新鲜用户动作保护的空标题补齐方法。
+协议来自构建时选择的受支持 Codex CLI；不同部署版本仍需通过兼容检查。按服务端类型化 historyMode 路由 legacy/full-read 与 paginated/turns-list；这是当前官方协议中的两种历史模式，不承诺任意旧版 CLI 兼容。initialize 开启 experimentalApi 以保留 historyMode 元数据，客户端仍只暴露固定的只读/执行方法，以及受新鲜用户动作保护的空标题补齐方法。
 
 ## 根目录单一配置
 
@@ -47,19 +47,19 @@ notify 监听根配置的父目录，处理原子替换；debounce 和周期 res
 | logging | 启动时装配，需重启桥接应用 |
 | OpenSSH config | 发现时读取，重连时重新解析；不监控全部 Include 文件并主动断开有效连接 |
 
-输入捕获配置快照；慢连接完成后、实际写入前重新检查配置、配对和映射。未开始的投递重新授权。已经发出的网络请求不能撤回；结果未知时核对原端，不自动重发。配置恢复不会自动重放旧 agent 输入。Telegram 普通消息超过五分钟、早于本次进程启动、重启时仍 pending 或 poll 失败后补收时，展示待确认草稿；只有新的确认按钮才能发给当前状态，旧 nonce 在重启时失效。草稿绑定 instance/thread/映射 revision；未获明确接受的 turn 竞争也需用户重新确认，未知结果不套用此流程。
+输入捕获配置快照；慢连接完成后、实际写入前重新检查配置、配对和映射。未开始的投递重新授权。已经发出的网络请求不能撤回；结果未知时核对原端，不自动重发。配置恢复不会自动重放旧 agent 输入。Telegram 普通消息超过五分钟、早于本次进程启动、重启时仍 pending 或 poll 失败后补收时，展示待确认草稿；只有新的确认操作才能发给当前状态，旧 nonce 在重启时失效。草稿绑定 instance/thread/映射 revision；未获明确接受的 turn 竞争也需用户重新确认，未知结果不套用此流程。
 
 ## OpenSSH 与挑战认证
 
 发现阶段使用 ssh2-config 提取 ~/.ssh/config 中明确 alias；通配/否定项不展开成待登录主机。真正连接仅使用 TOML 中允许的主机。对允许 alias 调用系统 ssh -G，显式 ssh_config 则使用相同 -F；保留系统 OpenSSH 的 Host/Match、ProxyJump、ProxyCommand、证书和 agent 语义。
 
-当前只使用系统 OpenSSH 后端，backend=auto 和 openssh 均进入同一路径。之前的 russh 双后端是研究方案，没有进入实现。SSH 本身负责多阶段 key/password/keyboard-interactive 认证；KbdInteractiveAuthentication=yes 只是候选能力，不能证明服务器需要 OTP。
+当前只使用系统 OpenSSH 后端，backend=auto 和 openssh 均进入同一路径。SSH 本身负责多阶段 key/password/keyboard-interactive 认证；KbdInteractiveAuthentication=yes 只是候选能力，不能证明服务器需要 OTP。
 
 配置秘密时启用受限 SSH_ASKPASS helper：helper 路径与 force 标志可以进入环境；秘密不进入环境或命令参数。helper 回调自己的隐藏 CLI，从同一根 TOML、相同已验证 hash 读取凭据。认证期间配置改变会拒绝旧 hash 的回答，后续连接重新建立，不混用旧快照与新秘密。
 
 只回答显式匹配的挑战：password、加密 key passphrase、TOTP prompt。未知提示及 host-key 确认拒绝；StrictHostKeyChecking=yes，不能以回答 yes 绕过 known_hosts。TOTP 用 totp-rs，支持配置的 SHA1/SHA256/SHA512、6/8 位与周期；临近过期等待下一窗口，不在同一次认证重复使用同窗口，限制尝试次数。短信、push、硬件确认和 HOTP 不冒充可由 TOTP seed 自动完成的能力。
 
-已用用户提供的 Google Authenticator 导出离线解析后进行真实 TOTP 认证；专用 SSH 子连接强制断开后重新认证成功。aws-work 的 ProxyJump 和 ProxyCommand 均已实测；导出 URI、seed 与验证码不写入仓库或日志。多段跳转的 prompt_patterns 应匹配对应网关账号，不能把网关 seed 用于任意目标的提示。
+Google Authenticator 导出可离线解析为 TOTP 配置。`prompt_patterns` 只描述明确的挑战文案，不硬编码用户名、主机名或 IP；服务端附加的括号上下文可用通用模式匹配。规则和凭据仍限定在允许的主机认证配置中，不能做全局验证码应答。多段跳转须核对认证链与凭据归属；无法区分多个挑战时拒绝自动回答，不扩大为任意提示匹配。导出 URI、seed、验证码和完整提示不进入仓库或日志。
 
 ## tracing 与日志轮转
 

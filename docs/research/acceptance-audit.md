@@ -47,7 +47,7 @@ T/N/R/P 的具体范围见 [实现记录](implementation-checks.md)。测试入�
 | A29 | S/T：观察与重连无 resume，NotLoaded 仅用户明确输入才 resume | 规则已证明；真实外部卸载/重连组合未运行 |
 | A30 | S：历史集合注明读取记录/非原子快照，不承诺 delta 连续 | 未完全证明；真实未持久化 commentary 丢失及缺口提示需进一步验证 |
 | A31 | T：失败/活跃文本不误标 final；S：按权威 item 内容补投递 | 部分证明；真实 delta 后中断/缺 completed 未运行 |
-| A32 | S/T：每 provider 建连、退避与独立绑定观察；显式 worktree 分页 | 外部阻塞；现有本地 Desktop 无共享入口，仅一个 SSH 实例已验证 |
+| A32 | S/T：每 provider 建连、退避与独立绑定观察；显式 worktree 分页 | 部分证明；无共享入口的 Desktop 不能接入，多实例组合需按部署验收 |
 | A33 | R：确认既有远端 daemon/socket，Desktop 与桥接读到相同 active turn | 已在授权 SSH profile 证明；不扩展到其他主机 |
 | A34 | S/T：OpenSSH askpass 与 TOTP/RFC 向量 | 外部阻塞；未提供实际 OTP host，key partial_success/multi-prompt 未实测 |
 | A35 | T：TOTP 窗口/重复挑战；S：显式提示匹配、尝试限制 | 部分证明；真实慢认证/OTP 挑战未运行 |
@@ -65,31 +65,27 @@ T/N/R/P 的具体范围见 [实现记录](implementation-checks.md)。测试入�
 | A47 | S/R：schema binary 与运行 daemon 分别核对，未重启既有服务 | 当前维护路径已证明；不承诺新版本自动兼容 |
 | A48 | S/T：单根 TOML，bot scope 隔离；token/data_dir 改动需重启桥接 | 部分证明；同 bot token 真实轮换与不同 bot 交接未运行 |
 | A49 | T：群聊与错误 private peer 拒绝 | 规则已证明；实际平台输入待用户 |
-| A50 | T：十分钟、单次、bot scope、CLI 批准；P：bot ready | 规则已证明；实际用户已经 CLI 批准配对，真实菜单与 topic 操作已开始；修复后待复测 |
-| A51 | T：CLI 与持锁服务并行批准/撤销，未恢复 operations | 规则已证明；实际用户已通过本机 CLI 批准，撤销待用户 |
+| A50 | T：十分钟、单次、bot scope、CLI 批准；P：bot ready | 规则已证明；实际配对及交互由部署者按目标环境验收 |
+| A51 | T：CLI 与持锁服务并行批准/撤销，未恢复 operations | 规则已证明；实际批准和撤销由部署者验收 |
 | A52 | S/T：根 TOML/0600、拒绝 include/.env/旧允许列表、日志脱敏、Git 秘密边界检查 | 当前交付文件与已测路径已证明；不将静态扫描称作全面秘密审计 |
 
 ## 其他交付与外部条件
 
 | 交付 | 当前结果 |
 | --- | --- |
-| Rust、简短 crate、平铺源码 | Cargo workspace 为 session/codex/telegram/discord/app；src 下无多级目录 |
+| Rust、简短 crate、平铺源码 | Cargo workspace 为 i18n/ssh/session/codex/engine/telegram/discord/app；src 下无多级目录 |
 | 官方协议动态生成 | build.rs 生成到 OUT_DIR；不提交 schema、DTO 或 docs JSON |
 | 配置、tracing、流行库 | 单根 TOML；tokio/sqlx/teloxide/Serenity/reqwest/tracing/totp-rs 等，依赖由 Cargo.lock 固定 |
-| Telegram 可测试入口 | 已有私有 token、Topics，真实用户已配对；桥接按用户要求停止，修复后待显式重启复测 |
-| Discord 原型 | 可选 feature，同进程 category/channel + owner slash + 共享锁/操作账本；实际 token/guild 缺失 |
+| Telegram 可测试入口 | 支持 CLI 配对和私聊 Topics，部署凭据与进程状态由部署者管理 |
+| Discord 原型 | 可选 feature，同进程 category/channel + owner slash + 共享锁/操作账本；真实服务器与客户端交互需单独验收 |
 | Claude shim、Lark | 规划与候选实现保留在 future/integrations.md，不作为已实现能力 |
-| 本地现有 Desktop | 仍是 stdio 服务，缺少可附加的公开 endpoint；未重启或另建同历史服务冒充接入 |
-| GitHub CI | 平台在运行步骤前因账户付款/额度限制拒绝，非编译结论；本机检查单独记录 |
+| 本地现有 Desktop | 若只有 stdio 且缺少共享 endpoint，则无法直接附加；不得另建同历史服务冒充接入 |
+| GitHub CI | 远端 CI 成功与本地检查分别记录，不由本地检查推断平台结果 |
 
 完整目标保持未验收状态。此表不缩减原始支持范围，也不把“准备用户测试”解释为真实平台行为已全部证明。
 
-## 首次真实用户反馈
+## 展示范围
 
-2026-10-16：CLI 已批准实际私聊用户配对，用户进入工作区及 session topic 后报告了默认入口建 topic、菜单布局、历史错误和标题循环。已按请求停止桥接；当前不会为验收自动重启。此次修复有回归测试及原问题会话的只读历史成功证据，管理 topic/新菜单仍待用户显式重启后复测。
+Telegram 普通转发包括 agent 正文和同一原生会话的外部用户输入，并精确去重当前 Telegram 用户自身的输入。阶段由 emoji 表示，空历史不占位；完整 user/agent 模型仍保留。管理交互使用持久编号导航，每次操作发送新菜单。展示方式不放宽操作授权、未知结果不重发或原生生命周期约束。
 
-/start 自动建 Telegram topic 的平台条件已经 getMe 和官方文档双重确认：当前允许用户建 topic。需在 BotFather 开启 Disallow users to create new threads；这与 /start 不创建 Codex session 是不同层面的行为。当前代码保证固定管理 topic 与 agent 绑定隔离，不能替代该平台设置。
-
-## Telegram UX 展示范围修订
-
-后续用户明确要求 Telegram 单会话不回显用户消息、不显示角色标题和执行 ACK。该要求覆盖此前 A12/A13/A41/A42 中 Telegram 端的角色展示形式：原生读取/CLI 导出保留完整 user/agent 记录；Telegram 仅展示 agent 正文与简洁 emoji 状态，空历史不占位。管理交互改为持久编号导航，导航不依赖 nonce TTL；操作授权、结果未知不重发和生命周期约束没有放宽。上述规则测试通过，真实新版交互仍需用户复测。
+平台能力与话题配置条件见 [Topics 边界](telegram-topics.md)。完整目标仍需按目标部署完成验收，本文不记录真实账号、话题、主机或程序的当前运行状态。

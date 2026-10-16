@@ -22,3 +22,5 @@ cargo clippy -p app --no-default-features --locked -- -D warnings
 - 稳定 0.1 前直接维护根 schema.sql，不维护 migrations 或运行迁移器。初始化幂等且不清空现有记录；修改已有列时，开发者需明确处理自己的原型状态，不能自动删除用户数据。
 
 所有 crate 共用 i18n crate，以稳定 ASCII ID 索引文案；资源只放 crates/i18n/locales/。rust-i18n 调用必须显式传 locale，不调用全局 set_locale。错误保留类型并实现 LocalizedError，在界面边界翻译；用户内容与文案 ID 用具名类型区分，禁止对任意原文做翻译查找。Agent 正文交给 pulldown-cmark 渲染，不能直接当 MarkdownV2 或可信 HTML 发送。空标题补齐仅限显式用户动作且须先验证实际 cwd，后台不得改原生标题。
+
+公开文档以当前行为、接口边界和可复用流程为主，不累积单次故障与联调流水。示例、测试和公开诊断材料使用合成名称与保留地址，不复制真实 SSH alias、账号、IP、工作区或会话内容。TOTP 的 prompt_patterns 匹配挑战类型和通用上下文格式，不嵌入实际用户名或地址；认证提示不得进入日志。

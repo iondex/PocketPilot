@@ -2987,7 +2987,7 @@ async fn new_session_selects_host_and_workspace_ids_when_names_and_paths_match()
     let file = &fixture.service.config.path;
     let mut text = std::fs::read_to_string(file)
         .unwrap()
-        .replace("Fixture workspace", "ideas");
+        .replace("Fixture workspace", "sample");
     text.push_str(&format!(
         r#"
 [[hosts]]
@@ -3006,7 +3006,7 @@ control_verified=true
 [[workspaces]]
 id="other-workspace"
 provider_id="other-instance"
-name="ideas"
+name="sample"
 short_name="OTHER"
 cwd="/workspace"
 "#
@@ -3016,13 +3016,13 @@ cwd="/workspace"
     assert!(matches!(
         fixture
             .service
-            .handle(&input(2110, 9, "/new ideas ambiguous"))
+            .handle(&input(2110, 9, "/new sample ambiguous"))
             .await,
         Err(Error::AmbiguousWorkspace)
     ));
     fixture
         .service
-        .handle(&input(2111, 9, "/new other/ideas Qualified title"))
+        .handle(&input(2111, 9, "/new other/sample Qualified title"))
         .await
         .unwrap();
     assert!(
@@ -3044,7 +3044,7 @@ cwd="/workspace"
     let prompt = fixture.outputs().await.pop().unwrap();
     assert!(
         prompt.text.contains("Other host")
-            && prompt.text.contains("ideas")
+            && prompt.text.contains("sample")
             && prompt.text.contains("请发送会话标题")
     );
     fixture.choose(2115, "123").await;
@@ -3182,7 +3182,7 @@ async fn message_ids_localize_ui_and_errors_without_translating_literal_user_con
 }
 
 #[tokio::test]
-async fn host_workspace_menu_pages_all_registered_projects_including_cpet_proposal() {
+async fn host_workspace_menu_pages_all_registered_projects_including_paged_project() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     let file = &fixture.service.config.path;
@@ -3190,7 +3190,7 @@ async fn host_workspace_menu_pages_all_registered_projects_including_cpet_propos
     for index in 0..8 {
         text.push_str(&format!("\n[[workspaces]]\nid='extra-{index}'\nprovider_id='instance'\nname='project-{index}'\nshort_name='P{index}'\ncwd='/workspace/project-{index}'\n"));
     }
-    text.push_str("\n[[workspaces]]\nid='cpet'\nprovider_id='instance'\nname='cpet-proposal'\nshort_name='CPET'\ncwd='/workspace/cpet-proposal'\n");
+    text.push_str("\n[[workspaces]]\nid='paged'\nprovider_id='instance'\nname='paged-project'\nshort_name='PAGED'\ncwd='/workspace/paged-project'\n");
     std::fs::write(file, text).unwrap();
     fixture.service.config.reload().unwrap();
     fixture
@@ -3212,8 +3212,8 @@ async fn host_workspace_menu_pages_all_registered_projects_including_cpet_propos
     fixture.choose(2142, "9").await;
     let next = fixture.outputs().await.pop().unwrap();
     assert!(!next.text.contains("下一页"));
-    let cpet = crate::api::escape_markdown("cpet-proposal");
-    assert!(first.text.contains(&cpet) || next.text.contains(&cpet));
+    let project = crate::api::escape_markdown("paged-project");
+    assert!(first.text.contains(&project) || next.text.contains(&project));
     fixture
         .service
         .handle(&input(2143, 9, "/new"))
@@ -3292,7 +3292,7 @@ async fn refreshing_a_host_reads_workspace_metadata_without_loading_history_or_s
 async fn native_topic_icons_replace_automatic_status_bubbles_and_agent_markdown_is_rendered() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
-    fixture.state.lock().await.items=vec![serde_json::from_str(r##"{"type":"agentMessage","id":"m","text":"# 推荐\n\n**研究对象： **患者。\n\n**结论。**后续中文。 [链接](https://example.com)\n\n| 客户端 | 平台 |\n|---|---|\n| **Example** | Android |","phase":"final_answer"}"##).unwrap()];
+    fixture.state.lock().await.items=vec![serde_json::from_str(r##"{"type":"agentMessage","id":"m","text":"# 推荐\n\n**字段说明： **示例。\n\n**结论。**后续中文。 [链接](https://example.com)\n\n| 客户端 | 平台 |\n|---|---|\n| **Example** | Android |","phase":"final_answer"}"##).unwrap()];
     fixture
         .service
         .handle(&input(1600, 0, "/open workspace thread"))
@@ -3342,7 +3342,7 @@ async fn native_topic_icons_replace_automatic_status_bubbles_and_agent_markdown_
     assert_eq!(sent.parse_mode.as_deref(), Some("HTML"));
     assert!(sent.text.contains("<b>推荐</b>"));
     assert!(sent.text.starts_with("✅ <b>推荐</b>"));
-    assert!(sent.text.contains("<b>研究对象：</b> 患者。"));
+    assert!(sent.text.contains("<b>字段说明：</b> 示例。"));
     assert!(sent.text.contains("<b>结论。</b>后续中文。"));
     assert!(sent.text.contains("<b>平台</b>: Android"));
     assert!(!sent.text.contains("**"));

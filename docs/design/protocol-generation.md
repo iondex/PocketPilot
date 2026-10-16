@@ -26,8 +26,8 @@ schema 兼容仅证明类型可编译；共享实例、实时观察和断线语�
 
 ## 开放错误联合类型
 
-CodexErrorInfo 的官方 schema 是包含字符串、结构化错误和开放分支的 anyOf。typify 0.5 遇到重叠分支时默认生成 flatten struct，会拒绝合法的字符串错误（例如 other），使包含失败轮次的历史无法读取。build.rs 仅在传给生成器时将该类型建模为按顺序匹配的 untagged union，保留所有官方分支；保存在 OUT_DIR 的投影保持原始 anyOf。错误码仍由 schema 生成，不改成业务 raw JSON。回归测试覆盖已知字符串/对象、未知开放字符串/对象与非法数字。
+CodexErrorInfo 包含字符串、结构化错误和开放分支。生成器适配须保留官方联合类型的全部合法分支，不将其退化为业务 raw JSON；OUT_DIR 中保存原始协议投影。回归测试覆盖已知和未知分支，并拒绝非法形状。
 
 RPC 解码失败只记录白名单 schema 路径与固定错误类别，不记录响应正文或 serde 错误文本。
 
-标题补齐新增 ThreadSetNameParams/ThreadSetNameResponse 生成根，仍不提交生成产物。空对象响应仅按生成类型反序列化，业务不访问它的扩展内容。
+标题补齐使用 ThreadSetNameParams/ThreadSetNameResponse 生成根，仍不提交生成产物。空对象响应仅按生成类型反序列化，业务不访问它的扩展内容。

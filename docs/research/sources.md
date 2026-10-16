@@ -47,15 +47,15 @@ Telegram 文档描述支持 bot 私聊 topics；MVP 已改为仅私聊，需验�
 - [sqlx](https://docs.rs/sqlx/latest/sqlx/)：数据库访问与 SQLite 支持参考。
 - [crates.io API](https://crates.io/data-access)：逐项读取 `GET /api/v1/crates/{name}` 的版本、downloads、recent_downloads 和更新时间；历史查询的版本与下载量保留在实施计划表格；当前实际依赖以仓库 Cargo.lock 为准。
 
-研究使用 agent-reach 路由中的 Exa 搜索、GitHub CLI 和通用网页读取方式。环境有 Exa/mcporter 和 gh，但没有 agent-reach 主命令，所以 doctor/check-update 不可执行；没有因此假装做过环境体检或版本更新检查。没有安装或更新技能依赖。
+资料通过搜索、上游源码和官方页面核对。引用记录保留来源及版本边界，不以工具运行环境或单次抓取结果代替接口保证。
 
 ## 5. 本机静态验证记录
 
-1. 确认当前工作目录和远程仓库起初为空，无现有应用实现或仓库约定需要沿用。
+1. 确认仓库约定、目标功能和部署前提。
 2. 查询 PATH CLI `codex --version` 和 app-server、daemon、proxy、generate-json-schema 帮助。
 3. 查询桌面内置 binary 的版本。
 4. 两份 binary 分别执行 schema 导出，比较实际方法/字段。
-5. 读取桌面相关进程元数据，确认远程连接使用 SSH proxy；不保留个人 host 名称。
+5. 读取桌面相关进程元数据，确认远程连接使用 SSH proxy；实际部署标识不进入公开记录。
 6. 检查默认控制 socket 是否存在，没有建立真实会话连接。
 7. 使用 GitHub API 固定上游 commit 并读取源码。
 8. 获取 Telegram/Discord/库文档和 crates.io 元数据。
@@ -100,7 +100,7 @@ codex app-server generate-json-schema --out /tmp/pocketpilot-schema
 - 实际完整读取 [Thread Introduction](https://open.larksuite.com/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/thread-introduction)：thread_id、reply_in_thread、group_message_type=thread、按 thread 分页历史与新旧群类型差异。
 - [官方 Python SDK WS sample](https://github.com/larksuite/oapi-sdk-python/blob/0d9749a4728446a0ffa2e8374b37b5e1ce1cfd9c/samples/ws/sample.py)：消息事件、新版 card.action.trigger 与 ws.Client 的组合。
 - [官方 WS client](https://github.com/larksuite/oapi-sdk-python/blob/0d9749a4728446a0ffa2e8374b37b5e1ce1cfd9c/lark_oapi/ws/client.py)：心跳、帧组包、事件分发；[reply model](https://github.com/larksuite/oapi-sdk-python/blob/0d9749a4728446a0ffa2e8374b37b5e1ce1cfd9c/lark_oapi/api/im/v1/model/reply_message_request_body.py)：reply_in_thread、uuid 字段。
-- 尝试打开多个官方 REST、WS、callback 动态页面，部分只有导航或明确 404，未将它们当成已读取完整规格。没有假定 uuid 的幂等窗口、所有版本/地区的回调一致性、卡片永久可更新或具体限额。
+- 未完整核实的 REST、WS 与 callback 细节不作为保证；uuid 幂等窗口、地区/版本回调差异、卡片更新期限及配额需在目标组合中另行验证。
 
 ### Claude 与 shim 候选
 

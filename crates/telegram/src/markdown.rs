@@ -308,14 +308,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn screenshot_chinese_bold_labels_and_sentence_boundaries_render_without_literal_stars() {
+    fn cjk_bold_labels_and_sentence_boundaries_render_without_literal_stars() {
         let r = render(
-            "- **研究对象： **拟纳入 30–75 岁患者。\n- **干预周期： **12 周干预。\n\n**第一，选题有研究依据，但不能预设联合方案有效。**运动降压已有研究支持。\n\n最需要加强的是研究问题的针对性：**为什么特别选择伴情绪症状的高血压患者，以及心理模块在其中承担什么关键作用，论证还不够集中。**目前情绪主要是入组条件。",
+            "- **字段说明： **用于展示示例。\n- **记录数量： **12 条记录。\n\n**第一，示例仅用于检验格式。**后续文字正常保留。\n\n需要验证的边界：**中文标点后的结束标记应当被识别。**这里继续正文。",
         );
-        assert!(r.html.contains("<b>研究对象：</b> 拟纳入"), "{}", r.html);
-        assert!(r.html.contains("<b>干预周期：</b> 12 周干预"));
-        assert!(r.html.contains("有效。</b>运动降压"));
-        assert!(r.html.contains("针对性：<b>为什么"));
+        assert!(r.html.contains("<b>字段说明：</b> 用于展示"), "{}", r.html);
+        assert!(r.html.contains("<b>记录数量：</b> 12 条记录"));
+        assert!(r.html.contains("格式。</b>后续文字"));
+        assert!(r.html.contains("边界：<b>中文标点"));
         assert!(!r.html.contains("**"));
     }
 
@@ -338,29 +338,29 @@ mod tests {
                 .html
                 .contains("<pre>**代码： **")
         );
-        let combined = render("💭 中间过程\n\n✅ ## 最终结果\n\n**研究对象： **患者");
+        let combined = render("💭 中间过程\n\n✅ ## 最终结果\n\n**字段说明： **示例");
         assert!(combined.html.contains("💭 中间过程\n\n✅ <b>最终结果</b>"));
-        assert!(combined.html.contains("<b>研究对象：</b> 患者"));
+        assert!(combined.html.contains("<b>字段说明：</b> 示例"));
     }
 
     #[test]
     fn bold_compatibility_preserves_code_escapes_links_and_html_safety() {
-        let code = "```text\n✅ # 不应成为标题\n**研究对象： **患者\n```";
+        let code = "```text\n✅ # 不应成为标题\n**字段说明： **示例\n```";
         let r = render(code);
         assert!(
             r.html
-                .contains("<pre>✅ # 不应成为标题\n**研究对象： **患者\n</pre>")
+                .contains("<pre>✅ # 不应成为标题\n**字段说明： **示例\n</pre>")
         );
         assert!(!r.html.contains("<b>"));
         let r = render(&format!("✅ {code}"));
         assert!(
             r.html
-                .contains("✅ <pre>✅ # 不应成为标题\n**研究对象： **患者\n</pre>"),
+                .contains("✅ <pre>✅ # 不应成为标题\n**字段说明： **示例\n</pre>"),
             "{}",
             r.html
         );
-        let r = render(r"`**研究对象： **` 与 \*\*中文标签： \*\*正文");
-        assert!(r.html.contains("<code>**研究对象： **</code>"));
+        let r = render(r"`**字段说明： **` 与 \*\*中文标签： \*\*正文");
+        assert!(r.html.contains("<code>**字段说明： **</code>"));
         assert!(r.html.contains("**中文标签： **正文"));
         assert!(!r.html.contains("<b>"));
         assert_eq!(render("只有 **未闭合中文").plain, "只有 **未闭合中文");
@@ -369,8 +369,8 @@ mod tests {
         assert!(r.html.contains("<b>中文结论。</b>正文"));
         assert!(r.html.contains("href=\"https://example.com/a**b\""));
         assert!(r.html.contains("&lt;script&gt;") && !r.html.contains("<script>"));
-        let r = render("| 项目 | 说明 |\n|---|---|\n| **研究对象： **患者 | 说明 |");
-        assert!(r.html.contains("<b>研究对象：</b> 患者"));
+        let r = render("| 项目 | 说明 |\n|---|---|\n| **字段说明： **示例 | 说明 |");
+        assert!(r.html.contains("<b>字段说明：</b> 示例"));
     }
 
     #[test]

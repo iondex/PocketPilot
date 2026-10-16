@@ -56,7 +56,8 @@ max_attempts = 2
 # digits = 6
 # period_seconds = 30
 # minimum_remaining_seconds = 5
-# prompt_patterns = ['(?i)^verification code:\s*$', '(?i)^otp:\s*$']
+# 匹配挑战文案和可选括号上下文，不嵌入实际用户名、主机名或 IP。
+# prompt_patterns = ['(?i)^(?:\([^\r\n()]{1,256}\)\s*)?verification code:\s*$', '(?i)^otp:\s*$']
 # password_prompt_patterns = ['(?i)^password:\s*$']
 
 # Provider 和 workspace 持久化在应用 SQLite，运行时动态发现/管理。

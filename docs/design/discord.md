@@ -53,4 +53,4 @@ agent 输入使用与 Telegram 相同的 operations 状态机：Received → Pre
 
 当前 mock HTTP + 类型化 WebSocket fixture 覆盖 category/channel 创建、完整历史过滤、只读进入、steer、同 interaction 去重、丢回执不重发、owner 拒绝、解绑不停止任务；另有持久资源/输出恢复与容器不可改绑测试。
 
-尚未提供真实 Discord token/guild，不能宣称真实 gateway、权限、上传或断网已验收。下一阶段再增加 select/button 菜单、普通 channel 文本输入、完整离线 inbox、资源核对 CLI、删除 channel 后替换与可配置合并预算。当前用 slash 明确发消息，避免把普通聊天误当 agent 输入。
+真实 gateway、权限、上传和断网行为需要在目标服务器单独验收。下一阶段再增加 select/button 菜单、普通 channel 文本输入、完整离线 inbox、资源核对 CLI、删除 channel 后替换与可配置合并预算。当前用 slash 明确发消息，避免把普通聊天误当 agent 输入。
