@@ -6,7 +6,7 @@
 
 PocketPilot 连接已经运行的 Codex app-server；启动、退出、重连不会启动或重启 agent 服务。Desktop、CLI 和 PocketPilot 必须连接同一个执行实例。共用 ~/.codex 的历史文件不能证明执行实例相同。
 
-已按授权配置 anjie-bsc-arb 的既有共享 daemon 和九个工作区；SSH 控制已通过专用会话验收并开放。直接使用 /workspaces 选择。其他机器请填写实际共享 Unix socket，或已经存在的 loopback WS/WSS endpoint。
+已按授权配置 anjie-bsc-arb 的既有共享 daemon 和九个工作区；SSH 控制已通过专用会话验收并开放。直接使用 /workspaces 选择。本轮同时登记 anjie-solana-ct 和 aws-work。SSH binary/socket 自动探测；新实例默认只读。
 
 本机当前 Desktop 以 stdio 运行，没有可附加的控制 socket/公开 listener；现有本地活跃任务尚不能接入。没有重启 Desktop，也没有用一个共用历史文件的新服务冒充它。支持受测的本地共享入口，仍需本机部署提供这样的入口。
 
@@ -18,7 +18,8 @@ PocketPilot 连接已经运行的 Codex app-server；启动、退出、重连不
 cargo build --workspace --locked
 ./target/debug/pocketpilot config-check --credentials
 ./target/debug/pocketpilot doctor --connect --telegram
-./target/debug/pocketpilot sessions --workspace WORKSPACE_ID list
+./target/debug/pocketpilot providers list
+./target/debug/pocketpilot workspaces list
 ```
 
 本机和 SSH 的 Unix proxy 都在字节通道上执行 WebSocket 握手。SSH 读取原有 OpenSSH config，保留 Include、Match、ProxyJump、密钥/agent 和 known_hosts 规则。远端非交互 shell 必须保持 stdout 安静。密码、key passphrase 和 TOTP 通过 OpenSSH askpass responder 读取同一根 TOML；OTP 提示必须匹配明确的 prompt_patterns，未知挑战拒绝回答。
@@ -89,7 +90,7 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 
 ## /start 不再自动产生 Telegram topic 的设置
 
-在 BotFather 为此 bot 开启 **Disallow users to create new threads**，保留 Topics 模式。该设置关闭用户建 topic 的能力，bot 仍可创建管理与 session topics。设置开启前，Telegram 客户端可能在 bot 收到 /start 前就自动创建同名 topic，代码无法撤销这一步；不会自动删除这些已有聊天。telegram-check 会显示 user_topic_creation_enabled 供核对，应为 false。
+在 BotFather 为此 bot 开启 **Disallow users to create new threads**，保留 Topics 模式。该设置关闭用户建 topic 的能力，bot 仍可创建管理与 session topics。设置开启前，Telegram 客户端可能在 bot 收到 /start 前就自动创建同名 topic，代码无法撤销这一步；不会自动删除这些已有聊天。doctor --telegram 会显示 user_topic_creation_enabled 供核对，应为 false。
 
 ## 编号导航补充测试
 
@@ -99,3 +100,11 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 - 管理菜单删除后再操作，应在已知编辑失败后新发菜单；未知发送结果不自动重试。
 - 会话内数字仍是正常 agent 输入，只有管理 topic 将数字解释为导航。
 - 无历史 agent 回复时不发占位；/history 可显式查询 agent 历史，CLI 可导出完整角色记录。
+
+## 动态工作区与原型数据库
+
+配置中不再填写 provider/workspace 或 Codex bin/socket。允许的主机、SSH alias、凭据、项目根路径仍在根 TOML。新工作区可在管理 topic 选中主机后用 /add /绝对路径 名称 添加，/remove 名称 只移除应用入口。普通任务文本仍会被管理界面拒绝。
+
+数据库直接使用根 schema.sql；原型阶段不运行 migrations，不清空既有配对/绑定/投递。创建空目录和重开已有状态均有回归覆盖；现有一份 provider 与九个工作区已保留原 ID 导入 catalog。
+
+日常运维保留 serve/config-check/doctor/hosts/pair/providers/workspaces；删除测试专用 probe、sessions、state-init 和重复 telegram-check 命令。共享生命周期测试继续由隔离原生 fixture 覆盖，真实远端测试不写既有用户会话。

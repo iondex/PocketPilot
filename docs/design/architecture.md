@@ -2,6 +2,28 @@
 
 状态：架构契约与接口设计。当前已实现 Telegram 服务和可选 Discord 原型；下方接口示例表达职责，部分名称/高级能力仍为设计目标。实际文件与验证边界见实施计划和验证记录，不能将示例当作已导出的 Rust API。
 
+## 当前源码边界
+
+七个 crate 均为 publish=false，源码物理目录保持 src/ 下单层文件。
+
+| crate | 所有权 |
+| --- | --- |
+| ssh | 原生 SSH 配置、ProxyJump/ProxyCommand、连接参数、askpass、TOTP 与认证导出解析；不依赖 app/engine/codex |
+| session | 统一 AgentProvider、领域模型、允许的 Mutation、历史与消息规则 |
+| codex | 生成 DTO、RPC/framing、只读观察、四类写操作、Codex binary/socket 自动探测 |
+| engine | 全局服务锁、操作账本、共享连接/会话锁、配置快照、catalog 与 Integration trait |
+| telegram | 全部 Telegram API、配对、管理导航、topic、SQL、收发与观察 |
+| discord | 全部 Discord API、owner gateway、category/channel、SQL、收发与观察；可选 runtime feature |
+| app | 根配置组合、日常 CLI、tracing、catalog 后台刷新、Integration 装配与退出 |
+
+依赖方向：app → telegram/discord/engine；平台 → engine → codex → ssh/session。engine 不引用任何平台，平台不依赖 app。各平台持有自己的 Store 包装，共用 engine 的连接池与服务锁；平台 SQL 不放回 app。这是一份应用内边界，不是数据库权限隔离。
+
+Telegram runtime 只组装任务；commands/input/routing/binding/navigation/management/observation/delivery/inbox 分担职责。持久收发进一步分为 inbox_store/outbox/ledger。Discord 使用对应平铺模块。engine::operations 统一处理已获授权写操作的回执与 OutcomeUnknown，平台分别保留授权/时效/绑定检查与 dispatch 原子边界。
+
+根 TOML 与 catalog 合成一个不可变运行快照。provider/workspace 定义在 engine::model；配置反序列化跳过这两个运行字段，拒绝旧 TOML 中的静态目录。catalog 更新约两秒内可见；CAS 发布防止并发配置 reload 把已撤销主机重新带回。
+
+根 schema.sql 是原型期唯一数据库定义，幂等初始化不恢复写操作；稳定 0.1 前不维护 migrations。Codex JSON Schema 与 DTO 仍只由 build.rs 生成到 OUT_DIR。
+
 ## 1. 架构目标
 
 PocketPilot 是会话的附加客户端和聊天平台桥接器。Codex 继续拥有 thread、turn、任务执行、历史与审批状态；PocketPilot 只拥有地址映射、平台交互、投递记录和本地观察缓存。
@@ -12,7 +34,7 @@ PocketPilot 是会话的附加客户端和聊天平台桥接器。Codex 继续�
 - ChatPlatform：Telegram/未来 Lark、Discord 的用户交互和消息投递。
 - RpcTransport：本地 proxy、SSH proxy、WebSocket 的连接和 framing。
 
-运行时采用单进程 Tokio 服务、SQLite 持久化和 bounded actor 队列。MVP 不需要 Redis、Kafka、HTTP 管理后台、动态插件 ABI 或分布式调度。
+运行时采用单进程 Tokio 服务、SQLite 持久化和 有界任务并发与每会话串行锁。MVP 不需要 Redis、Kafka、HTTP 管理后台、动态插件 ABI 或分布式调度。
 
 ```mermaid
 flowchart TB
@@ -137,28 +159,24 @@ CapabilityChanged { restricted_reason }
 
 Codex wire enum 接受未知扩展并保留安全诊断信息，未知事件不让全服务 panic；未知运行状态立即变为 Unknown，不能映射 idle。新增只读字段可忽略，但审批类型、执行语义等未知行为必须限制控制能力。
 
-### 3.3 平台接口
+### 3.3 集成接口（当前实现）
 
 ```rust
 #[async_trait::async_trait]
-pub trait ChatPlatform: Send + Sync {
-    fn capabilities(&self) -> PlatformCapabilities;
-    async fn create_container(&self, spec: ContainerSpec)
-        -> Result<ContainerReceipt, PlatformError>;
-    async fn rename_container(&self, target: PlatformAddress, title: &str)
-        -> Result<(), PlatformError>;
-    async fn deliver(&self, message: Delivery)
-        -> Result<DeliveryReceipt, PlatformError>;
-    async fn update_status(&self, card: StatusCard)
-        -> Result<(), PlatformError>;
-    async fn acknowledge_action(&self, action: PlatformActionRef)
-        -> Result<(), PlatformError>;
+pub trait Integration: Send + Sync {
+    fn name(&self) -> &'static str;
+
+    async fn run(
+        &self,
+        context: Context,
+        stop: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(), IntegrationError>;
 }
 ```
 
-Inbound 由 adapter 自己接收，再转成统一的 `UserCommand` envelope；它包含用户、平台地址、稳定外部 update/message ID、平台发送时间、本地接收时间、绑定修订号、接收时的连接 epoch。平台接口不暴露 provider 的 wire JSON。Topic 与 Discord channel 都是 session container，但 Telegram 控制菜单、Discord category 是 adapter 的表现细节。
+Context 提供共享 ConfigFile、Store 和 Connections；Telegram 与 Discord 均实际实现此接口，由 app::runtime 同一条装配路径启动。run 拥有平台收发任务，stop 只退出桥接工作。平台不能把 stop 翻译为 agent 生命周期操作。
 
-消息长度、可编辑/固定能力、按钮限制在 PlatformCapabilities；session crate 传可见文本/结构化状态，adapter 分片和渲染。未来不能为 Discord 把 Telegram message_thread_id 强行映射成通用整数。
+编号菜单/topic 和 slash/category/channel 的交互差异保留在平台内部；统一的是启动、退出、状态依赖、会话锁、AgentProvider 与操作结果语义。没有为了统一外观强行设计通用整数地址或按钮 API。未来 Lark 实现同一 Integration，Claude shim 实现 AgentProvider。
 
 ### 3.4 RpcTransport
 

@@ -13,7 +13,6 @@ Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 
 ```sh
 cargo build --workspace --locked
 ./target/debug/pocketpilot config-check --credentials
-./target/debug/pocketpilot telegram-check
 ./target/debug/pocketpilot doctor --connect
 ./target/debug/pocketpilot serve
 ```
@@ -40,9 +39,9 @@ Telegram 会话只展示 agent 正文，不回显用户输入，不加角色标�
 - 业务写入仅创建、用户发起的 resume、续轮和带 expectedTurnId 的 steer；没有停止、取消、审批代答或 agent 服务管理接口。
 - 启停、崩溃、重连和配置 reload 只改变桥接连接，不自动恢复或重发 agent 输入；结果未知时先核对。
 - 默认只读。provider 的 control_verified 是针对该共享执行实例的部署确认；doctor --connect 本身只检查连接。
-- SSH 使用系统 OpenSSH 的有效配置、known_hosts、心跳和认证链；TOTP seed 保留在根 TOML，通过受限 askpass responder 回答已配置的挑战。
-- host/workspace/速率支持热更新。执行地址改变须使用新的 provider ID；原平台容器不能换绑其他 session。
-- crate 名称为 session、codex、telegram、discord、app；源码直接平铺在各 crate 的 src/ 下，binary 仍叫 pocketpilot。
+- SSH 使用系统 OpenSSH 的有效配置、known_hosts、心跳和认证链；TOTP seed 保留在根 TOML，通过受限 askpass responder 回答已配置的挑战。ProxyJump 和 ProxyCommand 都继承原生配置。
+- host/认证/速率由根配置热更新；provider 和 workspace 由 SQLite catalog 动态管理，支持在线新增/移除。Codex binary/socket 自动探测；原容器不能换绑其他 session。
+- crate 名称为 ssh、session、codex、engine、telegram、discord、app；源码直接平铺在各 crate 的 src/ 下，binary 仍叫 pocketpilot。
 
 [文档目录](docs/README.md) · [实施计划](docs/planning/implementation.md) · [验收清单](docs/planning/acceptance.md) · [协议生成](docs/design/protocol-generation.md)
 
@@ -54,3 +53,23 @@ cargo build -p app --features discord --locked
 ```
 
 在同一根配置增加 [discord] 的 token 与 guild_id；可以和 Telegram 同进程运行，共享连接/会话锁/写入账本。一个 workspace 一个 category，一个 session 一个 channel，owner 使用 /pp-workspaces、/pp-sessions、/pp-open、/pp-new 和 /pp-ask。完整范围、安装权限与限制见 [Discord 原型](docs/design/discord.md)。当前未提供真实 Discord 凭据，未做真实 guild 联调。
+
+## 动态目录与日志
+
+provider 是一个现有 agent 执行实例，workspace 是它的项目目录。它们保存在应用 SQLite，不写入 TOML；允许连接的 SSH aliases 和项目根路径仍由配置限定。主机选择页支持 /add /绝对路径 可选名称 和 /remove 名称，普通任务文本只在会话 topic 接收。
+
+```sh
+./target/release/pocketpilot doctor --connect --telegram
+./target/release/pocketpilot providers list
+./target/release/pocketpilot workspaces list
+./target/release/pocketpilot workspaces add --provider PROVIDER_ID --cwd /srv/code/project
+```
+
+新发现的实例保持只读。完成共享生命周期验证后，可用 providers trust PROVIDER_ID 记录部署确认，--revoke 撤销。测试专用 probe、sessions、state-init、telegram-check CLI 已移除，日常诊断合并到 doctor。
+
+tracing 可同时输出到终端和日志文件，支持 daily/hourly 轮转与 retained_files 数量上限。稳定 0.1 前直接维护 [schema.sql](schema.sql)。开发风格见 [CONTRIBUTING.md](CONTRIBUTING.md)，构建体积分析见 [构建说明](docs/build.md)。
+
+```sh
+cargo build -p app --release --no-default-features --locked
+./target/release/pocketpilot serve
+```

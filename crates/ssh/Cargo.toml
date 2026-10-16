@@ -1,0 +1,27 @@
+[package]
+name = "ssh"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+prost.workspace = true
+url.workspace = true
+fs2.workspace = true
+glob.workspace = true
+regex.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+ssh2-config.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+totp-rs.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

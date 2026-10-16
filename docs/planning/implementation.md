@@ -43,31 +43,22 @@ JSON-RPC 不直接套标准 jsonrpsee server/client：Codex wire 省略 jsonrpc 
 
 ## 3. crate 与文件边界
 
-采用四个简短的本地 package，全部 publish=false：
-
-| package/目录 | Rust crate | 职责与依赖 |
-| --- | --- | --- |
-| crates/session | session | 模型、ports、应用操作、actor、历史/投递规则；不依赖 teloxide/sqlx/进程 API |
-| crates/codex | codex | Codex provider、wire、RPC、观察与 transport；依赖 session |
-| crates/telegram | telegram | Bot API、poller、菜单/topic、授权与渲染；依赖 session |
-| crates/app | app | CLI、配置/凭据、SQLite、tracing、装配与进程生命周期；依赖前三者 |
-
-app 的 [[bin]] 名称为 pocketpilot；package 名仍为 app。源码目录、package 和 Rust import 均不使用项目名前缀。后续新增 claude/lark/discord 时复用同一边界，不预建空 crate。
+当前采用七个简短本地 package：ssh、session、codex、engine、telegram、discord、app，全部 publish=false。app 的 binary 仍叫 pocketpilot。确切职责和依赖方向见 [架构](../design/architecture.md)。
 
 ```text
 crates/
-  session/src/     lib.rs model.rs provider.rs operation.rs delivery.rs
-  codex/src/       lib.rs protocol.rs rpc.rs transport.rs ssh.rs provider.rs
-  telegram/src/    lib.rs
-  app/src/         lib.rs main.rs cli.rs config.rs credentials.rs storage.rs telemetry.rs pairing.rs
-migrations/
-crates/codex/build.rs  导出 schema、筛选与生成 DTO
-# 所有生成物写入 Cargo OUT_DIR，不在源码目录中
+  ssh/src/        连接、有效配置、认证与 TOTP 导出
+  session/src/    统一领域模型、provider 接口与文本规则
+  codex/src/      协议、RPC、transport、provider、自动发现
+  engine/src/     配置快照、共享连接、操作账本、catalog、integrations
+  telegram/src/   API、配对、管理、收发、观察及平台 SQL
+  discord/src/    可选平台 API、gateway、收发、观察及 SQL
+  app/src/        根配置、CLI、装配、inventory、tracing
+schema.sql        原型数据库定义；稳定 0.1 前直接修改
+crates/codex/build.rs  官方 schema/DTO 只生成到 Cargo OUT_DIR
 ```
 
-源码保持 src/ 下单层文件；新增功能按职责增加平铺文件，不预建 model/ports/service/runtime/transport 等多层目录。生成的协议代码仅写到 Cargo OUT_DIR。
-
-Store 暴露应用事务，不为每张表建立泛型 repository。共享 SSH transport 初期留在 codex；只有实际新增第二个 provider 后才评估抽成独立库，避免提前搭插件框架。
+源码不使用多层文件目录。provider/workspace 从根配置移入 SQLite catalog，bin/socket 自动发现，现有 ID 和绑定继续有效。SSH 单独成库并保持 native OpenSSH 后端；接入更多 provider 不要求复制认证代码。日常 CLI 保留 serve/config-check/doctor/hosts/pair/providers/workspaces，删除测试专用会话探针和重复诊断命令。
 
 ## 4. 顺序与阶段门禁
 
@@ -76,7 +67,7 @@ Store 暴露应用事务，不为每张表建立泛型 repository。共享 SSH t
 | P0 | W00–W03：骨架、配置、类型化 RPC 与兼容探针 | 原生本地隔离实验和真实 SSH 共享实例通过；既有本地 Desktop 入口待部署 | 已实现，部分部署未验收 |
 | P1 | W04–W07：远程、持久化、只读 provider、动作许可 | OpenSSH、账本、actor、白名单与未知结果不重发已有行为测试 | 已实现 |
 | P2 | W08–W11：Telegram、绑定、历史与投递 | mock 完整链路通过；实际私聊 topic 收发等待用户 | 代码完成，待用户验收 |
-| P3 | W12–W14：OTP、热更新、创建/续轮/steer | 实际 SSH 写入/断线完成通过；真实 OTP 待验收 | 代码完成，部分部署未验收 |
+| P3 | W12–W14：OTP、热更新、创建/续轮/steer | 实际 SSH 写入/断线完成通过；真实 TOTP 认证与专用连接断连重连已验收 | 代码完成，部分部署未验收 |
 | P4 | W15–W17：恢复、打包与验收 | 重启/unknown/持久批次测试通过；A01–A52 非全量实测 | 部分验收 |
 | D0 | Discord 原型 | owner slash、category/channel、共享锁/操作账本、输出队列；未提供真实凭据 | 原型完成，待真实 guild 验收 |
 
@@ -92,16 +83,16 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 ### W00 · Workspace 与运行骨架
 
-依赖：无。归属：根 Cargo 配置、四个 crates 的 lib/main、工具链与最小 CI。
+依赖：无。归属：根 Cargo 配置、七个 crates 的 lib/main、工具链与最小 CI。
 
-- 创建四个 publish=false package；app 声明 pocketpilot binary，确保 cargo run -p app --bin pocketpilot 的目标清晰。
+- 维护七个 publish=false package；app 声明 pocketpilot binary，确保 cargo run -p app --bin pocketpilot 的目标清晰。
 - 配置共享依赖/TLS feature、lockfile、fmt/clippy；主程序先提供本地帮助，不在初始化时连接服务。
 - 产物：可编译 workspace 与职责一致的空骨架，不拉入 Lark/Claude 依赖；Discord 为独立可选 feature。
 - 验证：workspace build、依赖方向检查、CLI help；无网络/agent 子进程副作用。覆盖 A23/A46 的初始结构约束。
 
 ### W01 · 单根配置、内联 token 与 tracing
 
-依赖：W00。归属：app/src/config.rs、credentials.rs、telemetry.rs、session 的 config/authorization 模型。
+依赖：W00。归属：app/src/config.rs、telemetry.rs、engine/src/config.rs、telegram/src/credentials.rs。
 
 - 实现根目录单一 TOML、相对路径和稳定 ID/引用校验。include 与 chat/user 允许列表字段明确拒绝；不存在配置合并优先级。
 - Telegram token 直接在 [telegram].token，格式校验与 Debug/错误脱敏，不从 .env 或环境变量回退。
@@ -139,9 +130,9 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 - 产物：普通 SSH host 的只读连接，不执行 daemon start/restart/bootstrap。
 - 验证：Include/Match/-F/跳板、慢 host 隔离、主机公钥异常；A25/A32/A33/A36。
 
-### W05 · SQLite 迁移与操作账本
+### W05 · SQLite schema 与操作账本
 
-依赖：W01。归属：app/src/storage.rs、migrations、session::Store。
+依赖：W01。归属：engine/src/storage.rs、schema.sql、session::Store。
 
 - 创建 bindings、operations、inbox/offset、text_items、deliveries、requests observation、provisionings；配置表只存派生索引。
 - 实现 ingest+offset、操作预留/Dispatching、item+outbox 等短事务；W11 再补批次表迁移。
@@ -255,7 +246,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 依赖：W15。归属：app cli、service 模板、CI、运行手册。
 
-- 完成 run/doctor/status/workspace/bindings/operations；默认输出不含正文或秘密，不提供 raw RPC/stop/restart agent。
+- 保留 serve/config-check/doctor/hosts/pair/providers/workspaces 运维入口；默认输出不含正文或秘密，不提供 raw RPC/stop/restart agent。
 - Linux x86_64/macOS arm64 build；桥接器服务与 agent daemon 独立，配置路径显式、运行目录不决定 secret 来源。
 - 单写者/poller 锁、日志滚动、队列/状态年龄诊断、SQLite 一致性备份与受控升级说明。
 - 产物：可安装产物、运行步骤、健康/能力分离的诊断。

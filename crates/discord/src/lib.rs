@@ -1,9 +1,31 @@
 //! Guild-owner-only slash-command prototype. No Message Content intent is needed.
+pub mod config;
+
+#[cfg(feature = "runtime")]
+pub mod runtime;
+
+#[cfg(feature = "runtime")]
+pub mod storage;
+
+#[cfg(feature = "runtime")]
+pub use runtime::Discord;
+
+#[cfg(feature = "runtime")]
 pub mod api;
+
+#[cfg(feature = "runtime")]
 pub mod gateway;
+
+#[cfg(feature = "runtime")]
 pub use api::Api;
+
+#[cfg(feature = "runtime")]
 use async_trait::async_trait;
+
+#[cfg(feature = "runtime")]
 pub use gateway::run;
+
+#[cfg(any(feature = "runtime", test))]
 use std::collections::BTreeMap;
 
 #[derive(Debug, thiserror::Error)]
@@ -56,6 +78,7 @@ pub struct Input {
     pub command: Command,
 }
 
+#[cfg(feature = "runtime")]
 #[async_trait]
 pub trait Backend: Send + Sync + 'static {
     /// Called after a guild-owner check and ephemeral interaction ACK.
@@ -88,6 +111,7 @@ pub fn channel_name(title: &str, thread: &str) -> String {
     format!("{title}-{suffix}")
 }
 
+#[cfg(any(feature = "runtime", test))]
 pub(crate) fn parse(
     name: &str,
     text: &BTreeMap<String, String>,
@@ -130,6 +154,7 @@ pub(crate) fn parse(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn guild_owner_is_required_and_stop_has_no_route() {
         assert!(authorized(1, Some(1), 2, 2));
@@ -139,6 +164,7 @@ mod tests {
         assert!(parse("pp-stop", &BTreeMap::new(), true).is_err());
         assert!(parse("pp-ask", &BTreeMap::new(), true).is_err());
     }
+
     #[test]
     fn channel_names_are_short_and_cannot_ping_members() {
         let name = channel_name("Hello @everyone / Test", "abcdef123456");

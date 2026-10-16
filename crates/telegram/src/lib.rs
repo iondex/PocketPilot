@@ -1,5 +1,18 @@
 //! Telegram transport. Only the service command starts receiving or sending messages.
 pub mod api;
+
+pub mod config;
+
+pub mod credentials;
+
+pub mod ledger;
+
+pub mod pairing;
+
+pub mod runtime;
+
+pub mod storage;
+pub use runtime::Telegram;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use std::time::Duration;
@@ -97,6 +110,7 @@ pub struct Inspector {
     bot: Bot,
     timeout: Duration,
 }
+
 impl Inspector {
     pub fn new(token: SecretString, timeout: Duration) -> Self {
         // No from_env: ordinary settings and credentials come from explicit config.
@@ -105,6 +119,7 @@ impl Inspector {
             timeout,
         }
     }
+
     pub async fn check(&self) -> Result<Identity, Error> {
         let me = api::account(&self.bot, self.timeout).await?;
         let hook = tokio::time::timeout(self.timeout, self.bot.get_webhook_info().send())
@@ -124,6 +139,7 @@ impl Inspector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn pairing_never_authorizes_a_group_or_another_private_peer() {
         assert_eq!(access(10, -100, false, true), Access::Denied);

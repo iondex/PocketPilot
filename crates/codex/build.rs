@@ -9,6 +9,7 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
 const ROOTS: &[&str] = &[
     "RequestId",
     "InitializeParams",
@@ -37,6 +38,7 @@ const ROOTS: &[&str] = &[
 struct Bundle {
     definitions: Definitions,
 }
+
 #[derive(Deserialize)]
 struct Definitions {
     #[serde(default)]

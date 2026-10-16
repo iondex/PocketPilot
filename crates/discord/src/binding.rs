@@ -1,0 +1,135 @@
+use super::{Result, Service, error, hashes};
+use crate::Api;
+use crate::Input;
+use crate::storage::Binding;
+use engine::config::Workspace;
+use engine::connections;
+use engine::reload::Snapshot;
+use session::AgentProvider;
+use session::History;
+use session::RuntimeStatus;
+
+impl Service {
+    pub(super) async fn history(
+        &self,
+        provider: &dyn AgentProvider,
+        ws: &Workspace,
+        thread: &str,
+    ) -> Result<History> {
+        let limit = self.connections.history_limit(&ws.provider_id).await;
+        let _permit = limit.acquire().await.map_err(error)?;
+        provider.history(thread).await.map_err(error)
+    }
+
+    pub(super) async fn open(
+        &self,
+        api: &Api,
+        input: &Input,
+        snapshot: &Snapshot,
+        workspace: &str,
+        thread: &str,
+    ) -> Result<String> {
+        let ws = self.workspace(&snapshot.config, workspace)?;
+        let actor = self.connections.actor(&ws.provider_id, thread).await;
+        let _guard = actor.lock().await;
+        let provider = self
+            .connections
+            .get(&snapshot.config, ws)
+            .await
+            .map_err(error)?;
+        let current = provider.read(thread).await.map_err(error)?;
+        connections::require_workspace(&current.cwd, ws).map_err(error)?;
+        let history = self.history(provider.as_ref(), ws, thread).await?;
+        self.fresh(api, input, snapshot, true).await?;
+        let category = match self
+            .store
+            .discord_reserve(input.bot, input.guild, &ws.id, None)
+            .await
+            .map_err(error)?
+        {
+            Some(id) => id,
+            None => {
+                let id = api
+                    .category(&format!("PP · {}", ws.name), input.user)
+                    .await
+                    .map_err(error)?;
+                self.store
+                    .discord_category_receipt(input.bot, input.guild, &ws.id, id)
+                    .await
+                    .map_err(error)?;
+                id
+            }
+        };
+        self.fresh(api, input, snapshot, true).await?;
+        let channel = match self
+            .store
+            .discord_reserve(
+                input.bot,
+                input.guild,
+                &ws.id,
+                Some((&ws.provider_id, thread)),
+            )
+            .await
+            .map_err(error)?
+        {
+            Some(id) => id,
+            None => api
+                .channel(category, &current.title, thread)
+                .await
+                .map_err(error)?,
+        };
+        self.fresh(api, input, snapshot, true).await?;
+        let provider = snapshot
+            .config
+            .providers
+            .iter()
+            .find(|p| p.id == ws.provider_id)
+            .ok_or("执行实例已移除。")?;
+        let host = snapshot
+            .config
+            .providers
+            .iter()
+            .find(|p| p.id == ws.provider_id)
+            .and_then(|p| snapshot.config.hosts.iter().find(|h| h.id == p.host_id))
+            .ok_or("机器已移除。")?;
+        let b = Binding {
+            bot: input.bot.to_string(),
+            guild: input.guild.to_string(),
+            channel: channel.to_string(),
+            owner: input.user.to_string(),
+            workspace: ws.id.clone(),
+            instance: ws.provider_id.clone(),
+            thread: thread.into(),
+            cwd: current.cwd,
+            endpoint: connections::fingerprint(host, provider),
+            active: true,
+            revision: 1,
+            observed_items: "{}".into(),
+            history_ready: false,
+            card_message: None,
+            card_text: None,
+        };
+        self.store.discord_bind(&b).await.map_err(error)?;
+        let b = self
+            .store
+            .discord_binding(input.bot, input.guild, channel)
+            .await
+            .map_err(error)?
+            .ok_or("映射未保存。")?;
+        if !b.history_ready {
+            let text = if matches!(current.status, RuntimeStatus::Active { .. }) {
+                session::delivery::full_history(&history)
+            } else {
+                session::delivery::latest_interaction(&history)
+            };
+            self.store
+                .discord_publish(&b, "initial-history", &text, &hashes(&history))
+                .await
+                .map_err(error)?;
+        }
+        Ok(format!(
+            "已添加 <#{channel}> · {}\n在该 channel 使用 /pp-ask text:内容。",
+            current.status.label()
+        ))
+    }
+}

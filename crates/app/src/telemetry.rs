@@ -1,5 +1,9 @@
 use app::config::Logging;
-use tracing_subscriber::{EnvFilter, fmt::writer::BoxMakeWriter, prelude::*};
+use tracing_subscriber::{
+    EnvFilter,
+    fmt::writer::{BoxMakeWriter, MakeWriterExt},
+    prelude::*,
+};
 
 pub fn init(config: &Logging) -> Result<Option<tracing_appender::non_blocking::WorkerGuard>, ()> {
     let filter = EnvFilter::try_new(&config.filter)
@@ -9,13 +13,30 @@ pub fn init(config: &Logging) -> Result<Option<tracing_appender::non_blocking::W
         .add_directive("teloxide=warn".parse().map_err(|_| ())?);
     let (writer, guard): (BoxMakeWriter, _) = if let Some(directory) = &config.directory {
         std::fs::create_dir_all(directory).map_err(|_| ())?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))
+                .map_err(|_| ())?;
+        }
         let file = tracing_appender::rolling::RollingFileAppender::builder()
-            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .rotation(if config.rotation == "hourly" {
+                tracing_appender::rolling::Rotation::HOURLY
+            } else {
+                tracing_appender::rolling::Rotation::DAILY
+            })
+            .max_log_files(config.retained_files)
             .filename_prefix("pocketpilot.log")
             .build(directory)
             .map_err(|_| ())?;
         let (writer, guard) = tracing_appender::non_blocking(file);
-        (BoxMakeWriter::new(writer), Some(guard))
+        let writer = if config.console {
+            BoxMakeWriter::new(writer.and(std::io::stderr))
+        } else {
+            BoxMakeWriter::new(writer)
+        };
+        (writer, Some(guard))
     } else {
         (BoxMakeWriter::new(std::io::stderr), None)
     };

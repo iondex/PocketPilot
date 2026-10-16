@@ -8,6 +8,7 @@ struct Handler {
     backend: Arc<dyn Backend>,
     api: Api,
 }
+
 #[async_trait]
 impl EventHandler for Handler {
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
@@ -78,6 +79,7 @@ impl EventHandler for Handler {
 fn string(name: &str, description: &str, required: bool) -> CreateCommandOption {
     CreateCommandOption::new(CommandOptionType::String, name, description).required(required)
 }
+
 fn commands() -> Vec<CreateCommand> {
     vec![
         CreateCommand::new("pp-workspaces").description("允许的工作区"),

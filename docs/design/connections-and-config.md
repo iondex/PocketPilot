@@ -4,7 +4,7 @@
 
 ## 共享运行实例
 
-PocketPilot 是附加客户端，只连接已有服务。本机 Desktop 的入口与每台 SSH 机器上的执行 daemon 是不同实例；本地 endpoint 不自动提供所有远端任务。配置明确登记 host → provider → workspace，分别连接后聚合，不扫描登录全部 SSH alias。
+PocketPilot 是附加客户端，只连接已有服务。本机 Desktop 的入口与每台 SSH 机器上的执行 daemon 是不同实例；本地 endpoint 不自动提供所有远端任务。根配置只允许主机与项目根路径；执行实例和工作区由应用 catalog 动态管理。分别连接后聚合，不扫描登录全部 SSH alias。
 
 SSH 的共享条件是相同远程用户、有效控制 socket 和 daemon。Desktop、CLI remote 模式与 PocketPilot 可以使用各自的 SSH 连接，但必须最终进入同一 daemon。仅共用历史目录不能证明活跃执行对象相同。
 
@@ -24,17 +24,25 @@ Discord 是可选编译功能，配置 token 和 guild_id。原型只允许该�
 
 密码、key passphrase 和 TOTP seed 均从根 TOML 读取，Debug/日志/错误脱敏。普通设置不存在环境变量覆盖；CODEX_SCHEMA_BIN 仅选择编译期 schema 工具，CODEX_TEST_BIN 仅供隔离原生兼容测试。
 
+## 动态 provider 与 workspace
+
+provider 是一台主机上一个现有 Codex 执行实例，记录检测到的 binary/socket 和只读/控制部署确认；workspace 是关联该实例的绝对项目目录。二者持久化在 SQLite catalog，ID 不因重启改变；不再接受根 TOML 的 providers/workspaces 或 host.codex_bin/codex_control_socket 字段。
+
+启动时读取已有目录；新允许主机由后台有界发现任务处理。SSH 只读探测使用固定 POSIX shell 程序，查找标准安装位置、原生 package/NVM binary 与现有控制 socket，支持根目录符号链接和自定义登录 shell。不会启动 daemon 或用共用历史文件的服务替代现有实例。未找到入口时该主机保持不可连接。
+
+管理 topic 先选择主机，再 /add /绝对路径 可选名称；/remove 名称 只删除入口，不删除远端会话。CLI 的 providers list、workspaces list/add/remove 可在服务运行时使用，变更约两秒内发布为完整快照。CLI providers trust ID 记录共享生命周期验证，--revoke 撤销；新发现的 provider 默认只读，不能继承另一实例的控制确认。
+
 ## 热更新的实际范围
 
 notify 监听根配置的父目录，处理原子替换；debounce 和周期 rescan 后完整解析、静态验证，再通过 arc-swap 替换不可变快照。未知字段（包括 include）、重复 ID/短名、错误引用、越界 cwd、无效认证/速率全部拒绝，继续使用最后有效快照。
 
 | 修改 | 当前行为 |
 | --- | --- |
-| 增删 host/workspace | 菜单、执行与投递重新检查当前范围；不自动启动服务或任务 |
-| workspace.additional_cwds | 精确查询各个允许 cwd，并将分页游标绑定到该路径集合 |
+| 根配置增删 host / catalog 增删 workspace | 菜单、执行与投递重新检查当前范围；不自动启动服务或任务 |
+| 状态中的 workspace.additional_cwds | 精确查询各个允许 cwd，并将分页游标绑定到该路径集合 |
 | 显示名、Telegram 合并与速率 | 新操作采用当前配置；持久批次已有固定 flush 截止时间 |
 | 密码/seed/认证策略 | 现有连接保持；后续认证读取相同已验证配置 hash |
-| endpoint/socket/有效远程用户变化 | 原 provider ID 拒绝重定向，须分配新 ID 并重新绑定 |
+| 自动检测到其他 socket / 有效远程用户变化 | 原 provider ID 拒绝重定向，须分配新 ID 并重新绑定 |
 | Telegram/Discord token、Discord guild、data_dir | 整份候选拒绝，需重启桥接后应用 |
 | logging | 启动时装配，需重启桥接应用 |
 | OpenSSH config | 发现时读取，重连时重新解析；不监控全部 Include 文件并主动断开有效连接 |
@@ -43,7 +51,7 @@ notify 监听根配置的父目录，处理原子替换；debounce 和周期 res
 
 ## OpenSSH 与挑战认证
 
-发现阶段读取 ~/.ssh/config 和原生 Include，使用 ssh2-config/glob 提取明确 alias；通配/否定项不展开成待登录主机。真正连接仅使用 TOML 中允许的主机。对允许 alias 调用系统 ssh -G，显式 ssh_config 则使用相同 -F；保留系统 OpenSSH 的 Host/Match、ProxyJump、ProxyCommand、证书和 agent 语义。
+发现阶段使用 ssh2-config 提取 ~/.ssh/config 中明确 alias；通配/否定项不展开成待登录主机。真正连接仅使用 TOML 中允许的主机。对允许 alias 调用系统 ssh -G，显式 ssh_config 则使用相同 -F；保留系统 OpenSSH 的 Host/Match、ProxyJump、ProxyCommand、证书和 agent 语义。
 
 当前只使用系统 OpenSSH 后端，backend=auto 和 openssh 均进入同一路径。之前的 russh 双后端是研究方案，没有进入实现。SSH 本身负责多阶段 key/password/keyboard-interactive 认证；KbdInteractiveAuthentication=yes 只是候选能力，不能证明服务器需要 OTP。
 
@@ -51,7 +59,13 @@ notify 监听根配置的父目录，处理原子替换；debounce 和周期 res
 
 只回答显式匹配的挑战：password、加密 key passphrase、TOTP prompt。未知提示及 host-key 确认拒绝；StrictHostKeyChecking=yes，不能以回答 yes 绕过 known_hosts。TOTP 用 totp-rs，支持配置的 SHA1/SHA256/SHA512、6/8 位与周期；临近过期等待下一窗口，不在同一次认证重复使用同窗口，限制尝试次数。短信、push、硬件确认和 HOTP 不冒充可由 TOTP seed 自动完成的能力。
 
-目前真实 SSH 联调使用密钥认证，OTP 仅有 RFC 向量和挑战行为测试，仍待真实 OTP/跳板组合验收。
+已用用户提供的 Google Authenticator 导出离线解析后进行真实 TOTP 认证；专用 SSH 子连接强制断开后重新认证成功。aws-work 的 ProxyJump 和 ProxyCommand 均已实测；导出 URI、seed 与验证码不写入仓库或日志。多段跳转的 prompt_patterns 应匹配对应网关账号，不能把网关 seed 用于任意目标的提示。
+
+## tracing 与日志轮转
+
+logging.filter 直接控制 tracing，普通会话的成功续轮/steer 与详情写日志。终端输出由 console 控制；配置 directory 时同时写文件。rotation 支持 daily/hourly，retained_files 默认 14，并在轮转时清理旧日志；日志目录权限 0700。logging 参数变更需重启桥接，现有 agent 不受影响。
+
+认证 helper 不初始化日志，避免验证码流混入普通输出。HTTP/TLS/SDK/SQL 传输 target 独立过滤，即使用户指定更细日志也不记录 token URL、原始帧或 SQL 参数。所有诊断错误脱敏，操作记录使用稳定 ID，不记录任务正文。
 
 ## 慢连接与生命周期
 

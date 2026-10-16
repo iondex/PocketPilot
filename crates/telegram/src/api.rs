@@ -126,9 +126,11 @@ impl Api {
             timeout: Duration::from_secs(2),
         })
     }
+
     pub fn new(token: SecretString) -> Result<Self, Error> {
         Self::with_builder(token, reqwest::Client::builder())
     }
+
     fn with_builder(token: SecretString, builder: reqwest::ClientBuilder) -> Result<Self, Error> {
         // teloxide's default HTTP timeout is 17s, shorter than a 30s long poll.
         let client = builder
@@ -141,6 +143,7 @@ impl Api {
             timeout: Duration::from_secs(50),
         })
     }
+
     pub async fn identity(&self) -> Result<Identity, Error> {
         let me = account(&self.bot, self.timeout).await?;
         let webhook = self.call(self.bot.get_webhook_info()).await?;
@@ -152,6 +155,7 @@ impl Api {
             user_topic_creation_enabled: me.allows_users_to_create_topics,
         })
     }
+
     pub async fn updates(&self, offset: Option<i32>) -> Result<Vec<Update>, Error> {
         let mut request = self
             .bot
@@ -164,6 +168,7 @@ impl Api {
         }
         self.call(request).await
     }
+
     pub async fn send(
         &self,
         chat: i64,
@@ -173,6 +178,7 @@ impl Api {
     ) -> Result<i32, Error> {
         self.send_formatted(chat, topic, text, buttons, false).await
     }
+
     pub async fn send_formatted(
         &self,
         chat: i64,
@@ -213,9 +219,11 @@ impl Api {
         }
         Ok(self.call(request).await?.id.0)
     }
+
     pub async fn edit(&self, chat: i64, message: i32, text: &str) -> Result<(), Error> {
         self.edit_buttons(chat, message, text, Vec::new()).await
     }
+
     pub async fn edit_buttons(
         &self,
         chat: i64,
@@ -226,6 +234,7 @@ impl Api {
         self.edit_formatted(chat, message, text, buttons, false)
             .await
     }
+
     pub async fn edit_formatted(
         &self,
         chat: i64,
@@ -250,6 +259,7 @@ impl Api {
             Err(error) => Err(error),
         }
     }
+
     pub async fn create_topic(&self, chat: i64, title: &str) -> Result<i32, Error> {
         Ok(self
             .call(self.bot.create_forum_topic(ChatId(chat), title))
@@ -258,6 +268,7 @@ impl Api {
             .0
             .0)
     }
+
     pub async fn rename_topic(&self, chat: i64, topic: i32, title: &str) -> Result<(), Error> {
         match self
             .call(
@@ -271,6 +282,7 @@ impl Api {
             Err(error) => Err(error),
         }
     }
+
     pub async fn answer_callback(&self, id: &str) -> Result<(), Error> {
         self.call(
             self.bot
@@ -279,6 +291,7 @@ impl Api {
         .await?;
         Ok(())
     }
+
     async fn call<R: Request<Err = teloxide::RequestError>>(
         &self,
         request: R,
@@ -305,12 +318,14 @@ pub(crate) struct Account {
     #[serde(default)]
     pub allows_users_to_create_topics: bool,
 }
+
 #[derive(Deserialize)]
 struct AccountResponse {
     ok: bool,
     result: Option<Account>,
     error_code: Option<u16>,
 }
+
 pub(crate) async fn account(bot: &Bot, timeout: Duration) -> Result<Account, Error> {
     let work = async {
         let mut url = bot.api_url();
@@ -350,6 +365,7 @@ pub(crate) async fn account(bot: &Bot, timeout: Duration) -> Result<Account, Err
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[tokio::test]
     async fn production_poll_budget_survives_a_response_slower_than_the_sdk_default() {
         use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path_regex};
@@ -371,6 +387,7 @@ mod tests {
         api.bot = api.bot.set_api_url(url::Url::parse(&server.uri()).unwrap());
         assert!(api.updates(None).await.unwrap().is_empty());
     }
+
     #[tokio::test]
     async fn identity_extension_keeps_the_token_in_the_url_path_and_reads_private_topics() {
         use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path_regex};
@@ -390,6 +407,7 @@ mod tests {
         assert!(!identity.webhook_enabled);
         assert_eq!(identity.bot_id, 1);
     }
+
     #[test]
     fn sdk_preserves_private_topic_and_denies_group_sender() {
         let private = r#"{"update_id":1,"message":{"message_id":7,"message_thread_id":11,"date":100,"from":{"id":10,"is_bot":false,"first_name":"User"},"chat":{"id":10,"type":"private","first_name":"User"},"text":"hello","is_topic_message":true}}"#;

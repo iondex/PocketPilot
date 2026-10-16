@@ -1,4 +1,4 @@
-# Telegram MVP 配置示例；真实 endpoint 和 workspace 需要按部署填写。
+# Telegram MVP 配置示例；只登记允许连接的主机与项目根路径。
 # 运行时只读取根目录 pocketpilot.toml；不支持 include 或 .env。
 # 文件路径以本配置文件所在目录为基准。公开示例不包含真实令牌。
 
@@ -7,8 +7,11 @@ data_dir = "var/data"
 
 [logging]
 format = "json"
-filter = "info,app=debug,codex=info,telegram=info,session=info"
+filter = "info,app=debug,engine=debug,ssh=info,codex=info,telegram=info"
 directory = "var/logs"
+rotation = "daily"
+retained_files = 14
+console = true
 
 [telegram]
 # 只接受私聊；用户必须通过 CLI 完成一次性配对。
@@ -26,8 +29,6 @@ name = "开发机"
 transport = "ssh_proxy"
 backend = "auto"
 ssh_alias = "pilot-dev"
-codex_bin = "/absolute/path/to/codex"
-codex_control_socket = "/absolute/path/to/app-server-control.sock"
 allowed_workspace_roots = ["/srv/code"]
 
 [hosts.timeouts]
@@ -53,23 +54,8 @@ max_attempts = 2
 # prompt_patterns = ['(?i)^verification code:\s*$', '(?i)^otp:\s*$']
 # password_prompt_patterns = ['(?i)^password:\s*$']
 
-[[providers]]
-id = "00000000-0000-4000-8000-000000000002"
-host_id = "00000000-0000-4000-8000-000000000001"
-kind = "codex"
-connection_mode = "existing_proxy"
-compatibility_profile = "latest-tested-codex"
-# 在独立测试会话确认 Desktop/CLI/PocketPilot 共用同一执行实例、断线不结束任务后开启。
-# 这是此实例的部署确认；doctor --connect 本身只做只读连接检查。
-control_verified = false
-
-[[workspaces]]
-id = "00000000-0000-4000-8000-000000000003"
-provider_id = "00000000-0000-4000-8000-000000000002"
-name = "PocketPilot"
-short_name = "PP"
-cwd = "/srv/code/PocketPilot"
-additional_cwds = []
+# Provider 和 workspace 持久化在应用 SQLite，运行时动态发现/管理。
+# Codex 可执行文件与现有控制 socket 自动探测，无需手填。
 
 [config_reload]
 enabled = true
@@ -81,7 +67,7 @@ burst_window_ms = 2000
 burst_threshold = 3
 max_flush_delay_ms = 5000
 history_barrier_timeout_seconds = 60
-telegram_messages_per_minute = 18
+messages_per_minute = 18
 history_active = "full_bundle"
 history_idle = "last_user_and_final"
 overflow = "single_document"

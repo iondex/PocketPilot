@@ -78,6 +78,7 @@ pub fn agent_history(history: &History) -> String {
     }
     text
 }
+
 pub fn latest_agent_answer(history: &History) -> String {
     let Some(user) = history.items.iter().rposition(|i| i.role == Role::User) else {
         return agent_history(history);
@@ -114,10 +115,12 @@ impl Batcher {
             items: Vec::new(),
         }
     }
+
     pub fn push(&mut self, now: Instant, text: String) {
         self.opened.get_or_insert(now);
         self.items.push(text);
     }
+
     pub fn take_ready(&mut self, now: Instant, force: bool) -> Option<String> {
         let opened = self.opened?;
         let elapsed = now.saturating_duration_since(opened);
@@ -137,6 +140,7 @@ impl Batcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn item(turn: &str, role: Role, phase: Option<&str>, text: &str) -> TextItem {
         TextItem {
             turn_id: turn.into(),
@@ -148,6 +152,7 @@ mod tests {
             client_id: None,
         }
     }
+
     #[test]
     fn never_pairs_a_new_user_input_with_an_old_answer() {
         let history = History {
@@ -164,6 +169,7 @@ mod tests {
         assert!(!text.contains("old answer"));
         assert!(!text.contains("working"));
     }
+
     #[test]
     fn sustained_messages_have_a_fixed_flush_deadline() {
         let now = Instant::now();

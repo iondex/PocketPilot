@@ -10,6 +10,7 @@ use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Message, protocol::WebSocketConfig},
 };
+
 #[cfg(test)]
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 
@@ -18,12 +19,12 @@ pub const MAX_FRAME: usize = 64 * 1024 * 1024;
 #[derive(Clone, Debug)]
 pub enum Connection {
     LocalProxy { binary: String, socket: PathBuf },
-    SshProxy(SshOptions),
+    SSHProxy(SSHOptions),
     Websocket { endpoint: String },
 }
 
 #[derive(Clone, Debug)]
-pub struct SshOptions {
+pub struct SSHOptions {
     pub alias: String,
     pub config: Option<PathBuf>,
     pub binary: String,
@@ -39,6 +40,7 @@ pub struct SshOptions {
 #[async_trait]
 pub(crate) trait Wire: Send {
     async fn send(&mut self, text: String) -> Result<(), Error>;
+
     async fn receive(&mut self) -> Result<Option<String>, Error>;
 }
 
@@ -56,62 +58,25 @@ pub(crate) async fn connect(connection: Connection) -> Result<Box<dyn Wire>, Err
             command.args(["app-server", "proxy", "--sock"]).arg(socket);
             spawn_proxy(command).await
         }
-        Connection::SshProxy(options) => {
-            if options.alias.is_empty()
-                || options.alias.starts_with('-')
-                || !options
-                    .alias
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-            {
-                return Err(Error::Endpoint);
-            }
-            let mut command = Command::new("ssh");
-            command
-                .args([
-                    "-T",
-                    "-o",
-                    if options.askpass.is_some() {
-                        "BatchMode=no"
-                    } else {
-                        "BatchMode=yes"
-                    },
-                    "-o",
-                    "StrictHostKeyChecking=yes",
-                ])
-                .arg("-o")
-                .arg(format!(
-                    "ConnectTimeout={}",
-                    options.connect_timeout.as_secs().max(1)
-                ))
-                .arg("-o")
-                .arg(format!("ServerAliveInterval={}", options.keepalive_seconds))
-                .arg("-o")
-                .arg(format!("ServerAliveCountMax={}", options.keepalive_missed));
-            if let Some(helper) = options.askpass {
-                command
-                    .env("SSH_ASKPASS", helper)
-                    .env("SSH_ASKPASS_REQUIRE", "force")
-                    .arg("-o")
-                    .arg(format!(
-                        "NumberOfPasswordPrompts={}",
-                        options.max_auth_attempts
-                    ));
-            }
-            if !options.authentication_methods.is_empty() {
-                command.arg("-o").arg(format!(
-                    "PreferredAuthentications={}",
-                    options.authentication_methods.join(",")
-                ));
-            }
-            if let Some(config) = options.config {
-                command.arg("-F").arg(config);
-            }
+        Connection::SSHProxy(options) => {
             let mut remote = format!("{} app-server proxy", quote(&options.binary)?);
             if let Some(socket) = options.socket {
                 remote.push_str(&format!(" --sock {}", quote(&socket)?));
             }
-            command.arg(options.alias).arg(remote);
+            let command = ssh::command(
+                ssh::Options {
+                    alias: options.alias,
+                    config: options.config,
+                    connect_timeout: options.connect_timeout,
+                    keepalive_seconds: options.keepalive_seconds,
+                    keepalive_missed: options.keepalive_missed,
+                    askpass: options.askpass,
+                    max_auth_attempts: options.max_auth_attempts,
+                    authentication_methods: options.authentication_methods,
+                },
+                remote,
+            )
+            .map_err(|_| Error::Endpoint)?;
             spawn_proxy(command).await
         }
         Connection::Websocket { endpoint } => {
@@ -223,6 +188,7 @@ impl Wire for JsonLines {
             .await
             .map_err(|_| Error::Disconnected)
     }
+
     async fn receive(&mut self) -> Result<Option<String>, Error> {
         match self.input.next().await {
             None => Ok(None),
@@ -248,6 +214,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Wire for Websocket<S> {
             .await
             .map_err(|_| Error::Disconnected)
     }
+
     async fn receive(&mut self) -> Result<Option<String>, Error> {
         loop {
             match self.socket.next().await {
@@ -271,11 +238,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Wire for Websocket<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn remote_arguments_are_shell_quoted() {
         assert_eq!(quote("/a b/c'd").unwrap(), "'/a b/c'\\''d'");
         assert!(quote("a\nb").is_err());
     }
+
     #[tokio::test]
     async fn refuses_non_loopback_plain_websockets_before_connecting() {
         assert!(matches!(

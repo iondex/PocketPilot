@@ -1,4 +1,5 @@
 mod cli;
+
 mod telemetry;
 
 #[tokio::main]

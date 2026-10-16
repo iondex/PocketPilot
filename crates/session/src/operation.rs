@@ -37,6 +37,7 @@ impl OperationState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn restart_never_makes_a_sent_request_retryable() {
         assert_eq!(

@@ -17,17 +17,22 @@ mod sealed {
 /// A schema-generated, read-only request. Downstream callers cannot add methods.
 pub trait ReadRequest: Serialize + sealed::Sealed {
     type Response: DeserializeOwned;
+
     const METHOD: &'static str;
 }
+
 pub(crate) trait WriteRequest: Serialize + sealed::Sealed {
     type Response: DeserializeOwned;
+
     const METHOD: &'static str;
 }
 macro_rules! request {
     ($params:ident, $response:ident, $method:literal) => {
         impl sealed::Sealed for p::$params {}
+
         impl ReadRequest for p::$params {
             type Response = p::$response;
+
             const METHOD: &'static str = $method;
         }
     };
@@ -53,8 +58,10 @@ request!(
 macro_rules! write_request {
     ($params:ident, $response:ident, $method:literal) => {
         impl sealed::Sealed for p::$params {}
+
         impl WriteRequest for p::$params {
             type Response = p::$response;
+
             const METHOD: &'static str = $method;
         }
     };
@@ -91,6 +98,7 @@ pub struct Event {
     /// Opaque extension payload. Consumers may deserialize a known generated DTO.
     pub params: Option<Box<RawValue>>,
 }
+
 impl std::fmt::Debug for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Event")
@@ -106,6 +114,7 @@ struct RequestEnvelope<'a> {
     method: &'static str,
     params: &'a RawValue,
 }
+
 #[derive(Deserialize)]
 struct Incoming {
     id: Option<p::RequestId>,
@@ -114,6 +123,7 @@ struct Incoming {
     result: Option<Box<RawValue>>,
     error: Option<Failure>,
 }
+
 #[derive(Deserialize)]
 struct Failure {
     code: i64,
@@ -123,6 +133,7 @@ struct Failure {
 
 // RawValue exists only at this RPC framing boundary. It is never indexed or modified.
 type Reply = Result<Box<RawValue>, Error>;
+
 enum Command {
     Call {
         method: &'static str,
@@ -202,9 +213,11 @@ impl Client {
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.events.subscribe()
     }
+
     pub fn is_connected(&self) -> bool {
         !self.commands.is_closed()
     }
+
     pub fn with_write_timeout(mut self, timeout: Duration) -> Self {
         self.write_timeout = timeout;
         self
@@ -506,6 +519,7 @@ mod tests {
         );
         task.await.unwrap();
     }
+
     #[tokio::test]
     async fn timeout_does_not_resend_or_cancel() {
         let (local, remote) = tokio::io::duplex(4096);

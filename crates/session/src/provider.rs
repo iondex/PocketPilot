@@ -49,13 +49,18 @@ pub enum ProviderError {
 #[async_trait::async_trait]
 pub trait AgentProvider: Send + Sync {
     fn capabilities(&self) -> Capabilities;
+
     async fn list(&self, query: SessionQuery) -> Result<Page<Session>, ProviderError>;
+
     async fn read(&self, thread: &str) -> Result<Session, ProviderError>;
+
     /// Fetch the current turn precondition when metadata alone cannot provide it.
     async fn active_turn(&self, thread: &str) -> Result<Option<String>, ProviderError> {
         Ok(self.read(thread).await?.active_turn)
     }
+
     async fn history(&self, thread: &str) -> Result<History, ProviderError>;
+
     /// Called only for a durably recorded, freshly authorized user action.
     async fn execute(&self, _mutation: Mutation) -> Result<Receipt, ProviderError> {
         Err(ProviderError::Unsupported)

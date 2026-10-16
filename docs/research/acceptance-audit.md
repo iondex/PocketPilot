@@ -10,7 +10,7 @@
 - R：用户授权 SSH 共享 daemon 上专用真实模型会话的创建、active、steer、全部桥接客户端断开后继续完成、最终输出与显式 resume；Desktop 只读观察相同 active turn。
 - P：真实 Telegram 账号/Topics/webhook 检查，以及后台长轮询成功推进。
 
-T/N/R/P 的具体范围见 [实现记录](implementation-checks.md)。测试入口与源文件见 [测试指南](../testing.md)、app/src/service_tests.rs、app/src/ledger.rs、app/src/storage.rs、codex/src/live_tests.rs、codex/src/provider.rs 和 telegram/src/api.rs。完整标准见 [验收清单](../planning/acceptance.md)。
+T/N/R/P 的具体范围见 [实现记录](implementation-checks.md)。测试入口与源文件见 [测试指南](../testing.md)、telegram/src/service_tests.rs、telegram/src/ledger.rs、engine/src/storage.rs、codex/src/live_tests.rs、codex/src/provider.rs 和 telegram/src/api.rs。完整标准见 [验收清单](../planning/acceptance.md)。
 
 ## 按场景核对
 

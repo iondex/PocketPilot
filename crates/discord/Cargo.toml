@@ -6,9 +6,16 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
-test-support = []
+default = ["runtime"]
+runtime = ["dep:serenity", "dep:engine", "dep:sqlx", "dep:serde_json", "dep:uuid"]
+test-support = ["runtime"]
 
 [dependencies]
+engine = { path = "../engine", optional = true }
+sqlx = { workspace = true, optional = true }
+serde.workspace = true
+serde_json = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 reqwest.workspace = true
 async-trait.workspace = true
 secrecy.workspace = true
@@ -16,7 +23,10 @@ session = { path = "../session" }
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
-serenity = { version = "0.12", default-features = false, features = ["builder", "client", "gateway", "http", "model", "rustls_backend"] }
+serenity = { optional = true, version = "0.12", default-features = false, features = ["builder", "client", "gateway", "http", "model", "rustls_backend"] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

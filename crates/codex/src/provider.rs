@@ -21,6 +21,7 @@ pub struct Codex {
     client: Client,
     control: bool,
 }
+
 impl Codex {
     pub fn new(instance: String, client: Client) -> Self {
         Self {
@@ -29,9 +30,11 @@ impl Codex {
             control: false,
         }
     }
+
     pub fn client(&self) -> &Client {
         &self.client
     }
+
     /// Enable only after the configured shared runtime passes the lifecycle probe.
     pub fn with_control(mut self, verified: bool) -> Self {
         self.control = verified;
@@ -158,6 +161,7 @@ impl AgentProvider for Codex {
             control_verified: self.control,
         }
     }
+
     async fn list(&self, query: SessionQuery) -> Result<Page<Session>, ProviderError> {
         let mut cursor = if let Some(encoded) = &query.cursor {
             let cursor: ListCursor = serde_json::from_str(
@@ -277,6 +281,7 @@ impl AgentProvider for Codex {
         }
         Err(ProviderError::Incompatible)
     }
+
     async fn read(&self, thread: &str) -> Result<Session, ProviderError> {
         let result = self
             .client
@@ -306,6 +311,7 @@ impl AgentProvider for Codex {
         }
         Ok(session)
     }
+
     async fn active_turn(&self, thread: &str) -> Result<Option<String>, ProviderError> {
         let metadata = self
             .client
@@ -346,6 +352,7 @@ impl AgentProvider for Codex {
             .find(|t| matches!(t.status, p::TurnStatus::InProgress))
             .map(|t| t.id))
     }
+
     async fn history(&self, thread: &str) -> Result<History, ProviderError> {
         let metadata = self
             .client
@@ -523,12 +530,14 @@ fn text_input(text: String) -> Result<Vec<p::UserInput>, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[derive(serde::Deserialize)]
     struct Frame {
         id: Option<p::RequestId>,
         method: String,
         params: Option<Box<serde_json::value::RawValue>>,
     }
+
     const THREAD: &str = r#"{"id":"thread","sessionId":"thread","cliVersion":"0.162.1","projectId":null,"preview":"Title","cwd":"/workspace","ephemeral":false,"source":"appServer","modelProvider":"openai","createdAt":100,"updatedAt":100,"status":{"type":"idle"},"turns":[]}"#;
 
     #[tokio::test]
@@ -656,6 +665,7 @@ mod tests {
         assert_eq!(runtime(&status).label(), "🟠 等待审批");
         assert!(serde_json::from_str::<p::ThreadStatus>(r#"{"type":"future-state"}"#).is_err());
     }
+
     #[test]
     fn typed_tool_outputs_are_excluded_from_chat_history() {
         let item: p::ThreadItem =

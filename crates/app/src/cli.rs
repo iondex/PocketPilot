@@ -1,18 +1,11 @@
-use app::{
-    config::{self, Config, Host, TransportKind},
-    credentials,
-    storage::Store,
-};
+use app::config::{self, Config, Host, TransportKind};
 use clap::{Parser, Subcommand};
-use codex::{Client, Codex};
+use engine::catalog::Catalog;
 use secrecy::ExposeSecret;
 use serde::Serialize;
 use session::{AgentProvider, SessionQuery};
-use std::{
-    io::Write,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{io::Write, path::PathBuf, time::Duration};
+use telegram::credentials;
 
 #[derive(Parser)]
 #[command(
@@ -29,17 +22,8 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Check a deployment; --write uses a dedicated NEW probe session with the configured model.
-    Probe {
-        #[arg(long)]
-        workspace: String,
-        #[arg(long)]
-        write: bool,
-        #[arg(long, conflicts_with = "write")]
-        thread: Option<String>,
-    },
-    #[command(hide = true)]
-    SshAskpass {
+    #[command(name = "ssh-askpass", hide = true)]
+    SSHAskpass {
         #[arg(long)]
         host: String,
         #[arg(long)]
@@ -69,17 +53,16 @@ enum Command {
         #[command(subcommand)]
         command: Hosts,
     },
-    /// Read a configured workspace's sessions. Never resumes a thread.
-    Sessions {
-        #[arg(long)]
-        workspace: String,
+    /// Manage persisted project entries without restarting the bridge.
+    Workspaces {
         #[command(subcommand)]
-        command: Sessions,
+        command: Workspaces,
     },
-    /// Read-only Telegram account/webhook verification. Sends no messages.
-    TelegramCheck,
-    /// Initialize PocketPilot's own SQLite ledger. Does not access Codex storage.
-    StateInit,
+    /// Inspect agent instances and explicitly attest their shared lifecycle.
+    Providers {
+        #[command(subcommand)]
+        command: Providers,
+    },
     /// Manage private-chat pairing. Approval is available only from this CLI.
     Pair {
         #[command(subcommand)]
@@ -106,36 +89,44 @@ enum Hosts {
         id: String,
     },
 }
+
 #[derive(Subcommand)]
-enum Sessions {
-    List {
-        #[arg(long, default_value_t = 25)]
-        limit: u32,
+enum Workspaces {
+    List,
+    Add {
         #[arg(long)]
-        cursor: Option<String>,
+        provider: String,
         #[arg(long)]
-        archived: bool,
+        cwd: String,
+        #[arg(long)]
+        name: Option<String>,
     },
-    Show {
-        thread: String,
+    Remove {
+        id: String,
     },
-    History {
-        thread: String,
+}
+
+#[derive(Subcommand)]
+enum Providers {
+    List,
+    /// Declare that this exact shared execution instance has passed lifecycle verification.
+    Trust {
+        id: String,
         #[arg(long)]
-        latest: bool,
-        #[arg(long)]
-        output: Option<PathBuf>,
+        revoke: bool,
     },
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Probe(#[from] app::probe::Error),
+    #[allow(clippy::upper_case_acronyms)] // Project convention keeps SSH uppercase.
+    SSH(#[from] ssh::Error),
     #[error(transparent)]
-    Otp(#[from] app::otp::Error),
+    #[allow(clippy::upper_case_acronyms)] // Project convention keeps TOTP uppercase.
+    TOTP(#[from] ssh::auth::Error),
     #[error(transparent)]
-    Service(#[from] app::service::Error),
+    Service(#[from] app::runtime::Error),
     #[error(transparent)]
     Config(#[from] config::ConfigError),
     #[error(transparent)]
@@ -145,9 +136,11 @@ pub enum Error {
     #[error(transparent)]
     Telegram(#[from] telegram::Error),
     #[error(transparent)]
-    Store(#[from] app::storage::StoreError),
+    Store(#[from] engine::storage::StoreError),
     #[error(transparent)]
-    Pairing(#[from] app::pairing::Error),
+    Pairing(#[from] telegram::pairing::Error),
+    #[error("no existing Codex control endpoint was discovered for this host")]
+    SharedEndpoint,
     #[error("unknown or unsupported configured host/workspace")]
     Selection,
     #[error("output could not be written (existing files are not overwritten)")]
@@ -174,19 +167,38 @@ struct ConfigurationSummary {
 pub async fn run() -> Result<(), Error> {
     let args = Arguments::parse();
     let loaded = config::load(&args.config)?;
-    let config = loaded.config;
-    if let Command::SshAskpass {
+    let mut config = loaded.config;
+    if let Command::SSHAskpass {
         host,
         attempt,
         config_hash,
         prompt,
     } = &args.command
     {
-        let answer = app::otp::answer(&config, host, attempt, config_hash, prompt).await?;
+        let selected = config
+            .hosts
+            .iter()
+            .find(|h| h.id == *host)
+            .ok_or(Error::Selection)?;
+        let context = ssh::auth::AuthContext {
+            data_dir: config.service.data_dir.clone(),
+            source: config.source().to_owned(),
+            source_hash: config.source_hash().into(),
+        };
+        let answer = ssh::auth::answer(
+            &selected.authentication,
+            &context,
+            attempt,
+            config_hash,
+            prompt,
+        )
+        .await?;
         writeln!(std::io::stdout().lock(), "{}", answer.expose_secret())
             .map_err(|_| Error::Output)?;
         return Ok(());
     }
+    let catalog = Catalog::open(&config.service.data_dir).await?;
+    catalog.load(&mut config.runtime).await?;
     if let Command::ConfigCheck { credentials: check } = args.command {
         if check {
             let _ = credentials::read(config.telegram.as_ref().ok_or(Error::Selection)?)?;
@@ -202,18 +214,12 @@ pub async fn run() -> Result<(), Error> {
     }
     let _logs = crate::telemetry::init(&config.logging).map_err(|_| Error::Logging)?;
     match args.command {
-        Command::Probe {
-            workspace,
-            write,
-            thread,
-        } => print(&app::probe::run(&config, &workspace, write, thread.as_deref()).await?)?,
-        Command::SshAskpass { .. } => unreachable!(),
-        Command::Serve => app::service::run(args.config).await?,
+        Command::SSHAskpass { .. } => unreachable!(),
+        Command::Serve => app::runtime::run(args.config).await?,
         Command::ConfigCheck { .. } => unreachable!(),
         Command::Doctor { connect, telegram } => doctor(&config, connect, telegram).await?,
-        Command::TelegramCheck => print(&check_telegram(&config).await?)?,
         Command::Pair { command } => {
-            let store = app::pairing::Registry::open(&config.service.data_dir).await?;
+            let store = telegram::pairing::Registry::open(&config.service.data_dir).await?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| Error::Selection)?
@@ -227,10 +233,6 @@ pub async fn run() -> Result<(), Error> {
                     println!("Pairing revoked; remote sessions remain unchanged.");
                 }
             }
-        }
-        Command::StateInit => {
-            let _ = Store::open(&config.service.data_dir).await?;
-            println!("Local state initialized; no agent operation was sent.");
         }
         Command::Hosts { command } => match command {
             Hosts::List => {
@@ -259,7 +261,7 @@ pub async fn run() -> Result<(), Error> {
                     None => PathBuf::from(std::env::var_os("HOME").ok_or(Error::Selection)?)
                         .join(".ssh/config"),
                 };
-                print(&codex::ssh::discover(&path)?)?;
+                print(&ssh::discover(&path)?)?;
             }
             Hosts::Resolve { id } => {
                 let host = config
@@ -269,7 +271,7 @@ pub async fn run() -> Result<(), Error> {
                     .ok_or(Error::Selection)?;
                 let alias = host.ssh_alias.as_deref().ok_or(Error::Selection)?;
                 print(
-                    &codex::ssh::resolve(
+                    &ssh::resolve(
                         alias,
                         host.ssh_config.as_ref(),
                         Duration::from_secs(host.timeouts.connect_seconds),
@@ -278,70 +280,41 @@ pub async fn run() -> Result<(), Error> {
                 )?;
             }
         },
-        Command::Sessions { workspace, command } => {
-            let workspace = config
-                .workspaces
-                .iter()
-                .find(|w| w.id == workspace)
-                .ok_or(Error::Selection)?;
-            let provider = config
-                .providers
-                .iter()
-                .find(|p| p.id == workspace.provider_id)
-                .ok_or(Error::Selection)?;
-            let host = config
-                .hosts
-                .iter()
-                .find(|h| h.id == provider.host_id)
-                .ok_or(Error::Selection)?;
-            let client = connect(host, &config).await?;
-            let provider = Codex::new(provider.id.clone(), client);
-            match command {
-                Sessions::List {
-                    limit,
-                    cursor,
-                    archived,
-                } => {
-                    print(
-                        &provider
-                            .list(SessionQuery {
-                                cwd: Some(workspace.cwd.clone()),
-                                cursor,
-                                limit,
-                                archived,
-                            })
-                            .await?,
-                    )?;
-                }
-                Sessions::Show { thread } => {
-                    let session = provider.read(&thread).await?;
-                    require_workspace(&session.cwd, workspace)?;
-                    print(&session)?;
-                }
-                Sessions::History {
-                    thread,
-                    latest,
-                    output,
-                } => {
-                    let summary = provider.read(&thread).await?;
-                    require_workspace(&summary.cwd, workspace)?;
-                    let history = provider.history(&thread).await?;
-                    let text = if latest {
-                        session::delivery::latest_interaction(&history)
-                    } else {
-                        session::delivery::full_history(&history)
-                    };
-                    write_output(output.as_deref(), &text)?;
-                }
+        Command::Workspaces { command } => match command {
+            Workspaces::List => print(&config.workspaces)?,
+            Workspaces::Add {
+                provider,
+                cwd,
+                name,
+            } => print(
+                &catalog
+                    .add_workspace(&config, &provider, &cwd, name.as_deref())
+                    .await?,
+            )?,
+            Workspaces::Remove { id } => {
+                let selected = config
+                    .workspaces
+                    .iter()
+                    .find(|w| w.id == id || w.short_name == id)
+                    .ok_or(Error::Selection)?;
+                catalog.remove_workspace(&selected.id).await?;
+                println!("Workspace removed; remote sessions remain unchanged.");
             }
-        }
-    }
-    Ok(())
-}
-
-fn require_workspace(cwd: &str, workspace: &config::Workspace) -> Result<(), Error> {
-    if cwd != workspace.cwd && !workspace.additional_cwds.iter().any(|p| p == cwd) {
-        return Err(Error::Selection);
+        },
+        Command::Providers { command } => match command {
+            Providers::List => print(&config.providers)?,
+            Providers::Trust { id, revoke } => {
+                let mut provider = config
+                    .providers
+                    .iter()
+                    .find(|p| p.id == id)
+                    .cloned()
+                    .ok_or(Error::Selection)?;
+                provider.control_verified = !revoke;
+                catalog.save_provider(&provider).await?;
+                println!("Provider control attestation updated.");
+            }
+        },
     }
     Ok(())
 }
@@ -349,13 +322,37 @@ fn require_workspace(cwd: &str, workspace: &config::Workspace) -> Result<(), Err
 fn transport_name(kind: TransportKind) -> &'static str {
     match kind {
         TransportKind::LocalProxy => "local_proxy",
-        TransportKind::SshProxy => "ssh_proxy",
+        TransportKind::SSHProxy => "ssh_proxy",
         TransportKind::Websocket => "websocket",
     }
 }
 
-async fn connect(host: &Host, config: &Config) -> Result<Client, Error> {
-    Ok(app::connections::connect(host, config).await?)
+async fn connect(host: &Host, config: &Config) -> Result<usize, Error> {
+    for endpoint in engine::connections::discover(host, config).await? {
+        let catalog = Catalog::open(&config.service.data_dir).await?;
+        catalog.discover(&host.id, endpoint).await?;
+    }
+    let mut effective = config.runtime.clone();
+    Catalog::open(&config.service.data_dir)
+        .await?
+        .load(&mut effective)
+        .await?;
+    let provider = effective
+        .providers
+        .iter()
+        .find(|p| p.host_id == host.id)
+        .ok_or(Error::SharedEndpoint)?;
+    let client = engine::connections::connect(host, provider, &effective).await?;
+    let agent = codex::Codex::new(provider.id.clone(), client);
+    let page = agent
+        .list(SessionQuery {
+            cwd: None,
+            cursor: None,
+            limit: 10,
+            archived: false,
+        })
+        .await?;
+    Ok(page.data.len())
 }
 
 async fn check_telegram(config: &Config) -> Result<telegram::Identity, Error> {
@@ -370,11 +367,15 @@ async fn doctor(config: &Config, probe: bool, telegram: bool) -> Result<(), Erro
     #[derive(Serialize)]
     struct HostCheck {
         id: String,
+        name: String,
+        ssh_alias: Option<String>,
         configured: bool,
+        sample_sessions: Option<usize>,
         connected: Option<bool>,
         reason: Option<String>,
         control_verified: bool,
     }
+
     #[derive(Serialize)]
     struct Report {
         hosts: Vec<HostCheck>,
@@ -386,17 +387,20 @@ async fn doctor(config: &Config, probe: bool, telegram: bool) -> Result<(), Erro
     for host in config.hosts.clone() {
         let config = config.clone();
         tasks.spawn(async move {
-            let (connected, reason) = if probe {
+            let (connected, reason, sample_sessions) = if probe {
                 match connect(&host, &config).await {
-                    Ok(_) => (Some(true), None),
-                    Err(error) => (Some(false), Some(error.to_string())),
+                    Ok(count) => (Some(true), None, Some(count)),
+                    Err(error) => (Some(false), Some(error.to_string()), None),
                 }
             } else {
-                (None, None)
+                (None, None, None)
             };
             HostCheck {
                 id: host.id.clone(),
+                name: host.name.clone(),
+                ssh_alias: host.ssh_alias.clone(),
                 configured: true,
+                sample_sessions,
                 connected,
                 reason,
                 control_verified: config
@@ -422,24 +426,4 @@ async fn doctor(config: &Config, probe: bool, telegram: bool) -> Result<(), Erro
         control_enabled: config.providers.iter().any(|p| p.control_verified),
         note: "Read-only probe. Control flags are operator attestations for each configured shared runtime.",
     })
-}
-
-fn write_output(path: Option<&Path>, text: &str) -> Result<(), Error> {
-    if let Some(path) = path {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|_| Error::Output)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))
-                .map_err(|_| Error::Output)?;
-        }
-        file.write_all(text.as_bytes()).map_err(|_| Error::Output)?;
-    } else {
-        writeln!(std::io::stdout().lock(), "{text}").map_err(|_| Error::Output)?;
-    }
-    Ok(())
 }

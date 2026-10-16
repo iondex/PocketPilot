@@ -29,6 +29,7 @@ impl Api {
             bot,
         }
     }
+
     pub async fn connect(token: &secrecy::SecretString, guild: u64) -> Result<Self, Error> {
         use secrecy::ExposeSecret;
         let http = Arc::new(http(token.expose_secret())?);
@@ -48,6 +49,7 @@ impl Api {
         http.set_application_id(application.id);
         Ok(Self { http, guild, bot })
     }
+
     pub async fn authorize(&self, input: &Input) -> Result<(), Error> {
         let guild = tokio::time::timeout(
             Duration::from_secs(15),
@@ -68,6 +70,7 @@ impl Api {
         }
         Ok(())
     }
+
     pub async fn category(&self, name: &str, owner: u64) -> Result<u64, Error> {
         let permissions = [
             PermissionOverwrite {
@@ -103,6 +106,7 @@ impl Api {
             .map_err(|_| Error::Request)?;
         Ok(channel.id.get())
     }
+
     pub async fn channel(&self, category: u64, title: &str, thread: &str) -> Result<u64, Error> {
         let channel = GuildId::new(self.guild)
             .create_channel(
@@ -117,6 +121,7 @@ impl Api {
             .map_err(|_| Error::Request)?;
         Ok(channel.id.get())
     }
+
     pub async fn rename(&self, channel: u64, title: &str, thread: &str) -> Result<(), Error> {
         ChannelId::new(channel)
             .edit(
@@ -127,6 +132,7 @@ impl Api {
             .map_err(|_| Error::Request)?;
         Ok(())
     }
+
     pub async fn send(&self, channel: u64, text: &str) -> Result<u64, Error> {
         if text.len() > 8 * 1024 * 1024 {
             return Err(Error::TooLarge);
@@ -148,6 +154,7 @@ impl Api {
             .map(|m| m.id.get())
             .map_err(|_| Error::Request)
     }
+
     pub async fn card(&self, channel: u64, message: u64, text: &str) -> Result<(), Error> {
         ChannelId::new(channel)
             .edit_message(
@@ -162,6 +169,7 @@ impl Api {
         Ok(())
     }
 }
+
 pub(crate) fn http(token: &str) -> Result<Http, Error> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
@@ -172,6 +180,7 @@ pub(crate) fn http(token: &str) -> Result<Http, Error> {
         .client(client)
         .build())
 }
+
 pub(crate) fn mentions() -> CreateAllowedMentions {
     CreateAllowedMentions::new()
         .all_users(false)
