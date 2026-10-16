@@ -29,6 +29,8 @@ pub enum Error {
     TooLarge,
     #[error("Telegram topic is closed or no longer available")]
     TopicUnavailable,
+    #[error("Telegram message is missing or cannot be edited")]
+    MessageUnavailable,
 }
 
 pub(crate) fn safe_error(error: RequestError) -> Error {
@@ -47,6 +49,9 @@ pub(crate) fn safe_error(error: RequestError) -> Error {
             Error::TopicUnavailable
         }
         RequestError::Api(ApiError::MessageNotModified) => Error::NotModified,
+        RequestError::Api(ApiError::MessageToEditNotFound | ApiError::MessageCantBeEdited) => {
+            Error::MessageUnavailable
+        }
         RequestError::Api(
             ApiError::BotBlocked | ApiError::UserDeactivated | ApiError::ChatNotFound,
         ) => Error::NoRecipient,

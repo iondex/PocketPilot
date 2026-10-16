@@ -47,27 +47,43 @@ PocketPilot 私聊
 
 topic 名只包含稳定短名和短 ID，不包含运行/连接状态。状态显示在一条复用的状态卡中；标题按成功回执缓存，只有名称确实变化时才改名。升级后的旧标题至多同步一次，避免 Telegram 为每次改名生成服务通知。
 
-未绑定 topic、General 入口或管理 topic 的普通消息进入管理提示，明确没有发送给 agent；已绑定 session topic 中的普通文本只发给该 session。首次从未绑定入口进入时提示管理消息去向，不把默认输入猜测成“最近会话”。
+未绑定 topic、General 入口或管理 topic 的普通任务文本只获得拒绝提示，不复述正文、不发送给 agent；已绑定 session topic 中的普通文本只发给该 session。首次从未绑定入口进入时提示管理消息去向，不把默认输入猜测成“最近会话”。
 
 Telegram 的「允许用户创建 topic」开关开启时，客户端会先为入口消息（包括 /start）创建 topic，再把消息发给 bot，这是平台行为。固定入口需要在 BotFather 开启 **Disallow users to create new threads**，保留 bot 的 Topics 功能。程序通过 getMe.allows_users_to_create_topics 诊断此设置，但 Bot API 不提供本项目可调用的对应设置方法；不会自动删除用户已有 topic。官方说明见 [Bot forums](https://core.telegram.org/api/forum#bot-forums)。
 
-## 4. 菜单与绑定
+## 4. 编号导航与绑定
 
-`/workspaces` 在管理 topic 中以两列按钮显示实际工作区。选择、下一页和返回都在原菜单消息中编辑，不为每次点击新发一张菜单；按钮只按实际条目生成，不添加空白占位。会话页过滤由本地专用探针创建回执明确识别的开发 session，不根据标题猜测，不远端归档/删除它们。按精确 cwd 和显式关联 worktree 分页查询，不能把同目录历史视作同一个执行实例。
+管理界面使用原生 Telegram MarkdownV2：加粗标题、主机/工作区路径、紧凑的编号列表和短提示，不使用内联按钮。动态名称与任务预览经 SDK 转义；agent 正文不套用管理菜单的 parse mode。
 
-选择已有会话先显示完整信息与状态新鲜度；进入和绑定只读，不 resume。topic 创建用 provisioning saga，保存返回 ID；结果未知不再次自动创建。重复绑定返回原 topic。同一 bot 私聊中的容器解绑后只可回连原 thread，更换 session 必须新容器。不同 bot 的私聊按 account 隔离。
+```text
+主机
 
-工作区增改通过人工编辑根目录单一 TOML 和自动热更新；配对用户可使用允许根路径下的 workspace，不可从聊天指定任意 SSH 命令、binary 或参数。
+1  🌐 anjie-bsc-arb
+2  💻 本机
+
+回复序号选择 · 0 返回
+/start 首页 · /refresh 刷新
+```
+
+示意中的条目仅表示布局；实际只列配置允许且有工作区的主机。回复序号依次选择主机 → 工作区 → 会话。会话条目前使用 🔵 运行中、🟢 空闲、⚪ 待继续、🟠 等待审批、🟡 等待回答、🔴 服务异常、⚫ 状态未知。
+
+0 返回上一级；/start 首页，/refresh 刷新当前位置。翻页同样是一个有名称的编号选项，不补空白行、不显示开发探针。管理菜单尽量编辑同一条消息；原消息被删除或不可编辑时，仅在 Telegram 明确拒绝编辑后新发一次，网络结果未知不重复发送。
+
+导航上下文在 SQLite 中按 bot/user/chat/topic 持久化，没有按钮 TTL。重启及显示名、日志或速率变更不使只读菜单过期；每次选择仍核对当前配对和配置范围。创建确认绑定实际 instance/cwd/endpoint；实质范围变化时刷新上下文，不偷偷把旧任务改发其他地方。已消费选择、回复旧消息、菜单尚未成功投递时均不能触发旧写入。离线/过期的数字确认会重新展示确认页，必须新回复才执行。
+
+管理 topic 仅接受有效序号与管理命令。普通任务文本被拒绝，不复述其内容、不发送给 agent。/new 工作区短名 任务 是明确的新建管理命令，展示预览后回复 1 创建并发送；选择“新建会话”会给出这条命令格式。旧内联菜单点击改为打开编号首页；会话中的异常草稿确认按钮仍保留，绑定原会话/revision，且不放宽执行权限。
+
+选择已有会话只读绑定，不 resume。topic 创建用持久 provisioning 记录；结果未知不再次自动创建。重复选择返回原 session topic。解绑后原容器只可回连原 thread，不跨 session 复用。工作区增改通过编辑单根 TOML 和热更新。
 
 ## 5. 新建、继续和状态
 
-用户选择 workspace 并提供首条任务后，明确“创建并发送”。thread/start 与首条 turn 分别记账；回执未知不重新创建 thread。空闲续轮只在用户动作内必要时 resume；active 使用 turn/steer + expectedTurnId，不改现有 model/cwd/审批/sandbox。
+用户选择 workspace 并通过 /new 提供首条任务后，回复序号 1 明确确认。thread/start 与首条 turn 分别记账；回执未知不重新创建 thread。空闲续轮只在用户动作内必要时 resume；active 使用 turn/steer + expectedTurnId，不改现有 model/cwd/审批/sandbox。
 
 | 命令 | 行为 |
 | --- | --- |
 | /status | 只读刷新实际状态 |
 | /history | 一个历史集合，超限一条附件 |
-| /info | 完整标题、workspace、host、thread、观察时间 |
+| /info | 简洁标题与 emoji 状态；thread/turn/详细观察信息记日志 |
 | /ask TEXT | 交给当前 thread；斜杠文本可通过此入口发送 |
 | /steer TEXT | 仅追加到捕获的当前 turn，冲突重新确认 |
 | /rename TEXT | 只改本地显示名/topic 名，不写原 thread 标题 |
@@ -77,13 +93,13 @@ Telegram 的「允许用户创建 topic」开关开启时，客户端会先为�
 
 ## 6. 历史、合并与速率
 
-新绑定空闲会话显示最后用户输入和对应 final；进入 active 会话输出全部可读历史的单条集合，超长一条 Markdown 附件。历史只读，不向 agent 发总结任务。配对/授权、完整性、异常 partial、投递屏障和未知结果规则见 [历史与投递](history-and-delivery.md)。
+按新的 UX 要求，Telegram 初次进入空闲会话只显示最后一次输入对应的 agent final；进入 active 会话显示全部可读 agent 文本的单个集合。用户输入已由用户发出，不再由机器人回显；无 agent 回复时不发空历史或占位消息。超长使用单个 Markdown 附件。CLI 的完整历史导出仍保留全部角色记录。历史只读，不向 agent 发总结任务。配对/授权、完整性、异常 partial、投递屏障和未知结果规则见 [历史与投递](history-and-delivery.md)。
 
 「待继续」表示当前 app-server 未加载该会话；不是历史丢失或读取失败。该状态仍可只读查看历史，明确发送新输入时才 resume。历史读取失败独立提示且按绑定版本去重，不把已成功读取的运行状态改成“连接未知”。
 
-实时可见 user/agent 文本保留 item 边界，工具/推理过滤；同 session/peer/topic 的短时输出合并。不同用户私聊不能合并，不能将一个用户的历史集合发到另一个 peer。
+实时仅投递 agent 正文，不添加“用户/Agent”角色标题或重复用户输入，工具/推理仍过滤；同 session/peer/topic 的短时输出合并。不同用户私聊不能合并，不能将一个用户的历史集合发到另一个 peer。
 
-每个 private chat 的多个 topics 共享 per-chat 预算，叠加 bot 全局限速，429 遵守 retry_after。当前默认每个私聊每分钟 18 条只是保守配置，不是套用群聊限额。用户的轻量 ACK 优先更新状态卡，避免额外消息。
+每个 private chat 的多个 topics 共享 per-chat 预算，叠加 bot 全局限速，429 遵守 retry_after。当前默认每个私聊每分钟 18 条只是保守配置，不是套用群聊限额。成功发送后只记日志，不发送“开始新一轮/已追加/turn ID”等 ACK。一条状态卡只保留短标题和 emoji 状态；详细信息与错误原因在 tracing 日志中。必要的冲突/未知结果仍用简短提示提醒用户核对。
 
 ## 7. 配置和账号变化
 

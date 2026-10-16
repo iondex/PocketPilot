@@ -64,6 +64,38 @@ pub fn latest_interaction(history: &History) -> String {
     format!("最后用户输入\n{}\n\n最终输出\n{}", user.text, answer)
 }
 
+/// Telegram is an assistant conversation: user inputs are already visible there.
+pub fn agent_history(history: &History) -> String {
+    let mut text = history
+        .items
+        .iter()
+        .filter(|i| i.role == Role::Agent)
+        .map(|i| i.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if !history.all_pages_read {
+        text.push_str("\n\n⚠️ 部分历史暂不可用。");
+    }
+    text
+}
+pub fn latest_agent_answer(history: &History) -> String {
+    let Some(user) = history.items.iter().rposition(|i| i.role == Role::User) else {
+        return agent_history(history);
+    };
+    history
+        .items
+        .iter()
+        .skip(user + 1)
+        .filter(|i| {
+            i.role == Role::Agent
+                && i.turn_id == history.items[user].turn_id
+                && i.phase.as_deref() == Some("final_answer")
+        })
+        .map(|i| i.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 pub struct Batcher {
     window: Duration,
     max_delay: Duration,

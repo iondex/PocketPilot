@@ -26,6 +26,8 @@ use tokio::{
 };
 #[path = "management.rs"]
 mod management;
+#[path = "navigation.rs"]
+mod navigation;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -65,6 +67,12 @@ pub enum Error {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Action {
     Home,
+    Host {
+        id: String,
+    },
+    NewPrompt {
+        workspace: String,
+    },
     Workspace {
         id: String,
         cursor: Option<String>,
@@ -296,7 +304,7 @@ impl Service {
                                     .respond(
                                         &response_input,
                                         &format!("error:{}", input.event_key),
-                                        Outbound::text(error.to_string()),
+                                        Outbound::text(error.user_message()),
                                     )
                                     .await;
                             }
@@ -384,16 +392,28 @@ impl Service {
         let input = &scoped;
         if input.callback.is_some() {
             if input.requires_confirmation {
-                return Err(Error::Expired);
+                let mut routed = input.clone();
+                routed.callback = None;
+                routed.callback_id = None;
+                let routed = self.management_input(&routed, &snapshot).await?;
+                return self.workspaces(&routed, &snapshot).await;
             }
             let body = self
                 .store
                 .consume_callback(self.bot, input, &snapshot.hash, now())
-                .await?
-                .ok_or(Error::Expired)?;
+                .await?;
+            let Some(body) = body else {
+                let mut routed = input.clone();
+                routed.callback = None;
+                routed.callback_id = None;
+                let routed = self.management_input(&routed, &snapshot).await?;
+                return self.workspaces(&routed, &snapshot).await;
+            };
             let action: Action = serde_json::from_str(&body).map_err(|_| Error::Expired)?;
             return match action {
                 Action::Home => self.workspaces(input, &snapshot).await,
+                Action::Host { id } => self.host_workspaces(input, &snapshot, &id).await,
+                Action::NewPrompt { .. } => self.workspaces(input, &snapshot).await,
                 Action::Workspace { id, cursor } => {
                     self.sessions(input, &snapshot, &id, cursor).await
                 }
@@ -430,7 +450,14 @@ impl Service {
         let management;
         let input = if matches!(
             command,
-            "/start" | "/workspaces" | "/sessions" | "/open" | "/new" | "/help"
+            "/start"
+                | "/workspaces"
+                | "/sessions"
+                | "/open"
+                | "/new"
+                | "/help"
+                | "/refresh"
+                | "/back"
         ) {
             management = self.management_input(input, &snapshot).await?;
             &management
@@ -444,14 +471,22 @@ impl Service {
             .is_none()
             && !matches!(
                 command,
-                "/start" | "/workspaces" | "/sessions" | "/open" | "/new" | "/help"
+                "/start"
+                    | "/workspaces"
+                    | "/sessions"
+                    | "/open"
+                    | "/new"
+                    | "/help"
+                    | "/refresh"
+                    | "/back"
             )
         {
             return self.default_message(input, &snapshot).await;
         }
         match command {
             "/start"|"/workspaces"=>self.workspaces(input,&snapshot).await,
-            "/help"=>self.respond(input,&input.event_key,Outbound::text("/workspaces 选择工作区\n/sessions WORKSPACE_ID 查看会话\n/new WORKSPACE_ID 任务 新建（需确认）\n/status 状态\n/history 完整历史\n/info 会话信息\n/ask 文本 继续或 steer\n/steer 文本 仅追加当前轮\n/rename 标题 仅改 topic 名\n/unbind 解除映射\n\n在会话 topic 内直接发文本也可继续或 steer。审批和用户问答请在原 Codex 客户端处理。没有停止会话入口。")).await,
+            "/refresh"|"/back"=>self.select_navigation(input,&snapshot).await,
+            "/help"=>self.respond(input,&input.event_key,Outbound::text("回复序号选择主机、工作区和会话。\n0 返回 · /start 首页 · /refresh 刷新\n/new 工作区 任务 新建会话\n\n在会话 topic 直接发送任务。\n/status 状态 · /history 历史\n/rename 名称 · /unbind 解除关联")).await,
             "/sessions"=>self.sessions(input,&snapshot,args.trim(),None).await,
             "/open"=>{
                 let (workspace,thread)=args.trim().split_once(char::is_whitespace).ok_or(Error::Unbound)?;
@@ -461,11 +496,7 @@ impl Service {
                 let (workspace,text)=args.trim().split_once(char::is_whitespace).ok_or(Error::Unbound)?;
                 let workspace=self.workspace(&snapshot.config,workspace)?;
                 if text.trim().is_empty() { return Err(Error::Stale); }
-                let action=Action::Create{workspace:workspace.id.clone(),text:text.trim().into()};
-                let button=self.button(input,&snapshot,"创建并发送",action).await?;
-                let mut body=Outbound::text(format!("将在 {} 创建会话并发送：\n\n{}",workspace.name,text.trim()));
-                body.buttons=vec![vec![button]];
-                self.menu_response(input,&input.event_key,body).await
+                self.confirm_creation(input,&snapshot,&workspace.id,text.trim()).await
             }
             "/status"|"/info"|"/history"=>{
                 let binding=self.bound(input).await?;
@@ -473,8 +504,11 @@ impl Service {
                 let provider=self.connections.get(&snapshot.config,workspace).await?;
                 let current=provider.read(&binding.thread_id).await?;
                 connections::require_workspace(&current.cwd,workspace)?;
-                let text=if command=="/history" { session::delivery::full_history(&self.history(provider.as_ref(),workspace,&binding.thread_id,&snapshot).await?) }
-                    else {format!("{}\n状态：{}\n工作区：{}\nthread：{}\n观察时间：{}\n控制：{}",current.title,current.status.label(),workspace.name,current.reference.thread,now(),if provider.capabilities().control_verified {"已验证"} else {"只读；待实例验证"})};
+                tracing::info!(thread_id=%current.reference.thread,workspace_id=%workspace.id,status=?current.status,"session details requested");
+                let text=if command=="/history" {
+                    let text=session::delivery::agent_history(&self.history(provider.as_ref(),workspace,&binding.thread_id,&snapshot).await?);
+                    if text.is_empty(){"暂无回复。".into()}else{text}
+                }else {format!("{}\n{}",session::delivery::short_title(&current.title,40),current.status.label())};
                 self.respond(input,&input.event_key,Outbound::text(text)).await
             }
             "/unbind"=>{
@@ -534,9 +568,10 @@ impl Service {
                 },
             )
             .await?;
+        tracing::info!(workspace_id=%workspace.id,thread_id=%binding.thread_id,"session input requires renewed confirmation");
         let mut body = Outbound::text(format!(
-            "这条消息尚未发送，需要重新确认（离线恢复、排队过期或会话状态已变化）。\n工作区：{}\n会话：{}\n\n{}\n\n请先 /status 核对，再确认发送。确认时按此会话的最新状态续轮或 steer；仅 steer 的消息不会改为续轮。",
-            workspace.name, binding.thread_id, text
+            "⚠️ 这条消息尚未发送\n\n{}\n\n核对会话后确认发送。",
+            session::delivery::short_title(text, 80)
         ));
         body.buttons = vec![vec![button]];
         self.respond(input, &format!("draft:{}", input.event_key), body)
@@ -603,91 +638,6 @@ impl Service {
             .enqueue(self.bot, input.chat, input.topic, key, &body)
             .await?;
         Ok(())
-    }
-    async fn workspaces(&self, input: &Input, snapshot: &Snapshot) -> Result<(), Error> {
-        self.workspaces_text(input,snapshot,"管理 · 选择工作区\n此 topic 只用于管理，不发送任务。添加会话后，请到对应会话 topic 发送消息。新建：/new 工作区短名 任务").await
-    }
-    async fn workspaces_text(
-        &self,
-        input: &Input,
-        snapshot: &Snapshot,
-        text: &str,
-    ) -> Result<(), Error> {
-        let mut body = Outbound::text(text);
-        for (index, workspace) in snapshot.config.workspaces.iter().enumerate() {
-            if index % 2 == 0 {
-                body.buttons.push(Vec::new());
-            }
-            body.buttons.last_mut().unwrap().push(
-                self.button(
-                    input,
-                    snapshot,
-                    &workspace.name,
-                    Action::Workspace {
-                        id: workspace.id.clone(),
-                        cursor: None,
-                    },
-                )
-                .await?,
-            );
-        }
-        if body.buttons.is_empty() {
-            body.text="尚无工作区。请在根目录 pocketpilot.toml 配置 host/provider/workspace，保存后会自动加载。".into();
-        }
-        self.menu_response(input, &input.event_key, body).await
-    }
-    async fn sessions(
-        &self,
-        input: &Input,
-        snapshot: &Snapshot,
-        id: &str,
-        cursor: Option<String>,
-    ) -> Result<(), Error> {
-        let workspace = self.workspace(&snapshot.config, id)?;
-        let provider = self.connections.get(&snapshot.config, workspace).await?;
-        let page =
-            connections::list_picker(&self.store, provider.as_ref(), workspace, cursor, 8).await?;
-        let mut body = Outbound::text(format!(
-            "{} · 选择已有会话\n新建：/new {} 任务",
-            workspace.name, workspace.short_name
-        ));
-        for current in page.data {
-            body.buttons.push(vec![
-                self.button(
-                    input,
-                    snapshot,
-                    &format!(
-                        "{} {}",
-                        current.status.label(),
-                        session::delivery::short_title(&current.title, 24)
-                    ),
-                    Action::Open {
-                        workspace: workspace.id.clone(),
-                        thread: current.reference.thread,
-                    },
-                )
-                .await?,
-            ]);
-        }
-        if let Some(cursor) = page.next_cursor {
-            body.buttons.push(vec![
-                self.button(
-                    input,
-                    snapshot,
-                    "下一页",
-                    Action::Workspace {
-                        id: workspace.id.clone(),
-                        cursor: Some(cursor),
-                    },
-                )
-                .await?,
-            ]);
-        }
-        body.buttons.push(vec![
-            self.button(input, snapshot, "返回工作区", Action::Home)
-                .await?,
-        ]);
-        self.menu_response(input, &input.event_key, body).await
     }
     async fn open(
         &self,
@@ -798,9 +748,9 @@ impl Service {
         let text = if matches!(current.status, RuntimeStatus::Active { .. })
             || matches!(after.status, RuntimeStatus::Active { .. })
         {
-            session::delivery::full_history(&history)
+            session::delivery::agent_history(&history)
         } else {
-            session::delivery::latest_interaction(&history)
+            session::delivery::latest_agent_answer(&history)
         };
         let mut body = Outbound::text(text);
         body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
@@ -1111,12 +1061,8 @@ impl Service {
             }
             Err(error) => return Err(error),
         };
-        self.respond(
-            input,
-            &format!("accepted:{}", input.event_key),
-            Outbound::text(format!("{label} · {}", receipt.turn.unwrap_or_default())),
-        )
-        .await
+        tracing::info!(thread_id=%binding.thread_id,turn_id=?receipt.turn,action=label,"session input accepted");
+        Ok(())
     }
 
     async fn deliver(self: Arc<Self>, mut stop: watch::Receiver<bool>) {
@@ -1202,13 +1148,43 @@ impl Service {
                         }
                     }
                     if let Some(message) = body.edit_message {
-                        self.api
-                            .edit_buttons(row.chat_id, message, &body.text, body.buttons.clone())
-                            .await?;
-                        Ok(message)
+                        match self
+                            .api
+                            .edit_formatted(
+                                row.chat_id,
+                                message,
+                                &body.text,
+                                body.buttons.clone(),
+                                body.markdown,
+                            )
+                            .await
+                        {
+                            Ok(()) => Ok(message),
+                            Err(telegram::Error::MessageUnavailable)
+                                if body.navigation_id.is_some()
+                                    || row.source_key.starts_with("status:") =>
+                            {
+                                self.api
+                                    .send_formatted(
+                                        row.chat_id,
+                                        row.topic_id,
+                                        &body.text,
+                                        body.buttons.clone(),
+                                        body.markdown,
+                                    )
+                                    .await
+                            }
+                            Err(error) => Err(error),
+                        }
                     } else {
                         self.api
-                            .send(row.chat_id, row.topic_id, &body.text, body.buttons.clone())
+                            .send_formatted(
+                                row.chat_id,
+                                row.topic_id,
+                                &body.text,
+                                body.buttons.clone(),
+                                body.markdown,
+                            )
                             .await
                     }
                 }
@@ -1224,6 +1200,9 @@ impl Service {
                 );
                 match result {
                     Ok(message) => {
+                        if let Some(id) = &body.navigation_id {
+                            let _ = self.store.navigation_receipt(id, message, now()).await;
+                        }
                         let _ = self
                             .store
                             .delivery_state(&row.id, "dispatching", "delivered", Some(message), 0)
@@ -1401,10 +1380,8 @@ impl Service {
             .ok_or(Error::Unbound)?;
         let snapshot = self.config.snapshot();
         let workspace = self.binding_workspace(&snapshot.config, &binding)?;
-        let status = format!(
-            "连接暂不可用；会话执行状态未知。\n{error}\nthread：{}\nPocketPilot 未停止或重启会话；请稍后 /status 刷新。",
-            binding.thread_id
-        );
+        tracing::debug!(thread_id=%binding.thread_id,%error,"session status unavailable");
+        let status = "⚫ 暂时离线，正在重连。".to_owned();
         if binding.status_text.as_deref() == Some(&status) {
             return Ok(());
         }
@@ -1424,9 +1401,7 @@ impl Service {
         snapshot: &Snapshot,
     ) -> Result<(), Error> {
         tracing::warn!(%error,"session history unavailable; keeping independently observed runtime");
-        let mut body = Outbound::text(
-            "历史暂时无法读取，已知会话运行状态仍显示在状态卡中。没有停止、重启或自动恢复会话；可稍后 /history 重试。",
-        );
+        let mut body = Outbound::text("⚠️ 历史暂不可用，请稍后 /history。");
         body.scope = Some(self.output_scope(&snapshot.config, workspace, cwd)?);
         body.binding_revision = Some(binding.revision);
         self.store
@@ -1520,9 +1495,9 @@ impl Service {
         };
         if !binding.history_ready {
             let text = if matches!(current.status, RuntimeStatus::Active { .. }) {
-                session::delivery::full_history(&history)
+                session::delivery::agent_history(&history)
             } else {
-                session::delivery::latest_interaction(&history)
+                session::delivery::latest_agent_answer(&history)
             };
             let mut body = Outbound::text(text);
             body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
@@ -1551,19 +1526,18 @@ impl Service {
         }
         let text = changed
             .iter()
-            .map(|i| {
-                format!(
-                    "{}\n{}",
-                    if i.role == session::Role::User {
-                        "用户"
-                    } else {
-                        "Agent"
-                    },
-                    i.text
-                )
-            })
+            .filter(|i| i.role == session::Role::Agent)
+            .map(|i| i.text.as_str())
             .collect::<Vec<_>>()
-            .join("\n\n────────\n\n");
+            .join("\n\n");
+        let visible_members = changed
+            .iter()
+            .filter(|i| i.role == session::Role::Agent)
+            .count();
+        if text.is_empty() {
+            self.store.observe(binding, &new).await?;
+            return Ok(());
+        }
         let mut body = Outbound::text(text);
         body.scope = Some(self.output_scope(&snapshot.config, workspace, &current.cwd)?);
         body.binding_revision = Some(binding.revision);
@@ -1577,12 +1551,25 @@ impl Service {
                 binding,
                 &new,
                 body,
-                changed.len(),
+                visible_members,
                 &snapshot.config.delivery,
                 time_ms,
             )
             .await?;
         Ok(())
+    }
+}
+
+impl Error {
+    fn user_message(&self) -> &'static str {
+        match self {
+            Self::Unknown => "⚠️ 结果未确认，请先核对会话，避免重复发送。",
+            Self::ReadOnly => "⚪ 此主机暂时只读。",
+            Self::Expired | Self::Stale => "请重新确认这条消息。",
+            Self::Unbound => "请先在管理 topic 选择会话。",
+            Self::TopicsDisabled => "请先为 bot 开启 Topics。",
+            _ => "⚠️ 暂时无法处理，请稍后重试。",
+        }
     }
 }
 
@@ -1600,15 +1587,10 @@ fn topic_title(workspace: &Workspace, title: &str, thread: &str) -> String {
             .collect::<String>()
     )
 }
-fn status_text(workspace: &Workspace, title: &str, status: &str, thread: &str) -> String {
-    format!(
-        "{}\n状态：{}\n工作区：{}\nthread：{}\n直接发送文本继续或 steer；/status /history /info",
-        session::delivery::short_title(title, 80),
-        status,
-        session::delivery::short_title(&workspace.name, 40),
-        thread
-    )
+fn status_text(_workspace: &Workspace, title: &str, status: &str, _thread: &str) -> String {
+    format!("{}\n{status}", session::delivery::short_title(title, 40))
 }
+
 fn item_key(item: &session::TextItem) -> String {
     format!("{}:{}{}", item.turn_id.len(), item.turn_id, item.item_id)
 }

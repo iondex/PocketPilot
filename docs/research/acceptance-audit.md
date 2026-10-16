@@ -89,3 +89,7 @@ T/N/R/P 的具体范围见 [实现记录](implementation-checks.md)。测试入�
 2026-10-16：CLI 已批准实际私聊用户配对，用户进入工作区及 session topic 后报告了默认入口建 topic、菜单布局、历史错误和标题循环。已按请求停止桥接；当前不会为验收自动重启。此次修复有回归测试及原问题会话的只读历史成功证据，管理 topic/新菜单仍待用户显式重启后复测。
 
 /start 自动建 Telegram topic 的平台条件已经 getMe 和官方文档双重确认：当前允许用户建 topic。需在 BotFather 开启 Disallow users to create new threads；这与 /start 不创建 Codex session 是不同层面的行为。当前代码保证固定管理 topic 与 agent 绑定隔离，不能替代该平台设置。
+
+## Telegram UX 展示范围修订
+
+后续用户明确要求 Telegram 单会话不回显用户消息、不显示角色标题和执行 ACK。该要求覆盖此前 A12/A13/A41/A42 中 Telegram 端的角色展示形式：原生读取/CLI 导出保留完整 user/agent 记录；Telegram 仅展示 agent 正文与简洁 emoji 状态，空历史不占位。管理交互改为持久编号导航，导航不依赖 nonce TTL；操作授权、结果未知不重发和生命周期约束没有放宽。上述规则测试通过，真实新版交互仍需用户复测。

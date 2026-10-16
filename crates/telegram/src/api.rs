@@ -12,7 +12,7 @@ use teloxide::{
     requests::Request,
     types::{
         AllowedUpdate, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId,
-        ThreadId, Update, UpdateKind,
+        ParseMode, ThreadId, Update, UpdateKind,
     },
 };
 
@@ -35,6 +35,8 @@ pub struct Input {
     /// Local recovery marker, never populated from a Telegram message body.
     #[serde(default)]
     pub requires_confirmation: bool,
+    #[serde(default)]
+    pub reply_to_message_id: Option<i32>,
 }
 
 pub fn input(update: &Update) -> Option<Input> {
@@ -87,6 +89,7 @@ pub fn input(update: &Update) -> Option<Input> {
         message_id: message.id.0,
         config_hash: None,
         requires_confirmation: false,
+        reply_to_message_id: message.reply_to_message().map(|m| m.id.0),
     })
 }
 
@@ -168,6 +171,16 @@ impl Api {
         text: &str,
         buttons: Vec<Vec<Button>>,
     ) -> Result<i32, Error> {
+        self.send_formatted(chat, topic, text, buttons, false).await
+    }
+    pub async fn send_formatted(
+        &self,
+        chat: i64,
+        topic: i32,
+        text: &str,
+        buttons: Vec<Vec<Button>>,
+        markdown: bool,
+    ) -> Result<i32, Error> {
         if text.len() > 45 * 1024 * 1024 {
             return Err(Error::TooLarge);
         }
@@ -192,6 +205,9 @@ impl Api {
             .bot
             .send_message(ChatId(chat), text)
             .reply_markup(markup);
+        if markdown {
+            request = request.parse_mode(ParseMode::MarkdownV2);
+        }
         if topic > 0 {
             request = request.message_thread_id(ThreadId(MessageId(topic)));
         }
@@ -207,18 +223,29 @@ impl Api {
         text: &str,
         buttons: Vec<Vec<Button>>,
     ) -> Result<(), Error> {
+        self.edit_formatted(chat, message, text, buttons, false)
+            .await
+    }
+    pub async fn edit_formatted(
+        &self,
+        chat: i64,
+        message: i32,
+        text: &str,
+        buttons: Vec<Vec<Button>>,
+        markdown: bool,
+    ) -> Result<(), Error> {
         let markup = InlineKeyboardMarkup::new(buttons.into_iter().map(|row| {
             row.into_iter()
                 .map(|b| InlineKeyboardButton::callback(b.label, b.data))
         }));
-        match self
-            .call(
-                self.bot
-                    .edit_message_text(ChatId(chat), MessageId(message), text)
-                    .reply_markup(markup),
-            )
-            .await
-        {
+        let mut request = self
+            .bot
+            .edit_message_text(ChatId(chat), MessageId(message), text)
+            .reply_markup(markup);
+        if markdown {
+            request = request.parse_mode(ParseMode::MarkdownV2);
+        }
+        match self.call(request).await {
             Ok(_) | Err(Error::NotModified) => Ok(()),
             Err(error) => Err(error),
         }
@@ -261,6 +288,10 @@ impl Api {
             .map_err(|_| Error::Timeout)?
             .map_err(safe_error)
     }
+}
+
+pub fn escape_markdown(text: &str) -> String {
+    teloxide::utils::markdown::escape(text)
 }
 
 // teloxide 0.17 predates the private-topic getMe flag. Extend this one response

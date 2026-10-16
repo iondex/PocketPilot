@@ -31,9 +31,9 @@ cargo build --workspace --locked
 ./target/debug/pocketpilot pair revoke BOT_ID USER_ID
 ```
 
-批准后再次 /start，在固定的「PocketPilot · 管理」topic 中选择工作区和已有会话。工作区按钮两列并排，菜单点击在原消息内切换。默认及未绑定消息只进入管理提示，不发送给 agent。新建使用 /new WORKSPACE_ID 任务，确认后创建；已绑定的会话 topic 内直接发送文本即可续轮或 steer。topic 名保持稳定，运行状态显示在固定状态卡。/status、/history、/info、/rename 和 /unbind 均可使用。
+批准后再次 /start，在固定的「PocketPilot · 管理」topic 中选择工作区和已有会话。管理界面使用 Markdown 编号导航：回复序号依次选择主机、工作区和会话，0 返回，/refresh 刷新；普通任务文本会被拒绝。新建使用 /new WORKSPACE_ID 任务，回复 1 确认后创建；已绑定的会话 topic 内直接发送文本即可续轮或 steer。topic 名保持稳定，运行状态显示在固定状态卡。/status、/history、/info、/rename 和 /unbind 均可使用。
 
-空闲会话首次展示最后用户输入和对应 final；活跃会话展示一个完整的可读历史集合，超长使用单个附件。只转发可见 user/agent/plan 文本，过滤工具和推理。短时输出进入持久批次，同一私聊的所有 topics 共享速率预算。
+Telegram 会话只展示 agent 正文，不回显用户输入，不加角色标签或“开始新一轮”通知；emoji 状态卡保持简洁。空闲首次显示对应 final，活跃历史为单个 agent 文本集合，超长用一个附件；CLI 完整导出保留全部角色。工具和推理不转发。短时输出进入持久批次，同一私聊的所有 topics 共享速率预算。
 
 ## 约定
 

@@ -653,7 +653,7 @@ mod tests {
         let status: p::ThreadStatus =
             serde_json::from_str(r#"{"type":"active","activeFlags":["waitingOnApproval"]}"#)
                 .unwrap();
-        assert_eq!(runtime(&status).label(), "等待审批");
+        assert_eq!(runtime(&status).label(), "🟠 等待审批");
         assert!(serde_json::from_str::<p::ThreadStatus>(r#"{"type":"future-state"}"#).is_err());
     }
     #[test]

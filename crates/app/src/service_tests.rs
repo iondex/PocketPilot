@@ -384,6 +384,20 @@ telegram_messages_per_minute=60000
             .await
             .unwrap();
     }
+    async fn choose(&self, id: u32, number: &str) {
+        let row: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM navigation WHERE bot_id=1 AND chat_id=10 AND topic_id=9",
+        )
+        .fetch_optional(&self.service.store.pool)
+        .await
+        .unwrap();
+        self.service
+            .store
+            .navigation_receipt(&row.unwrap(), 777, now())
+            .await
+            .unwrap();
+        self.service.handle(&input(id, 9, number)).await.unwrap();
+    }
     async fn outputs(&self) -> Vec<Outbound> {
         sqlx::query_scalar::<_, String>("SELECT payload FROM deliveries ORDER BY rowid")
             .fetch_all(&self.service.store.pool)
@@ -408,6 +422,7 @@ fn input(id: u32, topic: i32, text: &str) -> Input {
         message_id: id as i32,
         config_hash: None,
         requires_confirmation: false,
+        reply_to_message_id: None,
     }
 }
 
@@ -530,20 +545,14 @@ async fn management_topic_is_separate_and_unbound_messages_never_reach_an_agent(
         .await
         .unwrap();
     assert!(fixture.state.lock().await.requests.is_empty());
-    let rows = sqlx::query("SELECT topic_id,payload FROM deliveries ORDER BY rowid")
-        .fetch_all(&fixture.service.store.pool)
-        .await
-        .unwrap();
-    use sqlx::Row;
-    for row in rows {
-        let body: Outbound = serde_json::from_str(row.get("payload")).unwrap();
-        if body.text.contains("default user message")
-            || body.text.contains("management user message")
-        {
-            assert_eq!(row.get::<i32, _>("topic_id"), 9);
-            assert!(body.text.contains("未发送给 agent"));
-        }
-    }
+    let outputs = fixture.outputs().await;
+    assert!(
+        outputs
+            .iter()
+            .all(|b| !b.text.contains("default user message")
+                && !b.text.contains("management user message"))
+    );
+    assert!(outputs.iter().any(|b| b.text.contains("这里只接受")));
     fixture
         .service
         .store
@@ -587,56 +596,59 @@ async fn management_topic_is_separate_and_unbound_messages_never_reach_an_agent(
 }
 
 #[tokio::test]
-async fn picker_navigation_edits_the_same_management_message_and_keeps_its_buttons() {
+async fn numbered_navigation_edits_one_markdown_screen_without_inline_buttons() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     fixture
         .service
-        .handle(&input(210, 0, "/workspaces"))
+        .handle(&input(210, 0, "/start"))
         .await
         .unwrap();
-    let button = fixture
+    let home = fixture
         .outputs()
         .await
         .into_iter()
-        .find(|b| b.text.starts_with("管理 ·"))
-        .unwrap()
-        .buttons[0][0]
-        .data
-        .clone();
-    let mut click = input(211, 9, "");
-    click.message_id = 777;
-    click.callback = Some(button);
-    fixture.service.handle(&click).await.unwrap();
-    let sessions = fixture
-        .outputs()
-        .await
-        .into_iter()
-        .find(|b| b.text.contains("选择已有会话"))
+        .find(|b| b.navigation_id.is_some())
         .unwrap();
-    assert_eq!(sessions.edit_message, Some(777));
-    let back = sessions.buttons.last().unwrap()[0].data.clone();
+    assert!(home.markdown && home.buttons.is_empty());
+    assert!(home.text.contains("*主机*"));
+    fixture.choose(211, "1").await;
+    let workspaces = fixture.outputs().await.into_iter().last().unwrap();
+    assert!(workspaces.text.contains("工作区"));
+    assert_eq!(workspaces.edit_message, Some(777));
+    assert!(workspaces.buttons.is_empty());
+    fixture.choose(212, "1").await;
+    let sessions = fixture.outputs().await.into_iter().last().unwrap();
+    assert!(sessions.text.contains("🔵 运行中"));
+    assert!(sessions.text.contains("新建会话"));
     let (stop, receiver) = watch::channel(false);
-    let deliver = tokio::spawn(fixture.service.clone().deliver(receiver));
+    let worker = tokio::spawn(fixture.service.clone().deliver(receiver));
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        let requests = fixture.telegram.received_requests().await.unwrap();
-        if requests.iter().any(|r| {
-            r.url
-                .path()
-                .to_ascii_lowercase()
-                .ends_with("/editmessagetext")
-        }) {
+        if fixture
+            .telegram
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| {
+                r.url
+                    .path()
+                    .to_ascii_lowercase()
+                    .ends_with("/editmessagetext")
+            })
+        {
             break;
         }
-        assert!(Instant::now() < deadline, "inline menu was not edited");
+        assert!(Instant::now() < deadline);
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     stop.send(true).unwrap();
-    deliver.await.unwrap();
+    worker.await.unwrap();
     #[derive(Deserialize)]
     struct Edit {
         message_id: i32,
+        parse_mode: String,
         reply_markup: Markup,
     }
     #[derive(Deserialize)]
@@ -658,61 +670,317 @@ async fn picker_navigation_edits_the_same_management_message_and_keeps_its_butto
     )
     .unwrap();
     assert_eq!(edit.message_id, 777);
-    assert!(!edit.reply_markup.inline_keyboard.is_empty());
-    let mut click = input(212, 9, "");
-    click.message_id = 777;
-    click.callback = Some(back);
-    fixture.service.handle(&click).await.unwrap();
-    let outputs = fixture.outputs().await;
-    assert_eq!(outputs.last().unwrap().edit_message, Some(777));
+    assert_eq!(edit.parse_mode, "MarkdownV2");
+    assert!(edit.reply_markup.inline_keyboard.is_empty());
+    fixture.choose(213, "0").await;
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("工作区")
+    );
 }
 
 #[tokio::test]
-async fn workspace_buttons_use_two_columns_without_padding_small_session_lists() {
+async fn numbered_workspace_and_session_lists_only_contain_actual_entries() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     let file = &fixture.service.config.path;
     let mut text = std::fs::read_to_string(file).unwrap();
-    for (id, name) in [("second", "Second"), ("third", "Third")] {
-        text.push_str(&format!("\n[[workspaces]]\nid='{id}'\nprovider_id='instance'\nname='{name}'\nshort_name='{id}'\ncwd='/workspace/{id}'\n"));
+    for id in ["second", "third"] {
+        text.push_str(&format!("\n[[workspaces]]\nid='{id}'\nprovider_id='instance'\nname='{id}'\nshort_name='{id}'\ncwd='/workspace/{id}'\n"));
     }
     std::fs::write(file, text).unwrap();
     fixture.service.config.reload().unwrap();
     fixture
         .service
-        .handle(&input(215, 0, "/workspaces"))
+        .handle(&input(215, 0, "/start"))
         .await
         .unwrap();
-    let menu = fixture
-        .outputs()
-        .await
-        .into_iter()
-        .find(|b| b.text.starts_with("管理 ·"))
-        .unwrap();
-    assert_eq!(
-        menu.buttons.iter().map(Vec::len).collect::<Vec<_>>(),
-        vec![2, 1]
-    );
+    fixture.choose(216, "1").await;
+    let menu = fixture.outputs().await.into_iter().last().unwrap();
+    assert!(menu.buttons.is_empty());
+    assert!(menu.text.contains("*1*") && menu.text.contains("*3*"));
+    assert!(!menu.text.contains("*4*"));
     fixture
         .service
-        .handle(&input(216, 9, "/sessions workspace"))
+        .handle(&input(217, 9, "/sessions workspace"))
         .await
         .unwrap();
-    let menu = fixture
-        .outputs()
+    let menu = fixture.outputs().await.into_iter().last().unwrap();
+    assert!(menu.text.contains("*1*") && menu.text.contains("*2*"));
+    assert!(!menu.text.contains("*3*"));
+}
+
+#[tokio::test]
+async fn numbered_menu_survives_recovery_and_non_authority_config_changes() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(300, 0, "/start"))
         .await
-        .into_iter()
-        .find(|b| b.text.contains("选择已有会话"))
         .unwrap();
-    assert_eq!(
-        menu.buttons.len(),
-        2,
-        "one real session and one back button, with no padded rows"
+    let id: String = sqlx::query_scalar("SELECT id FROM navigation")
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(&id, 777, now() - 86400)
+        .await
+        .unwrap();
+    fixture.service.store.recover_inbox(1).await.unwrap();
+    let path = &fixture.service.config.path;
+    let config = std::fs::read_to_string(path)
+        .unwrap()
+        .replace(
+            "telegram_messages_per_minute=60000",
+            "telegram_messages_per_minute=120",
+        )
+        .replace("Fixture workspace", "New display name");
+    std::fs::write(path, config).unwrap();
+    fixture.service.config.reload().unwrap();
+    fixture.service.handle(&input(301, 9, "1")).await.unwrap();
+    let menu = fixture.outputs().await.into_iter().last().unwrap();
+    assert!(menu.text.contains("New display name"));
+    assert!(menu.buttons.is_empty());
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn numbered_confirmation_never_replays_a_stale_input_or_ignores_changed_scope() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(310, 9, "/new workspace task"))
+        .await
+        .unwrap();
+    fixture.service.handle(&input(311, 9, "1")).await.unwrap();
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .contains(&"thread/start")
+    );
+    let id: String = sqlx::query_scalar("SELECT id FROM navigation")
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(&id, 777, now())
+        .await
+        .unwrap();
+    let mut stale = input(312, 9, "1");
+    stale.requires_confirmation = true;
+    fixture.service.handle(&stale).await.unwrap();
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .contains(&"thread/start")
+    );
+    let path = &fixture.service.config.path;
+    let config = std::fs::read_to_string(path)
+        .unwrap()
+        .replace("cwd=\"/workspace\"", "cwd=\"/workspace/changed\"");
+    std::fs::write(path, config).unwrap();
+    fixture.service.config.reload().unwrap();
+    fixture.choose(313, "1").await;
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .contains(&"thread/start")
+    );
+    let menu = fixture.outputs().await.into_iter().last().unwrap();
+    assert!(menu.text.contains("/new"));
+}
+
+#[tokio::test]
+async fn replying_to_an_old_management_screen_refreshes_instead_of_selecting_its_number() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(320, 9, "/new workspace task"))
+        .await
+        .unwrap();
+    let id: String = sqlx::query_scalar("SELECT id FROM navigation")
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(&id, 777, now())
+        .await
+        .unwrap();
+    let mut reply = input(321, 9, "1");
+    reply.reply_to_message_id = Some(123);
+    fixture.service.handle(&reply).await.unwrap();
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .contains(&"thread/start")
     );
     assert!(
-        menu.buttons
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("/new")
+    );
+}
+
+#[tokio::test]
+async fn session_messages_are_quiet_and_only_agent_text_is_forwarded() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    store.set_workspace(1, 10, 11, "workspace").await.unwrap();
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    let before = fixture.outputs().await;
+    assert!(before.iter().any(|b| b.text == "original answer"));
+    assert!(before.iter().all(|b| !b.text.contains("original question")
+        && !b.text.contains("thread：")
+        && !b.text.contains("用户\n")
+        && !b.text.contains("Agent\n")));
+    fixture
+        .service
+        .handle(&input(330, 11, "do not echo this input"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.outputs().await.len(),
+        before.len(),
+        "successful input must not create an ACK message"
+    );
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    assert_eq!(
+        fixture.outputs().await.len(),
+        before.len(),
+        "observed user echo must only advance its cursor"
+    );
+    fixture.state.lock().await.items.push(serde_json::from_str::<p::ThreadItem>(r#"{"type":"agentMessage","id":"new-answer","text":"Only this reply","phase":"final_answer"}"#).unwrap());
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    let outputs = fixture.outputs().await;
+    assert_eq!(outputs.last().unwrap().text, "Only this reply");
+    assert!(outputs.iter().all(|b| !b.text.contains("do not echo")
+        && !b.text.contains("已追加")
+        && !b.text.contains("已开始")));
+    fixture
+        .service
+        .handle(&input(331, 11, "/info"))
+        .await
+        .unwrap();
+    let info = fixture.outputs().await.into_iter().last().unwrap();
+    assert!(info.text.contains("🔵"));
+    assert!(!info.text.contains("观察时间") && !info.text.contains("thread："));
+}
+
+#[tokio::test]
+async fn opening_a_session_without_agent_text_does_not_send_an_empty_history() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture.state.lock().await.items.clear();
+    fixture
+        .service
+        .handle(&input(340, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    let outputs = fixture.outputs().await;
+    assert!(
+        outputs
             .iter()
-            .all(|row| !row.is_empty() && row.iter().all(|b| !b.label.trim().is_empty()))
+            .all(|b| !b.text.is_empty() && !b.text.contains("会话历史"))
+    );
+    assert!(
+        !outputs
+            .iter()
+            .any(|b| b.scope.is_some() && b.text.contains("尚无"))
+    );
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .unwrap()
+            .history_ready
+    );
+}
+
+#[tokio::test]
+async fn deleted_management_message_is_replaced_only_after_a_known_edit_rejection() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(350, 0, "/start"))
+        .await
+        .unwrap();
+    fixture.choose(351, "1").await;
+    Mock::given(method("POST")).and(path_regex("(?i).*/editmessagetext$"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(r#"{"ok":false,"error_code":400,"description":"Bad Request: message to edit not found"}"#)).with_priority(1).mount(&fixture.telegram).await;
+    let (stop, receiver) = watch::channel(false);
+    let worker = tokio::spawn(fixture.service.clone().deliver(receiver));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let requests = fixture.telegram.received_requests().await.unwrap();
+        let sends = requests
+            .iter()
+            .filter(|r| r.url.path().to_ascii_lowercase().ends_with("/sendmessage"))
+            .count();
+        let edits = requests
+            .iter()
+            .filter(|r| {
+                r.url
+                    .path()
+                    .to_ascii_lowercase()
+                    .ends_with("/editmessagetext")
+            })
+            .count();
+        if edits > 0 && sends >= 3 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "known missing menu did not fall back to one new send"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM navigation WHERE published_at IS NOT NULL"
+        )
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap(),
+        1
     );
 }
 
@@ -760,14 +1028,11 @@ async fn picker_hides_only_sessions_proven_to_be_local_operator_probes() {
         .outputs()
         .await
         .into_iter()
-        .find(|b| b.text.contains("选择已有会话"))
+        .find(|b| b.navigation_id.is_some() && b.text.contains("会话"))
         .unwrap();
-    assert_eq!(
-        menu.buttons.len(),
-        1,
-        "dedicated probe leaked into session buttons"
-    );
-    assert_eq!(menu.buttons[0][0].label, "返回工作区");
+    assert!(menu.buttons.is_empty());
+    assert!(!menu.text.contains("Fixture title"));
+    assert!(menu.text.contains("新建会话"));
     assert!(
         !fixture
             .state
@@ -869,10 +1134,8 @@ async fn queued_input_after_restart_requires_a_fresh_binding_scoped_confirmation
     assert!(fixture.state.lock().await.requests.is_empty());
     let mut old_click = input(71, 11, "");
     old_click.callback = Some(old_button);
-    assert!(matches!(
-        fixture.service.handle(&old_click).await,
-        Err(Error::Expired)
-    ));
+    fixture.service.handle(&old_click).await.unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
     let draft = fixture
         .outputs()
         .await
@@ -1226,20 +1489,7 @@ async fn private_pairing_topic_history_and_steer_form_a_durable_workflow() {
         .handle(&input(3, 0, "/sessions workspace"))
         .await
         .unwrap();
-    let outputs = fixture.outputs().await;
-    let button = outputs
-        .last()
-        .unwrap()
-        .buttons
-        .first()
-        .unwrap()
-        .first()
-        .unwrap()
-        .data
-        .clone();
-    let mut click = input(4, 9, "");
-    click.callback = Some(button);
-    fixture.service.handle(&click).await.unwrap();
+    fixture.choose(4, "1").await;
     assert!(
         fixture
             .service
@@ -1250,11 +1500,10 @@ async fn private_pairing_topic_history_and_steer_form_a_durable_workflow() {
             .is_some()
     );
     let bodies = fixture.outputs().await;
-    let history = bodies
-        .iter()
-        .find(|b| b.text.starts_with("会话历史"))
-        .unwrap();
-    assert!(history.text.contains("original question") && history.text.contains("original answer"));
+    let history = bodies.iter().find(|b| b.text == "original answer").unwrap();
+    assert!(
+        history.text.contains("original answer") && !history.text.contains("original question")
+    );
     assert!(!history.text.contains("must never appear"));
     assert!(
         !fixture
@@ -1355,13 +1604,7 @@ async fn new_session_requires_confirmation_and_an_unloaded_session_resumes_only_
             .requests
             .contains(&"thread/start")
     );
-    let mut click = input(2, 9, "");
-    click.callback = Some(
-        fixture.outputs().await.last().unwrap().buttons[0][0]
-            .data
-            .clone(),
-    );
-    fixture.service.handle(&click).await.unwrap();
+    fixture.choose(2, "1").await;
     assert!(
         fixture
             .state
@@ -1452,10 +1695,7 @@ async fn display_and_rate_changes_preserve_authorized_live_outputs() {
         .await
         .unwrap();
     let before = fixture.outputs().await;
-    let history = before
-        .iter()
-        .find(|b| b.text.starts_with("会话历史"))
-        .unwrap();
+    let history = before.iter().find(|b| b.text == "original answer").unwrap();
     let scope = history.scope.as_ref().unwrap();
     let path = fixture.service.config.path.clone();
     let contents = std::fs::read_to_string(&path)

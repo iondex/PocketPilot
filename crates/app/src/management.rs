@@ -123,23 +123,18 @@ impl Service {
         snapshot: &Snapshot,
     ) -> Result<(), Error> {
         let routed = self.management_input(input, snapshot).await?;
-        let text = format!(
-            "这是管理 topic，不关联 Codex 会话。\n这条消息未发送给 agent：\n\n{}\n\n使用下方菜单添加会话，再到该会话 topic 发送消息。",
-            input.text
-        );
-        self.workspaces_text(&routed, snapshot, &text).await
-    }
-    pub(super) async fn menu_response(
-        &self,
-        input: &Input,
-        key: &str,
-        mut body: Outbound,
-    ) -> Result<(), Error> {
-        if input.callback.is_some() {
-            body.edit_message = Some(input.message_id);
+        if input.topic != routed.topic {
+            return self
+                .respond(
+                    &routed,
+                    &format!("management-only:{}", input.event_key),
+                    Outbound::text("这里只接受序号和管理命令。任务请发到对应会话 topic。"),
+                )
+                .await;
         }
-        self.respond(input, key, body).await
+        self.select_navigation(&routed, snapshot).await
     }
+
     pub(super) async fn opened(
         &self,
         input: &Input,
@@ -147,28 +142,7 @@ impl Service {
         workspace: &Workspace,
         topic: i32,
     ) -> Result<(), Error> {
-        let mut body = Outbound::text(format!(
-            "已添加会话到独立 topic（编号 {topic}）。\n请在该会话 topic 发送任务；此处只用于管理。"
-        ));
-        body.buttons = vec![
-            vec![
-                self.button(
-                    input,
-                    snapshot,
-                    "返回会话列表",
-                    Action::Workspace {
-                        id: workspace.id.clone(),
-                        cursor: None,
-                    },
-                )
-                .await?,
-            ],
-            vec![
-                self.button(input, snapshot, "返回工作区", Action::Home)
-                    .await?,
-            ],
-        ];
-        self.menu_response(input, &format!("opened:{}", input.event_key), body)
-            .await
+        let _ = topic;
+        self.opened_navigation(input, snapshot, workspace).await
     }
 }

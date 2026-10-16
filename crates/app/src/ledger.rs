@@ -31,6 +31,10 @@ pub struct Outbound {
     pub expires_at: Option<i64>,
     #[serde(default)]
     pub scope: Option<Scope>,
+    #[serde(default)]
+    pub markdown: bool,
+    #[serde(default)]
+    pub navigation_id: Option<String>,
 }
 fn yes() -> bool {
     true
@@ -47,6 +51,8 @@ impl Outbound {
             binding_revision: None,
             expires_at: None,
             scope: None,
+            markdown: false,
+            navigation_id: None,
         }
     }
 }
@@ -497,9 +503,11 @@ impl Store {
         if n != 1 {
             return Err(Error::Transition);
         }
-        sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,topic_id,source_key) DO NOTHING")
+        if !body.text.is_empty() {
+            sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,topic_id,source_key) DO NOTHING")
             .bind(uuid::Uuid::now_v7().to_string()).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(source).bind(payload)
             .execute(&mut *tx).await.map_err(|_| Error::Database)?;
+        }
         tx.commit().await.map_err(|_| Error::Database)
     }
     pub async fn publish_batch(
@@ -528,7 +536,7 @@ impl Store {
             {
                 opened = at;
                 count = count.saturating_add(prior.get::<i64, _>("batch_members") as usize);
-                body.text = format!("{}\n\n────────\n\n{}", previous.text, body.text);
+                body.text = format!("{}\n\n{}", previous.text, body.text);
                 existing = Some(prior.get::<String, _>("id"));
             }
         }
@@ -768,6 +776,7 @@ mod tests {
             message_id: id as i32,
             config_hash: None,
             requires_confirmation: false,
+            reply_to_message_id: None,
         }
     }
     #[tokio::test]

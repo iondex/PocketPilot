@@ -23,19 +23,19 @@ pub enum RuntimeStatus {
 impl RuntimeStatus {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::NotLoaded => "待继续",
-            Self::Idle => "空闲",
+            Self::NotLoaded => "⚪ 待继续",
+            Self::Idle => "🟢 空闲",
             Self::Active {
                 waiting_on_approval: true,
                 ..
-            } => "等待审批",
+            } => "🟠 等待审批",
             Self::Active {
                 waiting_on_user_input: true,
                 ..
-            } => "等待用户回答",
-            Self::Active { .. } => "运行中",
-            Self::SystemError => "服务错误",
-            Self::Unknown => "状态未知",
+            } => "🟡 等待回答",
+            Self::Active { .. } => "🔵 运行中",
+            Self::SystemError => "🔴 服务异常",
+            Self::Unknown => "⚫ 状态未知",
         }
     }
 }

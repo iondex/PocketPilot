@@ -24,7 +24,7 @@
 
 ## 自动与隔离验证
 
-全功能测试共 69 项通过。完整命令为 cargo fmt --all -- --check、cargo clippy --workspace --all-targets --all-features --locked -- -D warnings、cargo test --workspace --all-features --locked。
+全功能测试共 75 项通过。完整命令为 cargo fmt --all -- --check、cargo clippy --workspace --all-targets --all-features --locked -- -D warnings、cargo test --workspace --all-features --locked。
 
 行为测试覆盖私聊配对/topic/历史/创建/续轮/steer、重复与丢回执、按 peer 顺序 dispatch、撤销授权/配置与绑定校验、批次重启/固定截止、bot 私聊账号隔离；Discord mock 覆盖 owner 授权、category/channel、共享 provider 与重复/未知写不重发、解绑不结束任务。构建与测试没有真实聊天平台写入。
 
@@ -67,3 +67,11 @@ Telegram 官方文档证实：允许用户建 topic 时，客户端会在发送 
 用户已开启禁止用户新建 topic，telegram-check 返回 user_topic_creation_enabled=false。按“准备测试流程”的指示已启动修复版桥接，实际管理 topic、新会话 topic、历史、菜单及输入回执已有成功投递记录；初始两次旧投递出现拒绝，不据此宣称所有旧队列都成功。新管理/topic 交互仍按测试流程核对。
 
 本地 Desktop 再次只读确认仍为 stdio，未发现具名 Unix/TCP listener；本机 SSH 端口不可连接。没有重启 Desktop、启动本地 daemon、打开 Remote Login 或改动本机 SSH 配置。共享本机方案的事实与待验证项见 [本地会话说明](../design/local-desktop.md)。
+
+## 编号管理与安静会话 UX
+
+按新反馈将 Telegram 管理界面改为持久 MarkdownV2 编号导航：主机 → 工作区 → 会话，0 返回，/refresh 刷新。没有导航按钮 TTL；只读菜单可跨恢复及非授权配置变更使用。创建确认仍受当前 scope、freshness、菜单回执、单次选择、用户配对检查保护。旧按钮回到编号首页，普通管理任务文本拒绝且不复述。
+
+会话状态加 emoji，卡片仅保留标题/状态；正常输入只记详细日志，没有独立 ACK。实时与初始 Telegram 历史只显示 agent 正文，用户 item 仍推进观察游标以免反复处理，不回显或加角色标签。空 agent 历史不入发送队列；CLI/Discord 的完整角色历史不因 Telegram 展示需求而删改。
+
+新增行为测试覆盖持久菜单恢复、非授权变更、旧回复、未投递菜单、过期数字确认、scope 改变、无按钮的 MarkdownV2 请求、缺失菜单消息的已知拒绝后替换、安静输入/用户 echo 抑制与无空历史。
