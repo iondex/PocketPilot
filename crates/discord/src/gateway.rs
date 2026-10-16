@@ -41,6 +41,7 @@ impl EventHandler for Handler {
         let text = match parsed {
             Ok(action) => {
                 let input = Input {
+                    locale: Some(command.locale.clone()),
                     id: command.id.get(),
                     bot: self.api.bot,
                     guild: self.api.guild,
@@ -50,22 +51,22 @@ impl EventHandler for Handler {
                     command: action,
                 };
                 if self.api.authorize(&input).await.is_err() {
-                    "此原型仅允许配置服务器的 owner 使用。".into()
+                    i18n::text(&command.locale, "discord.owner_only")
                 } else {
                     self.backend
                         .handle(&self.api, input)
                         .await
-                        .unwrap_or_else(|e| e)
+                        .unwrap_or_else(|e| e.render(&command.locale))
                 }
             }
-            Err(_) => "无效命令。".into(),
+            Err(error) => i18n::LocalizedError::localized(&error, &command.locale),
         };
         let mut reply = EditInteractionResponse::new().allowed_mentions(crate::api::mentions());
         if text.len() > 8 * 1024 * 1024 {
-            reply = reply.content("历史超过单个附件上限，未截断。请在原客户端查看。");
+            reply = reply.content(i18n::text(&command.locale, "discord.history.too_large"));
         } else if text.chars().count() > 1800 {
             reply = reply
-                .content("会话消息集合见附件。")
+                .content(i18n::text(&command.locale, "discord.history.attachment"))
                 .new_attachment(CreateAttachment::bytes(text.into_bytes(), "session.md"));
         } else {
             reply = reply.content(text);
@@ -77,37 +78,57 @@ impl EventHandler for Handler {
 }
 
 fn string(name: &str, description: &str, required: bool) -> CreateCommandOption {
-    CreateCommandOption::new(CommandOptionType::String, name, description).required(required)
+    CreateCommandOption::new(
+        CommandOptionType::String,
+        name,
+        i18n::text("zh-CN", description),
+    )
+    .description_localized("en-US", i18n::text("en", description))
+    .description_localized("en-GB", i18n::text("en", description))
+    .required(required)
+}
+
+fn localized_command(name: &str, id: &str) -> CreateCommand {
+    CreateCommand::new(name)
+        .description(i18n::text("zh-CN", id))
+        .description_localized("en-US", i18n::text("en", id))
+        .description_localized("en-GB", i18n::text("en", id))
 }
 
 fn commands() -> Vec<CreateCommand> {
     vec![
-        CreateCommand::new("pp-workspaces").description("允许的工作区"),
-        CreateCommand::new("pp-sessions")
-            .description("查看工作区会话")
-            .add_option(string("workspace", "工作区短名或 ID", true))
-            .add_option(string("cursor", "上一页返回的分页游标", false)),
-        CreateCommand::new("pp-open")
-            .description("将已有会话加入自己的 channel")
-            .add_option(string("workspace", "工作区短名或 ID", true))
-            .add_option(string("thread", "Codex thread ID", true)),
-        CreateCommand::new("pp-new")
-            .description("创建会话并发送首条输入")
-            .add_option(string("workspace", "工作区短名或 ID", true))
-            .add_option(string("text", "首条用户输入", true))
+        localized_command("pp-workspaces", "discord.cmd.workspaces"),
+        localized_command("pp-sessions", "discord.cmd.sessions")
+            .add_option(string("workspace", "discord.option.workspace", true))
+            .add_option(string("cursor", "discord.option.cursor", false)),
+        localized_command("pp-open", "discord.cmd.open")
+            .add_option(string("workspace", "discord.option.workspace", true))
+            .add_option(string("thread", "discord.option.thread", true)),
+        localized_command("pp-new", "discord.cmd.new")
+            .add_option(string("workspace", "discord.option.workspace", true))
+            .add_option(string("text", "discord.option.first_input", true))
             .add_option(
-                CreateCommandOption::new(CommandOptionType::Boolean, "confirm", "确认创建并发送")
-                    .required(true),
+                CreateCommandOption::new(
+                    CommandOptionType::Boolean,
+                    "confirm",
+                    i18n::text("zh-CN", "discord.option.confirm"),
+                )
+                .description_localized("en-US", i18n::text("en", "discord.option.confirm"))
+                .required(true),
             ),
-        CreateCommand::new("pp-ask")
-            .description("继续当前 channel 会话；活跃时 steer")
-            .add_option(string("text", "用户输入", true)),
-        CreateCommand::new("pp-status").description("当前 channel 会话状态"),
-        CreateCommand::new("pp-history").description("一个集合查看完整可见历史"),
-        CreateCommand::new("pp-rename")
-            .description("仅修改 channel 显示名")
-            .add_option(string("title", "显示名称", true)),
-        CreateCommand::new("pp-unbind").description("仅解除 channel 映射，会话继续运行"),
+        localized_command("pp-ask", "discord.cmd.ask").add_option(string(
+            "text",
+            "discord.option.input",
+            true,
+        )),
+        localized_command("pp-status", "discord.cmd.status"),
+        localized_command("pp-history", "discord.cmd.history"),
+        localized_command("pp-rename", "discord.cmd.rename").add_option(string(
+            "title",
+            "discord.option.title",
+            true,
+        )),
+        localized_command("pp-unbind", "discord.cmd.unbind"),
     ]
     .into_iter()
     .map(|c| {

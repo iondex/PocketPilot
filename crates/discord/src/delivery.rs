@@ -21,6 +21,7 @@ impl Service {
                 .map_err(|_| crate::Error::Backend)?;
             for row in rows.into_iter().take(1) {
                 let mut input = Input {
+                    locale: None,
                     id: 0,
                     bot: api.bot,
                     guild: api.guild,
@@ -89,7 +90,10 @@ impl Service {
                     .discord_delivery_state(&row.id, "pending", "dispatching")
                     .await
                     .map_err(|_| crate::Error::Backend)?;
-                let sent = api.send(input.channel, &row.payload).await.is_ok();
+                let sent = api
+                    .send_in(input.channel, &row.payload, &snapshot.config.language)
+                    .await
+                    .is_ok();
                 self.store
                     .discord_delivery_state(
                         &row.id,

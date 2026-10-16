@@ -872,7 +872,7 @@ async fn numbered_confirmation_never_replays_a_stale_input_or_ignores_changed_sc
             .contains(&"thread/start")
     );
     let menu = fixture.outputs().await.into_iter().last().unwrap();
-    assert!(menu.text.contains("/new"));
+    assert!(menu.text.contains("请发送会话标题"));
 }
 
 #[tokio::test]
@@ -912,7 +912,7 @@ async fn replying_to_an_old_management_screen_refreshes_instead_of_selecting_its
             .last()
             .unwrap()
             .text
-            .contains("/new")
+            .contains("请发送会话标题")
     );
 }
 
@@ -1415,6 +1415,7 @@ async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receip
         receiver,
     );
     let make = |id, channel, command| DInput {
+        locale: None,
         id,
         bot: 1,
         guild: 2,
@@ -2234,7 +2235,7 @@ async fn management_creation_and_existing_topic_repair_keep_the_icon_out_of_the_
     assert_eq!(repaired.name, "管理");
     assert_eq!(repaired.icon_custom_emoji_id, "folder");
     assert_eq!(repaired.message_thread_id, Some(9));
-    assert_eq!(crate::i18n::text("en", "管理"), "Manage");
+    assert_eq!(crate::i18n::text("en", "tg.management.title"), "Manage");
     assert!(fixture.state.lock().await.requests.is_empty());
 }
 
@@ -2663,7 +2664,12 @@ async fn localized_command_menus_are_registered_only_for_private_chats() {
     assert_eq!(menus.len(), 3);
     for menu in &menus {
         assert_eq!(menu.scope.kind, "all_private_chats");
-        assert!(menu.commands.iter().any(|c| c.command == "cleartopics"));
+        assert!(menu.commands.iter().any(|c| c.command == "topics"));
+        assert!(
+            menu.commands
+                .iter()
+                .all(|c| !matches!(c.command.as_str(), "cleartopics" | "unbind"))
+        );
         assert!(menu.commands.iter().all(|c| !matches!(
             c.command.as_str(),
             "stop" | "cancel" | "kill"
@@ -2718,7 +2724,7 @@ async fn bulk_topic_cleanup_confirms_a_snapshot_and_preserves_new_topics_managem
         .await;
     fixture
         .service
-        .handle(&input(2001, 9, "/cleartopics"))
+        .handle(&input(2001, 9, "/topics clear"))
         .await
         .unwrap();
     let id: String = sqlx::query_scalar("SELECT id FROM navigation")
@@ -2840,7 +2846,7 @@ async fn bulk_topic_cleanup_stops_at_an_uncertain_result_without_replaying_or_to
         .await;
     fixture
         .service
-        .handle(&input(2021, 9, "/cleartopics"))
+        .handle(&input(2021, 9, "/topics clear"))
         .await
         .unwrap();
     fixture.choose(2022, "1").await;
@@ -2870,6 +2876,286 @@ async fn bulk_topic_cleanup_stops_at_an_uncertain_result_without_replaying_or_to
             .iter()
             .any(|o| o.text.contains("已清除 0 / 2") && o.text.contains("不会自动重试"))
     );
+}
+
+#[tokio::test]
+async fn explicit_history_reads_native_changes_and_shows_only_the_latest_input_and_final_result() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .store
+        .bind(1, 10, 11, "instance", "thread")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .set_workspace(1, 10, 11, "workspace")
+        .await
+        .unwrap();
+    {
+        let mut state = fixture.state.lock().await;
+        for json in [
+            r#"{"type":"userMessage","id":"u2","content":[{"type":"text","text":"What is **bold**?"}]}"#,
+            r#"{"type":"agentMessage","id":"c2","text":"intermediate progress","phase":"commentary"}"#,
+            r#"{"type":"agentMessage","id":"a2","text":"native final one","phase":"final_answer"}"#,
+        ] {
+            state.items.push(serde_json::from_str(json).unwrap());
+        }
+    }
+    fixture
+        .service
+        .handle(&input(2100, 11, "/history"))
+        .await
+        .unwrap();
+    let first = fixture.outputs().await.pop().unwrap();
+    assert!(first.agent_markdown && first.text.contains("native final one"));
+    let rendered = crate::markdown::render(&first.text);
+    assert!(rendered.html.contains("What is **bold**?"));
+    assert!(
+        !first.text.contains("original question")
+            && !first.text.contains("original answer")
+            && !first.text.contains("intermediate progress")
+    );
+    {
+        let mut state = fixture.state.lock().await;
+        state.items.pop();
+        state.items.push(serde_json::from_str(r#"{"type":"agentMessage","id":"a2","text":"native final updated","phase":"final_answer"}"#).unwrap());
+    }
+    fixture
+        .service
+        .handle(&input(2101, 11, "/history"))
+        .await
+        .unwrap();
+    let updated = fixture.outputs().await.pop().unwrap();
+    assert!(
+        updated.text.contains("native final updated") && !updated.text.contains("native final one")
+    );
+    fixture.state.lock().await.items.push(serde_json::from_str(r#"{"type":"userMessage","id":"u3","content":[{"type":"text","text":"new pending input"}]}"#).unwrap());
+    fixture
+        .service
+        .handle(&input(2102, 11, "/history"))
+        .await
+        .unwrap();
+    let pending = fixture.outputs().await.pop().unwrap();
+    assert!(pending.text.contains("new pending input") && pending.text.contains("尚无最终结果"));
+    assert!(!pending.text.contains("native final"));
+    assert!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .all(|r| !matches!(
+                *r,
+                "turn/start" | "turn/steer" | "thread/start" | "thread/resume" | "thread/name/set"
+            ))
+    );
+}
+
+#[tokio::test]
+async fn new_session_selects_host_and_workspace_ids_when_names_and_paths_match() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let config = fixture.service.config.snapshot().config.clone();
+    let endpoint = config.hosts[0].endpoint.as_deref().unwrap();
+    let file = &fixture.service.config.path;
+    let mut text = std::fs::read_to_string(file)
+        .unwrap()
+        .replace("Fixture workspace", "ideas");
+    text.push_str(&format!(
+        r#"
+[[hosts]]
+id="other"
+name="Other host"
+transport="websocket"
+endpoint="{endpoint}"
+allowed_workspace_roots=["/workspace"]
+[[providers]]
+id="other-instance"
+host_id="other"
+kind="codex"
+connection_mode="existing_proxy"
+compatibility_profile="fixture"
+control_verified=true
+[[workspaces]]
+id="other-workspace"
+provider_id="other-instance"
+name="ideas"
+short_name="OTHER"
+cwd="/workspace"
+"#
+    ));
+    std::fs::write(file, text).unwrap();
+    fixture.service.config.reload().unwrap();
+    assert!(matches!(
+        fixture
+            .service
+            .handle(&input(2110, 9, "/new ideas ambiguous"))
+            .await,
+        Err(Error::AmbiguousWorkspace)
+    ));
+    fixture
+        .service
+        .handle(&input(2111, 9, "/new other/ideas Qualified title"))
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("Other host")
+    );
+    fixture
+        .service
+        .handle(&input(2112, 9, "/new"))
+        .await
+        .unwrap();
+    fixture.choose(2113, "2").await;
+    fixture.choose(2114, "1").await;
+    let prompt = fixture.outputs().await.pop().unwrap();
+    assert!(
+        prompt.text.contains("Other host")
+            && prompt.text.contains("ideas")
+            && prompt.text.contains("请发送会话标题")
+    );
+    fixture.choose(2115, "123").await;
+    let confirmation = fixture.outputs().await.pop().unwrap();
+    assert!(confirmation.text.contains("Other host") && confirmation.text.contains("123"));
+    assert!(
+        fixture.state.lock().await.requests.is_empty(),
+        "choosing a host, workspace and title must not contact the agent"
+    );
+    fixture.choose(2116, "1").await;
+    let provider: String =
+        sqlx::query_scalar("SELECT instance_id FROM operations WHERE source_key LIKE '%:create'")
+            .fetch_one(&fixture.service.store.pool)
+            .await
+            .unwrap();
+    assert_eq!(provider, "other-instance");
+    let state = fixture.state.lock().await;
+    assert!(state.requests.contains(&"thread/start"));
+    assert!(!state.requests.contains(&"turn/start"));
+    assert_eq!(state.native_name.as_deref(), Some("123"));
+}
+
+#[tokio::test]
+async fn help_is_topic_aware_refresh_is_read_only_and_removed_commands_do_not_detach() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .store
+        .bind(1, 10, 11, "instance", "thread")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .set_workspace(1, 10, 11, "workspace")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(2120, 11, "/help"))
+        .await
+        .unwrap();
+    let session_help = fixture.outputs().await.pop().unwrap();
+    assert!(session_help.text.contains("上次用户输入与最终结果"));
+    fixture
+        .service
+        .handle(&input(2121, 11, "/unbind"))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(2122, 11, "/cleartopics"))
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .service
+            .store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("未知命令")
+    );
+    fixture
+        .service
+        .handle(&input(2123, 9, "/help"))
+        .await
+        .unwrap();
+    let management_help = fixture.outputs().await.pop().unwrap();
+    assert!(management_help.text.contains("重新获取当前管理页"));
+    assert!(
+        !management_help.text.contains("/unbind") && !management_help.text.contains("/cleartopics")
+    );
+    fixture
+        .service
+        .handle(&input(2124, 9, "/new"))
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(2125, 9, "/refresh"))
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("选择新会话所在的主机")
+    );
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn message_ids_localize_ui_and_errors_without_translating_literal_user_content() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let mut input = input(2130, 9, "/help");
+    input.locale = Some("en".into());
+    fixture
+        .service
+        .respond(&input, "literal", Outbound::text("tg.new.heading"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.outputs().await.last().unwrap().text,
+        "tg.new.heading"
+    );
+    fixture
+        .service
+        .respond(&input, "ui", Outbound::ui("tg.new.heading"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.outputs().await.last().unwrap().text,
+        "✨ New session"
+    );
+    let error = Error::Provider(ProviderError::Rejected(-32600));
+    let en = ::i18n::LocalizedError::localized(&error, "en");
+    let zh = ::i18n::LocalizedError::localized(&error, "zh-CN");
+    assert!(en.contains("provider rejected") && en.contains("-32600"));
+    assert!(zh.contains("执行服务拒绝") && zh.contains("-32600"));
 }
 
 #[tokio::test]

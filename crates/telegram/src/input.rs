@@ -33,7 +33,7 @@ impl Service {
             .button(
                 input,
                 snapshot,
-                "确认发送草稿",
+                "tg.draft.confirm",
                 Action::SubmitDraft {
                     text: text.into(),
                     steer_only,
@@ -45,8 +45,8 @@ impl Service {
             .await?;
         tracing::info!(workspace_id=%workspace.id,thread_id=%binding.thread_id,"session input requires renewed confirmation");
         let mut body = Outbound::text(
-            rust_i18n::t!(
-                "draft",
+            ::i18n::t!(
+                "tg.draft.note",
                 locale = crate::i18n::lang(input),
                 text = session::delivery::short_title(text, 80)
             )
@@ -198,9 +198,9 @@ impl Service {
                         client_id,
                     },
                     if waiting_on_approval || waiting_on_user_input {
-                        "已追加；原端的审批/用户问答仍需处理"
+                        "steered; native approval or user input is still pending"
                     } else {
-                        "已追加到运行中的轮次"
+                        "steered active turn"
                     },
                 )
             }
@@ -210,7 +210,7 @@ impl Service {
                     text: text.into(),
                     client_id,
                 },
-                "已开始新一轮",
+                "started turn",
             ),
             RuntimeStatus::NotLoaded if !steer_only => {
                 self.mutate(
@@ -230,7 +230,7 @@ impl Service {
                         text: text.into(),
                         client_id,
                     },
-                    "已继续会话",
+                    "resumed session",
                 )
             }
             _ => return self.draft(input, snapshot, text, steer_only).await,

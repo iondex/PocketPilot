@@ -134,13 +134,17 @@ impl Api {
     }
 
     pub async fn send(&self, channel: u64, text: &str) -> Result<u64, Error> {
+        self.send_in(channel, text, "zh-CN").await
+    }
+
+    pub async fn send_in(&self, channel: u64, text: &str, locale: &str) -> Result<u64, Error> {
         if text.len() > 8 * 1024 * 1024 {
             return Err(Error::TooLarge);
         }
         let mut message = CreateMessage::new().allowed_mentions(mentions());
         if text.chars().count() > 1800 {
             message = message
-                .content("会话消息集合见附件。")
+                .content(i18n::text(locale, "discord.history.attachment"))
                 .add_file(CreateAttachment::bytes(
                     text.as_bytes().to_vec(),
                     "session.md",

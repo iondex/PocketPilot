@@ -139,7 +139,7 @@ impl Service {
                 }
             };
             choices.push(Choice {
-                label: format!("{icon} {}", crate::presentation::title(&topic.title)),
+                label: format!("{icon} {}", crate::presentation::title(&topic.title)).into(),
                 action: Action::ConfirmTopicRemoval {
                     topic: topic.topic_id,
                 },
@@ -147,13 +147,13 @@ impl Service {
         }
         if more {
             choices.push(Choice {
-                label: "➡️ 下一页".into(),
+                label: UiText::id("nav.next"),
                 action: Action::Topics { after: last },
             });
         }
         if !choices.is_empty() {
             choices.push(Choice {
-                label: "🧹 清除全部会话话题".into(),
+                label: UiText::id("tg.topics.clear_heading"),
                 action: Action::ConfirmClearTopics,
             });
         }
@@ -161,13 +161,12 @@ impl Service {
             input,
             snapshot,
             Menu {
-                heading: "🗂 话题管理".into(),
-                note: if choices.is_empty() {
-                    "暂无已记录的话题。"
+                heading: UiText::id("tg.topics.heading"),
+                note: UiText::id(if choices.is_empty() {
+                    "tg.topics.empty"
                 } else {
-                    "选择话题以移除。仅列出本程序已记录的话题；不会停止 Codex 会话。"
-                }
-                .into(),
+                    "tg.topics.note"
+                }),
                 choices,
                 back: Action::Home,
                 refresh: Action::Topics { after },
@@ -190,15 +189,15 @@ impl Service {
             input,
             snapshot,
             Menu {
-                heading: "🗑 移除话题".into(),
-                note: rust_i18n::t!(
-                    "remove_topic_note",
+                heading: UiText::id("tg.topics.remove_heading"),
+                note: ::i18n::t!(
+                    "tg.topics.remove_note",
                     locale = crate::i18n::lang(input),
                     title = record.title
                 )
-                .to_string(),
+                .into(),
                 choices: vec![Choice {
-                    label: "🗑 确认删除话题与聊天记录".into(),
+                    label: UiText::id("tg.topics.remove_action"),
                     action: Action::RemoveTopic { topic },
                 }],
                 back: Action::Topics { after: 0 },
@@ -269,19 +268,15 @@ impl Service {
         }
         let outcome = self.remove_one_topic(input, snapshot, topic).await?;
         let text = match outcome {
-            Removal::Removed => "已移除话题和本地关联；Codex 会话继续保留，可重新添加。",
-            Removal::Rejected => {
-                "话题未能删除，本地转发已暂停。可重新选择话题重试，或从会话列表重新关联。"
-            }
-            Removal::Unknown => {
-                "删除结果未确认，本地转发已暂停，未自动重试。请检查 Telegram，或重新选择话题并确认。"
-            }
+            Removal::Removed => "tg.topics.removed",
+            Removal::Rejected => "tg.topics.rejected",
+            Removal::Unknown => "tg.topics.unknown",
             Removal::Skipped => return self.topics(input, snapshot, 0).await,
         };
         self.respond(
             input,
             &format!("topic-removal:{}", input.event_key),
-            Outbound::text(text),
+            Outbound::ui(text),
         )
         .await?;
         self.topics(input, snapshot, 0).await
@@ -301,15 +296,15 @@ impl Service {
             input,
             snapshot,
             Menu {
-                heading: "🧹 清除全部会话话题".into(),
-                note: rust_i18n::t!(
-                    "clear_topics_note",
+                heading: UiText::id("tg.topics.clear_heading"),
+                note: ::i18n::t!(
+                    "tg.topics.clear_note",
                     locale = crate::i18n::lang(input),
                     count = topics.len()
                 )
-                .to_string(),
+                .into(),
                 choices: vec![Choice {
-                    label: "🗑 确认清除全部会话话题与聊天记录".into(),
+                    label: UiText::id("tg.topics.clear_action"),
                     action: Action::ClearTopics { topics },
                 }],
                 back: Action::Topics { after: 0 },
@@ -367,11 +362,11 @@ impl Service {
             input,
             &format!("topics-cleared:{}", input.event_key),
             Outbound::text(
-                rust_i18n::t!(
+                ::i18n::t!(
                     if removed == total {
-                        "clear_topics_done"
+                        "tg.topics.clear_done"
                     } else {
-                        "clear_topics_result"
+                        "tg.topics.clear_result"
                     },
                     locale = crate::i18n::lang(input),
                     removed = removed,

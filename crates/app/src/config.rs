@@ -85,6 +85,14 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn language_is_an_explicit_root_setting_with_a_chinese_default() {
+        let path = std::path::Path::new("/tmp/pocketpilot.toml");
+        assert_eq!(parse(path, "").unwrap().config.language, "zh-CN");
+        assert_eq!(parse(path, "language='en'").unwrap().config.language, "en");
+        assert!(parse(path, "language='fr'").is_err());
+    }
+
+    #[test]
     fn paths_are_relative_to_the_single_config_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pocketpilot.toml");

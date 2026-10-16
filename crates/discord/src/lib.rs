@@ -40,6 +40,17 @@ pub enum Error {
     TooLarge,
 }
 
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::Request => ::i18n::Message::new("error.discord.request"),
+            Self::Denied => ::i18n::Message::new("error.discord.denied"),
+            Self::Backend => ::i18n::Message::new("error.discord.backend"),
+            Self::TooLarge => ::i18n::Message::new("error.discord.too_large"),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Command {
     Workspaces,
@@ -69,6 +80,7 @@ pub enum Command {
 
 #[derive(Clone, Debug)]
 pub struct Input {
+    pub locale: Option<String>,
     pub id: u64,
     pub bot: u64,
     pub guild: u64,
@@ -82,7 +94,7 @@ pub struct Input {
 #[async_trait]
 pub trait Backend: Send + Sync + 'static {
     /// Called after a guild-owner check and ephemeral interaction ACK.
-    async fn handle(&self, api: &Api, input: Input) -> Result<String, String>;
+    async fn handle(&self, api: &Api, input: Input) -> Result<String, i18n::Message>;
 }
 
 /// Restrict routing independently of command registration/Discord permissions.

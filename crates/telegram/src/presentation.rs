@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use session::RuntimeStatus;
 
-pub const MANAGEMENT_TITLE: &str = "管理";
+pub const MANAGEMENT_TITLE: &str = "tg.management.title";
 
 pub const MANAGEMENT_ICON: &str = "📁";
 

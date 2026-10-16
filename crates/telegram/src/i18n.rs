@@ -4,20 +4,14 @@ use crate::{
     storage::{Store, StoreError},
 };
 
-pub fn normalize(locale: &str) -> &'static str {
-    if locale.to_ascii_lowercase().starts_with("zh") {
-        "zh-CN"
-    } else {
-        "en"
-    }
-}
+pub use ::i18n::normalize;
 
 pub fn lang(input: &Input) -> &str {
     input.locale.as_deref().map(normalize).unwrap_or("zh-CN")
 }
 
 pub fn text(locale: &str, key: &str) -> String {
-    rust_i18n::t!(key, locale = normalize(locale)).to_string()
+    ::i18n::text(locale, key)
 }
 
 pub fn tr(input: &Input, key: &str) -> String {
@@ -68,9 +62,9 @@ mod tests {
 
     #[test]
     fn locales_are_explicit_and_do_not_leak_between_users() {
-        assert_eq!(text("en", "主机"), "Hosts");
-        assert_eq!(text("zh-CN", "主机"), "主机");
-        assert_eq!(text("en", "工作区"), "Workspaces");
-        assert_eq!(text("zh-CN", "工作区"), "工作区");
+        assert_eq!(text("en", "nav.hosts"), "Hosts");
+        assert_eq!(text("zh-CN", "nav.hosts"), "主机");
+        assert_eq!(text("en", "nav.workspaces"), "Workspaces");
+        assert_eq!(text("zh-CN", "nav.workspaces"), "工作区");
     }
 }

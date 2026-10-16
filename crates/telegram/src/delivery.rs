@@ -21,10 +21,13 @@ impl Service {
                     return;
                 }
                 let snapshot = self.config.snapshot();
-                let body: Outbound = match serde_json::from_str(&row.payload) {
+                let mut body: Outbound = match serde_json::from_str(&row.payload) {
                     Ok(body) => body,
                     Err(_) => break,
                 };
+                if let Some(id) = body.text_id.take() {
+                    body.text = self.ui_text(row.chat_id, &id).await;
+                }
                 let paired = self
                     .store
                     .pairing()
@@ -206,12 +209,12 @@ impl Service {
                                 .store
                                 .unavailable_topic(self.bot, row.chat_id, row.topic_id)
                                 .await;
-                            let mut notice = Outbound::text(if management {
-                                "管理 topic 已关闭或删除。下次发送 /start 将重新创建管理入口；Codex 会话不受影响。"
+                            let mut notice = Outbound::ui(if management {
+                                "tg.topic.management_missing"
                             } else {
-                                "会话 topic 已关闭或删除；Codex 会话继续运行。请从 /sessions 重新添加，会创建一个新 topic。"
+                                "tg.topic.session_missing"
                             });
-                            notice.text = self.ui_text(row.chat_id, &notice.text).await;
+
                             notice.scope = body.scope.clone();
                             let _ = self
                                 .store
@@ -228,10 +231,8 @@ impl Service {
                             let _ = self.store.disable_chat(self.bot, row.chat_id).await;
                         }
                         if matches!(error, crate::Error::TooLarge) {
-                            let mut fallback = Outbound::text(
-                                "历史超过 Telegram 单个附件的大小限制，未发送不完整的历史。请在本机使用 sessions history --output 导出完整集合。",
-                            );
-                            fallback.text = self.ui_text(row.chat_id, &fallback.text).await;
+                            let mut fallback = Outbound::ui("tg.history.too_large");
+
                             fallback.scope = body.scope.clone();
                             fallback.binding_revision = body.binding_revision;
                             let _ = self

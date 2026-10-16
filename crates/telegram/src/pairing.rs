@@ -19,6 +19,17 @@ pub enum Error {
     InvalidCode,
 }
 
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::Database => ::i18n::Message::new("error.pairing.database"),
+            Self::PrivateOnly => ::i18n::Message::new("error.pairing.private_only"),
+            Self::AlreadyPaired => ::i18n::Message::new("error.pairing.already_paired"),
+            Self::InvalidCode => ::i18n::Message::new("error.pairing.invalid_code"),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Pending {
     pub bot_id: i64,

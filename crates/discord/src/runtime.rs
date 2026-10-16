@@ -8,10 +8,10 @@ use session::History;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::{sync::watch, task::JoinSet};
 
-type Result<T> = std::result::Result<T, String>;
+type Result<T> = std::result::Result<T, i18n::Message>;
 
-fn error(e: impl std::fmt::Display) -> String {
-    e.to_string()
+fn error(e: impl i18n::LocalizedError) -> i18n::Message {
+    e.message()
 }
 
 #[path = "binding.rs"]
@@ -76,7 +76,7 @@ impl engine::integrations::Integration for Discord {
         .await
         .map_err(|e| engine::integrations::IntegrationError {
             platform: "discord",
-            message: e.to_string(),
+            message: i18n::LocalizedError::message(&e),
         })
     }
 }
@@ -137,6 +137,13 @@ impl Backend for Service {
 }
 
 impl Service {
+    pub(super) fn locale(&self, input: &Input) -> String {
+        input
+            .locale
+            .clone()
+            .unwrap_or_else(|| self.config.snapshot().config.language.clone())
+    }
+
     #[cfg(feature = "test-support")]
     pub fn local_fixture(
         config: Arc<ConfigFile>,

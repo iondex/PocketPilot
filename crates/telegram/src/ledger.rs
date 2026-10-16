@@ -17,6 +17,8 @@ pub struct Scope {
 pub struct Outbound {
     pub text: String,
     #[serde(default)]
+    pub text_id: Option<String>,
+    #[serde(default)]
     pub agent_markdown: bool,
     #[serde(default)]
     pub appearance: Option<crate::presentation::Appearance>,
@@ -48,6 +50,12 @@ fn default_pairing_required() -> bool {
 }
 
 impl Outbound {
+    pub fn ui(id: impl Into<String>) -> Self {
+        let mut body = Self::text("");
+        body.text_id = Some(id.into());
+        body
+    }
+
     pub fn agent(text: impl Into<String>) -> Self {
         let mut body = Self::text(text);
         body.agent_markdown = true;
@@ -57,6 +65,7 @@ impl Outbound {
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            text_id: None,
             agent_markdown: false,
             appearance: None,
             remove_status: None,

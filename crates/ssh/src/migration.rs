@@ -14,6 +14,12 @@ pub struct Account {
 #[error("unsupported or invalid TOTP export (values redacted)")]
 pub struct Error;
 
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        ::i18n::Message::new("error.ssh.totp_export")
+    }
+}
+
 // The export wire format is protobuf, distinct from an ordinary otpauth URI.
 #[derive(Message)]
 struct Payload {

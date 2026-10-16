@@ -16,6 +16,16 @@ pub enum Error {
     Unknown,
 }
 
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::Unknown => ::i18n::Message::new("error.operation.unknown"),
+            Self::Store(error) => ::i18n::LocalizedError::message(error),
+            Self::Provider(error) => ::i18n::LocalizedError::message(error),
+        }
+    }
+}
+
 /// Executes once, with no retry or cancellation. Platforms retain responsibility
 /// for freshness, authorization, binding checks and the atomic dispatch claim.
 pub async fn execute_dispatched(

@@ -149,6 +149,26 @@ pub enum Error {
     Logging,
 }
 
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::SharedEndpoint => ::i18n::Message::new("error.cli.shared_endpoint"),
+            Self::Selection => ::i18n::Message::new("error.cli.selection"),
+            Self::Output => ::i18n::Message::new("error.cli.output"),
+            Self::Logging => ::i18n::Message::new("error.cli.logging"),
+            Self::SSH(error) => ::i18n::LocalizedError::message(error),
+            Self::TOTP(error) => ::i18n::LocalizedError::message(error),
+            Self::Service(error) => ::i18n::LocalizedError::message(error),
+            Self::Config(error) => ::i18n::LocalizedError::message(error),
+            Self::Rpc(error) => ::i18n::LocalizedError::message(error),
+            Self::Provider(error) => ::i18n::LocalizedError::message(error),
+            Self::Telegram(error) => ::i18n::LocalizedError::message(error),
+            Self::Store(error) => ::i18n::LocalizedError::message(error),
+            Self::Pairing(error) => ::i18n::LocalizedError::message(error),
+        }
+    }
+}
+
 fn print(value: &impl Serialize) -> Result<(), Error> {
     let output = serde_json::to_string_pretty(value).map_err(|_| Error::Output)?;
     writeln!(std::io::stdout().lock(), "{output}").map_err(|_| Error::Output)
@@ -164,10 +184,31 @@ struct ConfigurationSummary {
     control_enabled: bool,
 }
 
-pub async fn run() -> Result<(), Error> {
+#[derive(Debug)]
+pub struct Failure {
+    error: Error,
+    locale: String,
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&i18n::LocalizedError::localized(&self.error, &self.locale))
+    }
+}
+
+pub async fn run() -> Result<(), Failure> {
     let args = Arguments::parse();
-    let loaded = config::load(&args.config)?;
-    let mut config = loaded.config;
+    let loaded = config::load(&args.config).map_err(|error| Failure {
+        error: Error::Config(error),
+        locale: "zh-CN".into(),
+    })?;
+    let locale = loaded.config.language.clone();
+    run_configured(args, loaded.config, &locale)
+        .await
+        .map_err(|error| Failure { error, locale })
+}
+
+async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Result<(), Error> {
     if let Command::SSHAskpass {
         host,
         attempt,
@@ -230,7 +271,7 @@ pub async fn run() -> Result<(), Error> {
                 Pair::List => print(&store.paired_users().await?)?,
                 Pair::Revoke { bot_id, user_id } => {
                     store.revoke_pairing(bot_id, user_id).await?;
-                    println!("Pairing revoked; remote sessions remain unchanged.");
+                    println!("{}", i18n::text(locale, "cli.pair_revoked"));
                 }
             }
         }
@@ -298,7 +339,7 @@ pub async fn run() -> Result<(), Error> {
                     .find(|w| w.id == id || w.short_name == id)
                     .ok_or(Error::Selection)?;
                 catalog.remove_workspace(&selected.id).await?;
-                println!("Workspace removed; remote sessions remain unchanged.");
+                println!("{}", i18n::text(locale, "cli.workspace_removed"));
             }
         },
         Command::Providers { command } => match command {
@@ -312,7 +353,7 @@ pub async fn run() -> Result<(), Error> {
                     .ok_or(Error::Selection)?;
                 provider.control_verified = !revoke;
                 catalog.save_provider(&provider).await?;
-                println!("Provider control attestation updated.");
+                println!("{}", i18n::text(locale, "cli.provider_updated"));
             }
         },
     }
@@ -381,7 +422,7 @@ async fn doctor(config: &Config, probe: bool, telegram: bool) -> Result<(), Erro
         hosts: Vec<HostCheck>,
         telegram: Option<telegram::Identity>,
         control_enabled: bool,
-        note: &'static str,
+        note: String,
     }
     let mut tasks = tokio::task::JoinSet::new();
     for host in config.hosts.clone() {
@@ -390,7 +431,11 @@ async fn doctor(config: &Config, probe: bool, telegram: bool) -> Result<(), Erro
             let (connected, reason, sample_sessions) = if probe {
                 match connect(&host, &config).await {
                     Ok(count) => (Some(true), None, Some(count)),
-                    Err(error) => (Some(false), Some(error.to_string()), None),
+                    Err(error) => (
+                        Some(false),
+                        Some(i18n::LocalizedError::localized(&error, &config.language)),
+                        None,
+                    ),
                 }
             } else {
                 (None, None, None)
@@ -424,6 +469,26 @@ async fn doctor(config: &Config, probe: bool, telegram: bool) -> Result<(), Erro
         hosts,
         telegram,
         control_enabled: config.providers.iter().any(|p| p.control_verified),
-        note: "Read-only probe. Control flags are operator attestations for each configured shared runtime.",
+        note: i18n::text(&config.language, "cli.doctor_note"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_errors_keep_their_type_and_render_the_selected_language() {
+        let english = Failure {
+            error: Error::Provider(session::ProviderError::Rejected(-32600)),
+            locale: "en".into(),
+        };
+        let chinese = Failure {
+            error: Error::Provider(session::ProviderError::Rejected(-32600)),
+            locale: "zh-CN".into(),
+        };
+        assert!(english.to_string().contains("provider rejected"));
+        assert!(chinese.to_string().contains("执行服务拒绝"));
+        assert!(english.to_string().contains("-32600") && chinese.to_string().contains("-32600"));
+    }
 }

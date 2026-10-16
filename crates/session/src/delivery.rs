@@ -19,53 +19,95 @@ pub fn short_title(title: &str, max_graphemes: usize) -> String {
 }
 
 pub fn full_history(history: &History) -> String {
-    let mut result = String::from("会话历史（按已读取记录；非原子快照）\n\n");
+    full_history_in(history, "zh-CN")
+}
+
+pub fn full_history_in(history: &History, locale: &str) -> String {
+    let mut result = format!("{}\n\n", i18n::text(locale, "common.history.heading"));
     for item in &history.items {
         let role = match item.role {
-            Role::User => "用户",
-            Role::Agent => "Agent",
+            Role::User => "common.role.user",
+            Role::Agent => "common.role.agent",
         };
+        let role = i18n::text(locale, role);
         result.push_str(&format!(
             "{role}{}\n{}\n\n",
-            if item.complete { "" } else { "（未完成）" },
+            if item.complete {
+                String::new()
+            } else {
+                i18n::text(locale, "common.history.incomplete_item")
+            },
             item.text
         ));
     }
     if !history.all_pages_read {
-        result.push_str("注意：历史未完整读取。\n");
+        result.push_str(&i18n::text(locale, "common.history.incomplete"));
+        result.push('\n');
     }
     result
 }
 
-pub fn latest_interaction(history: &History) -> String {
-    let Some(user_index) = history.items.iter().rposition(|i| i.role == Role::User) else {
-        return "尚无用户输入。".into();
-    };
+pub struct Interaction<'a> {
+    pub user: &'a TextItem,
+    pub answers: Vec<&'a TextItem>,
+}
+
+pub fn last_interaction(history: &History) -> Option<Interaction<'_>> {
+    if !history.all_pages_read {
+        return None;
+    }
+    let user_index = history.items.iter().rposition(|i| i.role == Role::User)?;
     let user = &history.items[user_index];
-    let finals: Vec<&TextItem> = history
+    let answers = history
         .items
         .iter()
         .skip(user_index + 1)
         .filter(|i| {
             i.turn_id == user.turn_id
                 && i.role == Role::Agent
+                && i.complete
                 && i.phase.as_deref() == Some("final_answer")
+                && !i.text.trim().is_empty()
         })
         .collect();
-    let answer = if finals.is_empty() {
-        "这次输入尚无可确认的最终输出。".into()
+    Some(Interaction { user, answers })
+}
+
+pub fn latest_interaction(history: &History) -> String {
+    latest_interaction_in(history, "zh-CN")
+}
+
+pub fn latest_interaction_in(history: &History, locale: &str) -> String {
+    if !history.all_pages_read {
+        return i18n::text(locale, "common.history.incomplete");
+    }
+    let Some(interaction) = last_interaction(history) else {
+        return i18n::text(locale, "common.history.no_input");
+    };
+    let answer = if interaction.answers.is_empty() {
+        i18n::text(locale, "common.history.no_final")
     } else {
-        finals
+        interaction
+            .answers
             .iter()
             .map(|i| i.text.as_str())
             .collect::<Vec<_>>()
             .join("\n\n")
     };
-    format!("最后用户输入\n{}\n\n最终输出\n{}", user.text, answer)
+    i18n::t!(
+        "common.history.latest",
+        locale = locale,
+        user = &interaction.user.text,
+        answer = answer
+    )
 }
 
 /// Telegram is an assistant conversation: user inputs are already visible there.
 pub fn agent_history(history: &History) -> String {
+    agent_history_in(history, "zh-CN")
+}
+
+pub fn agent_history_in(history: &History, locale: &str) -> String {
     let mut text = history
         .items
         .iter()
@@ -74,7 +116,8 @@ pub fn agent_history(history: &History) -> String {
         .collect::<Vec<_>>()
         .join("\n\n");
     if !history.all_pages_read {
-        text.push_str("\n\n⚠️ 部分历史暂不可用。");
+        text.push_str("\n\n");
+        text.push_str(&i18n::text(locale, "common.history.partial"));
     }
     text
 }
@@ -151,6 +194,21 @@ mod tests {
             complete: true,
             client_id: None,
         }
+    }
+
+    #[test]
+    fn last_interaction_excludes_incomplete_finals_and_does_not_guess_from_truncated_history() {
+        let mut partial = item("t", Role::Agent, Some("final_answer"), "still incomplete");
+        partial.complete = false;
+        let mut history = History {
+            all_pages_read: true,
+            items: vec![item("t", Role::User, None, "latest question"), partial],
+        };
+        let interaction = last_interaction(&history).unwrap();
+        assert_eq!(interaction.user.text, "latest question");
+        assert!(interaction.answers.is_empty());
+        history.all_pages_read = false;
+        assert!(last_interaction(&history).is_none());
     }
 
     #[test]

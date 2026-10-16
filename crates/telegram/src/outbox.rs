@@ -9,9 +9,9 @@ impl Store {
             if let Ok(mut body) = serde_json::from_str::<Outbound>(row.get("payload"))
                 && !body.require_pairing
                 && body.expires_at.is_some()
-                && body.text != "配对申请已投递或失效。"
+                && body.text != "[pairing code redacted]"
             {
-                body.text = "配对申请已投递或失效。".into();
+                body.text = "[pairing code redacted]".into();
                 body.buttons.clear();
                 sqlx::query("UPDATE deliveries SET payload=? WHERE id=?")
                     .bind(serde_json::to_string(&body).map_err(|_| Error::Database)?)
@@ -32,7 +32,15 @@ impl Store {
         source: &str,
         body: &Outbound,
     ) -> Result<(), Error> {
-        let payload = serde_json::to_string(body).map_err(|_| Error::Database)?;
+        let mut body = body.clone();
+        if let Some(id) = body.text_id.take() {
+            let locale = self
+                .locale(bot, chat as u64)
+                .await?
+                .unwrap_or_else(|| "zh-CN".into());
+            body.text = ::i18n::text(&locale, &id);
+        }
+        let payload = serde_json::to_string(&body).map_err(|_| Error::Database)?;
         sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,topic_id,source_key) DO NOTHING")
             .bind(uuid::Uuid::now_v7().to_string()).bind(bot).bind(chat).bind(topic).bind(source).bind(payload)
             .execute(&self.pool).await.map_err(|_| Error::Database)?;
@@ -90,7 +98,7 @@ impl Store {
                 let mut body: Outbound =
                     serde_json::from_str(&payload).map_err(|_| Error::Database)?;
                 if !body.require_pairing && body.expires_at.is_some() {
-                    body.text = "配对申请已投递或失效。".into();
+                    body.text = "[pairing code redacted]".into();
                     body.buttons.clear();
                     let payload = serde_json::to_string(&body).map_err(|_| Error::Database)?;
                     sqlx::query("UPDATE deliveries SET payload=? WHERE id=? AND state=?")

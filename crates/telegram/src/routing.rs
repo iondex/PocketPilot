@@ -17,11 +17,29 @@ impl Service {
         config: &'a Config,
         id: &str,
     ) -> Result<&'a Workspace, Error> {
-        config
-            .workspaces
-            .iter()
-            .find(|w| w.id == id || w.short_name == id)
-            .ok_or(connections::Error::Selection.into())
+        if let Some(workspace) = config.workspaces.iter().find(|w| w.id == id) {
+            return Ok(workspace);
+        }
+        let (host, name) = id.split_once('/').map_or((None, id), |(h, w)| (Some(h), w));
+        let mut matches = config.workspaces.iter().filter(|w| {
+            (w.id == name || w.short_name == name || w.name == name)
+                && host.is_none_or(|selected| {
+                    config.providers.iter().any(|p| {
+                        p.id == w.provider_id
+                            && config.hosts.iter().any(|h| {
+                                h.id == p.host_id
+                                    && (h.id == selected
+                                        || h.name == selected
+                                        || h.ssh_alias.as_deref() == Some(selected))
+                            })
+                    })
+                })
+        });
+        let workspace = matches.next().ok_or(connections::Error::Selection)?;
+        if matches.next().is_some() {
+            return Err(Error::AmbiguousWorkspace);
+        }
+        Ok(workspace)
     }
 
     pub(super) fn binding_workspace<'a>(
@@ -70,8 +88,8 @@ impl Service {
         key: &str,
         mut body: Outbound,
     ) -> Result<(), Error> {
-        if !body.agent_markdown && !body.markdown {
-            body.text = crate::i18n::tr(input, &body.text);
+        if let Some(id) = body.text_id.take() {
+            body.text = crate::i18n::tr(input, &id);
         }
         body.config_hash = input
             .config_hash

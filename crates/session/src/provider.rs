@@ -50,6 +50,21 @@ pub enum ProviderError {
     Conflict,
 }
 
+impl ::i18n::LocalizedError for ProviderError {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::Disconnected => ::i18n::Message::new("error.provider.disconnected"),
+            Self::Timeout => ::i18n::Message::new("error.provider.timeout"),
+            Self::Rejected(value) => {
+                ::i18n::Message::new("error.provider.rejected").arg("code", value)
+            }
+            Self::Incompatible => ::i18n::Message::new("error.provider.incompatible"),
+            Self::Unsupported => ::i18n::Message::new("error.provider.unsupported"),
+            Self::Conflict => ::i18n::Message::new("error.provider.conflict"),
+        }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait AgentProvider: Send + Sync {
     fn capabilities(&self) -> Capabilities;

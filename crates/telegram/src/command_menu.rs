@@ -9,18 +9,16 @@ impl Api {
     pub async fn register_commands(&self, default_locale: &str) -> Result<(), Error> {
         for (language, locale) in [("", default_locale), ("zh", "zh-CN"), ("en", "en")] {
             let commands = [
-                ("start", "cmd_start"),
-                ("workspaces", "cmd_workspaces"),
-                ("topics", "cmd_topics"),
-                ("cleartopics", "cmd_cleartopics"),
-                ("new", "cmd_new"),
-                ("status", "cmd_status"),
-                ("history", "cmd_history"),
-                ("rename", "cmd_rename"),
-                ("unbind", "cmd_unbind"),
-                ("refresh", "cmd_refresh"),
-                ("language", "cmd_language"),
-                ("help", "cmd_help"),
+                ("start", "tg.cmd.start"),
+                ("workspaces", "tg.cmd.workspaces"),
+                ("topics", "tg.cmd.topics"),
+                ("new", "tg.cmd.new"),
+                ("status", "tg.cmd.status"),
+                ("history", "tg.cmd.history"),
+                ("rename", "tg.cmd.rename"),
+                ("refresh", "tg.cmd.refresh"),
+                ("language", "tg.cmd.language"),
+                ("help", "tg.cmd.help"),
             ]
             .into_iter()
             .map(|(command, key)| {

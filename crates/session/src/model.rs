@@ -21,22 +21,27 @@ pub enum RuntimeStatus {
 }
 
 impl RuntimeStatus {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::NotLoaded => "⚪ 待继续",
-            Self::Idle => "🟢 空闲",
+    pub fn label(&self) -> String {
+        self.label_in("zh-CN")
+    }
+
+    pub fn label_in(&self, locale: &str) -> String {
+        let (emoji, id) = match self {
+            Self::NotLoaded => ("⚪", "state.not_loaded"),
+            Self::Idle => ("🟢", "state.idle"),
             Self::Active {
                 waiting_on_approval: true,
                 ..
-            } => "🟠 等待审批",
+            } => ("🟠", "state.waiting_approval"),
             Self::Active {
                 waiting_on_user_input: true,
                 ..
-            } => "🟡 等待回答",
-            Self::Active { .. } => "🔵 运行中",
-            Self::SystemError => "🔴 服务异常",
-            Self::Unknown => "⚫ 状态未知",
-        }
+            } => ("🟡", "state.waiting_input"),
+            Self::Active { .. } => ("🔵", "state.active"),
+            Self::SystemError => ("🔴", "state.error"),
+            Self::Unknown => ("⚫", "state.unknown"),
+        };
+        format!("{emoji} {}", i18n::text(locale, id))
     }
 }
 

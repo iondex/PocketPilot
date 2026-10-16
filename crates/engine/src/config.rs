@@ -20,9 +20,24 @@ pub enum ConfigError {
     Credentials,
 }
 
+impl ::i18n::LocalizedError for ConfigError {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::Io => ::i18n::Message::new("error.config.io"),
+            Self::Parse => ::i18n::Message::new("error.config.parse"),
+            Self::Duplicate => ::i18n::Message::new("error.config.duplicate"),
+            Self::Reference => ::i18n::Message::new("error.config.reference"),
+            Self::Invalid => ::i18n::Message::new("error.config.invalid"),
+            Self::Credentials => ::i18n::Message::new("error.config.credentials"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default = "default_language")]
+    pub language: String,
     #[serde(skip)]
     source: PathBuf,
     #[serde(skip)]
@@ -41,6 +56,10 @@ pub struct Config {
     pub config_reload: Reload,
     #[serde(default)]
     pub delivery: Delivery,
+}
+
+fn default_language() -> String {
+    "zh-CN".into()
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -250,6 +269,9 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if !matches!(self.language.as_str(), "zh-CN" | "zh" | "en") {
+            return Err(ConfigError::Invalid);
+        }
         unique(self.hosts.iter().map(|h| h.id.as_str()))?;
         unique(self.providers.iter().map(|p| p.id.as_str()))?;
         unique(self.workspaces.iter().map(|w| w.id.as_str()))?;

@@ -1,6 +1,4 @@
 //! Telegram transport. Only the service command starts receiving or sending messages.
-rust_i18n::i18n!("locales", fallback = "zh-CN");
-
 pub mod i18n;
 
 pub mod api;
@@ -58,6 +56,29 @@ pub enum Error {
     TopicClosed,
     #[error("Telegram message is missing or cannot be edited")]
     MessageUnavailable,
+}
+
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::Formatting => ::i18n::Message::new("error.telegram.formatting"),
+            Self::Request => ::i18n::Message::new("error.telegram.request"),
+            Self::Timeout => ::i18n::Message::new("error.telegram.timeout"),
+            Self::Authentication => ::i18n::Message::new("error.telegram.authentication"),
+            Self::Network => ::i18n::Message::new("error.telegram.network"),
+            Self::Protocol => ::i18n::Message::new("error.telegram.protocol"),
+            Self::RetryAfter(value) => {
+                ::i18n::Message::new("error.telegram.retry_after").arg("seconds", value)
+            }
+            Self::Rejected => ::i18n::Message::new("error.telegram.rejected"),
+            Self::NoRecipient => ::i18n::Message::new("error.telegram.no_recipient"),
+            Self::NotModified => ::i18n::Message::new("error.telegram.not_modified"),
+            Self::TooLarge => ::i18n::Message::new("error.telegram.too_large"),
+            Self::TopicUnavailable => ::i18n::Message::new("error.telegram.topic_unavailable"),
+            Self::TopicClosed => ::i18n::Message::new("error.telegram.topic_closed"),
+            Self::MessageUnavailable => ::i18n::Message::new("error.telegram.message_unavailable"),
+        }
+    }
 }
 
 pub(crate) fn safe_error(error: RequestError) -> Error {

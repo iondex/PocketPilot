@@ -21,4 +21,4 @@ cargo clippy -p app --no-default-features --locked -- -D warnings
 - 测试验证行为与边界，不复刻实现。真实测试只对自己创建的连接/测试会话断连；不能停止用户 daemon/session。真实秘密仅放 Git 忽略的根 pocketpilot.toml。
 - 稳定 0.1 前直接维护根 schema.sql，不维护 migrations 或运行迁移器。初始化幂等且不清空现有记录；修改已有列时，开发者需明确处理自己的原型状态，不能自动删除用户数据。
 
-Telegram 文案使用 rust-i18n 的显式 locale 参数，不调用全局 set_locale；语言资源放在 locales/，编译进 binary。Agent 正文交给 pulldown-cmark 渲染，不能直接当 MarkdownV2 或可信 HTML 发送。空标题补齐仅限显式用户动作且须先验证实际 cwd，后台不得改原生标题。
+所有 crate 共用 i18n crate，以稳定 ASCII ID 索引文案；资源只放 crates/i18n/locales/。rust-i18n 调用必须显式传 locale，不调用全局 set_locale。错误保留类型并实现 LocalizedError，在界面边界翻译；用户内容与文案 ID 用具名类型区分，禁止对任意原文做翻译查找。Agent 正文交给 pulldown-cmark 渲染，不能直接当 MarkdownV2 或可信 HTML 发送。空标题补齐仅限显式用户动作且须先验证实际 cwd，后台不得改原生标题。

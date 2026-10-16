@@ -96,6 +96,23 @@ pub enum Error {
     Unsupported,
 }
 
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::Disconnected => ::i18n::Message::new("error.codex.disconnected"),
+            Self::Timeout => ::i18n::Message::new("error.codex.timeout"),
+            Self::Protocol => ::i18n::Message::new("error.codex.protocol"),
+            Self::Rejected(value) => {
+                ::i18n::Message::new("error.codex.rejected").arg("code", value)
+            }
+            Self::HistoryPending => ::i18n::Message::new("error.codex.history_pending"),
+            Self::TurnChanged => ::i18n::Message::new("error.codex.turn_changed"),
+            Self::Endpoint => ::i18n::Message::new("error.codex.endpoint"),
+            Self::Unsupported => ::i18n::Message::new("error.codex.unsupported"),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Event {
     pub method: String,

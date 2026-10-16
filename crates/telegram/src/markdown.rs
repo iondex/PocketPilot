@@ -1,5 +1,6 @@
 //! CommonMark/GFM to Telegram's supported HTML, with escaped raw HTML and URLs.
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Default)]
 pub struct Rendered {
@@ -18,7 +19,7 @@ impl Rendered {
     }
 
     fn newline(&mut self) {
-        if !self.plain.ends_with('\n') {
+        if !self.plain.is_empty() && !self.plain.ends_with('\n') {
             self.text("\n");
         }
     }
@@ -201,27 +202,121 @@ struct Table {
 
 impl Table {
     fn write(self, out: &mut Rendered) {
-        for row in self.rows {
+        if let Some(grid) = self.compact_grid() {
+            out.mark("<pre>");
+            out.text(&grid);
+            out.mark("</pre>");
+            out.text("\n\n");
+            return;
+        }
+        for (row_index, row) in self.rows.iter().enumerate() {
             for (index, cell) in row.iter().enumerate() {
-                if index > 0
-                    && let Some(header) = self.headers.get(index)
+                if index == 0 {
+                    out.text(&format!("{}. ", row_index + 1));
+                } else {
+                    out.text("  ");
+                }
+                if let Some(header) = self
+                    .headers
+                    .get(index)
+                    .filter(|h| !h.plain.trim().is_empty())
                 {
                     out.mark("<b>");
                     out.text(header.plain.trim());
                     out.mark("</b>");
                     out.text(": ");
                 }
-                out.append(cell);
+                if cell.plain.trim().is_empty() {
+                    out.text("—");
+                } else {
+                    out.append(cell);
+                }
                 out.newline();
             }
             out.text("\n");
         }
+    }
+
+    fn compact_grid(&self) -> Option<String> {
+        let columns = self.headers.len();
+        if !(1..=3).contains(&columns) {
+            return None;
+        }
+        let mut widths = vec![0; columns];
+        for row in std::iter::once(&self.headers).chain(self.rows.iter()) {
+            if row.len() != columns {
+                return None;
+            }
+            for (index, cell) in row.iter().enumerate() {
+                // Preserve clickable links and inline emphasis using row cards.
+                if cell.plain.contains('\n')
+                    || cell.html != teloxide::utils::html::escape(&cell.plain)
+                {
+                    return None;
+                }
+                widths[index] = widths[index].max(cell.plain.trim().width());
+            }
+        }
+        if widths.iter().sum::<usize>() + 3 * (columns - 1) > 38 {
+            return None;
+        }
+        let line = |cells: &[Rendered]| {
+            cells
+                .iter()
+                .zip(&widths)
+                .map(|(cell, width)| {
+                    let text = cell.plain.trim();
+                    format!("{text}{}", " ".repeat(width - text.width()))
+                })
+                .collect::<Vec<_>>()
+                .join(" │ ")
+        };
+        let mut grid = line(&self.headers);
+        grid.push('\n');
+        grid.push_str(
+            &widths
+                .iter()
+                .map(|w| "─".repeat(*w))
+                .collect::<Vec<_>>()
+                .join("─┼─"),
+        );
+        for row in &self.rows {
+            grid.push('\n');
+            grid.push_str(&line(row));
+        }
+        Some(grid)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_tables_align_cjk_and_numbers_within_a_phone_width() {
+        let r = render("| 名称 | 数量 |\n|---|---:|\n| 中文 | 12 |\n| Rust | 3 |");
+        assert!(r.html.starts_with("<pre>"));
+        let lines = r.plain.trim_matches('\n').lines().collect::<Vec<_>>();
+        let widths = lines.iter().map(|line| line.width()).collect::<Vec<_>>();
+        assert!(
+            widths
+                .iter()
+                .all(|width| *width == widths[0] && *width <= 38)
+        );
+        assert!(r.plain.contains("中文") && r.plain.contains("Rust"));
+    }
+
+    #[test]
+    fn wide_or_rich_tables_become_numbered_cards_with_first_column_labels_and_links() {
+        let r = render(
+            "| 名称 | 说明 | 下载 |\n|---|---|---|\n| App | 这是一段较长的中文说明以验证不会产生横向滚动或截断 | [打开](https://example.com) |",
+        );
+        assert!(!r.html.contains("<pre>"));
+        assert!(r.html.contains("1. <b>名称</b>: App"));
+        assert!(r.html.contains("<b>说明</b>"));
+        assert!(r.html.contains("<a href=\"https://example.com\">打开</a>"));
+        assert!(!r.plain.contains('|'));
+    }
 
     #[test]
     fn renders_agent_markdown_and_tables_without_unsafe_html_or_broken_utf16() {

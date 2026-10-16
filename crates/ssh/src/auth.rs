@@ -28,6 +28,12 @@ fn now() -> i64 {
 )]
 pub struct Error;
 
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        ::i18n::Message::new("error.ssh.authentication")
+    }
+}
+
 fn matches(patterns: &[String], prompt: &str) -> Result<bool, Error> {
     for pattern in patterns {
         if Regex::new(pattern).map_err(|_| Error)?.is_match(prompt) {

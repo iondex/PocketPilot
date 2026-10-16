@@ -111,7 +111,10 @@ impl Service {
                                     .respond(
                                         &response_input,
                                         &format!("error:{}", input.event_key),
-                                        Outbound::text(error.user_message()),
+                                        Outbound::text(::i18n::LocalizedError::localized(
+                                            &error,
+                                            crate::i18n::lang(&response_input),
+                                        )),
                                     )
                                     .await;
                             }

@@ -13,7 +13,13 @@ pub struct Context {
 #[error("{platform} integration failed: {message}")]
 pub struct IntegrationError {
     pub platform: &'static str,
-    pub message: String,
+    pub message: i18n::Message,
+}
+
+impl i18n::LocalizedError for IntegrationError {
+    fn message(&self) -> i18n::Message {
+        self.message.clone()
+    }
 }
 
 #[async_trait::async_trait]

@@ -4,10 +4,11 @@
 
 ## 当前源码边界
 
-七个 crate 均为 publish=false，源码物理目录保持 src/ 下单层文件。
+八个 crate 均为 publish=false，源码物理目录保持 src/ 下单层文件。
 
 | crate | 所有权 |
 | --- | --- |
+| i18n | rust-i18n 共享中英文 ID 资源、显式 locale、参数插值与类型化错误展示；不依赖其他项目 crate |
 | ssh | 原生 SSH 配置、ProxyJump/ProxyCommand、连接参数、askpass、TOTP 与认证导出解析；不依赖 app/engine/codex |
 | session | 统一 AgentProvider、领域模型、允许的 Mutation、历史与消息规则 |
 | codex | 生成 DTO、RPC/framing、只读观察、执行写操作和空标题元数据补齐、Codex binary/socket 自动探测 |
@@ -16,9 +17,9 @@
 | discord | 全部 Discord API、owner gateway、category/channel、SQL、收发与观察；可选 runtime feature |
 | app | 根配置组合、日常 CLI、tracing、catalog 后台刷新、Integration 装配与退出 |
 
-依赖方向：app → telegram/discord/engine；平台 → engine → codex → ssh/session。engine 不引用任何平台，平台不依赖 app。各平台持有自己的 Store 包装，共用 engine 的连接池与服务锁；平台 SQL 不放回 app。这是一份应用内边界，不是数据库权限隔离。
+依赖方向：各 crate → i18n；app → telegram/discord/engine；平台 → engine → codex → ssh/session。engine 不引用任何平台，平台不依赖 app。各平台持有自己的 Store 包装，共用 engine 的连接池与服务锁；平台 SQL 不放回 app。这是一份应用内边界，不是数据库权限隔离。
 
-Telegram runtime 只组装任务；commands/input/routing/binding/navigation/management/observation/delivery/inbox 分担职责。持久收发进一步分为 inbox_store/outbox/ledger。Discord 使用对应平铺模块。engine::operations 统一处理已获授权写操作的回执与 OutcomeUnknown，平台分别保留授权/时效/绑定检查与 dispatch 原子边界。
+Telegram runtime 只组装任务；commands/input/routing/binding/navigation/new_session/topics/history_view/management/observation/delivery/inbox 分担职责。持久收发进一步分为 inbox_store/outbox/ledger。Discord 使用对应平铺模块。engine::operations 统一处理已获授权写操作的回执与 OutcomeUnknown，平台分别保留授权/时效/绑定检查与 dispatch 原子边界。
 
 根 TOML 与 catalog 合成一个不可变运行快照。provider/workspace 定义在 engine::model；配置反序列化跳过这两个运行字段，拒绝旧 TOML 中的静态目录。catalog 更新约两秒内可见；CAS 发布防止并发配置 reload 把已撤销主机重新带回。
 

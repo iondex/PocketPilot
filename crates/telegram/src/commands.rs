@@ -43,9 +43,7 @@ impl Service {
             }
             attempts.insert(key, Instant::now());
             drop(attempts);
-            let mut body = Outbound::text(
-                "请先发送 /start 申请配对，并在运行 PocketPilot 的机器上用 CLI 批准。",
-            );
+            let mut body = Outbound::ui("tg.pair.required");
             body.require_pairing = false;
             if starting {
                 let code = self
@@ -54,12 +52,18 @@ impl Service {
                     .request_pairing(self.bot, input.user, input.chat, true, now())
                     .await
                     .map_err(|_| StoreError::Database)?;
-                body.text =
-                    rust_i18n::t!("pair_code", locale = crate::i18n::lang(input), code = code)
-                        .to_string();
+                body.text_id = None;
+                body.text = ::i18n::t!(
+                    "tg.pair.code",
+                    locale = crate::i18n::lang(input),
+                    code = code
+                )
+                .to_string();
                 body.expires_at = Some(now() + 600);
             }
-            body.text = crate::i18n::tr(input, &body.text);
+            if let Some(id) = body.text_id.take() {
+                body.text = crate::i18n::tr(input, &id);
+            }
             return self
                 .store
                 .enqueue(self.bot, input.chat, input.topic, &input.event_key, &body)
@@ -113,7 +117,9 @@ impl Service {
             return match action {
                 Action::Home => self.workspaces(input, &snapshot).await,
                 Action::Host { id } => self.host_workspaces(input, &snapshot, &id).await,
-                Action::NewPrompt { .. }
+                Action::NewSession
+                | Action::NewHost { .. }
+                | Action::NewPrompt { .. }
                 | Action::Topics { .. }
                 | Action::ConfirmTopicRemoval { .. }
                 | Action::ConfirmClearTopics
@@ -158,12 +164,10 @@ impl Service {
                 command,
                 "/start"
                     | "/topics"
-                    | "/cleartopics"
                     | "/workspaces"
                     | "/sessions"
                     | "/open"
                     | "/new"
-                    | "/help"
                     | "/refresh"
                     | "/back"
                     | "/add"
@@ -185,7 +189,6 @@ impl Service {
                 command,
                 "/start"
                     | "/topics"
-                    | "/cleartopics"
                     | "/workspaces"
                     | "/sessions"
                     | "/open"
@@ -206,11 +209,7 @@ impl Service {
                 let choice = args.trim();
                 if !matches!(choice, "en" | "zh" | "zh-CN" | "zh-cn") {
                     return self
-                        .respond(
-                            input,
-                            &input.event_key,
-                            Outbound::text("🌐 中文：/language zh-CN\nEnglish: /language en"),
-                        )
+                        .respond(input, &input.event_key, Outbound::ui("tg.language.usage"))
                         .await;
                 }
                 self.store.set_locale(self.bot, input.user, choice).await?;
@@ -218,17 +217,34 @@ impl Service {
                 localized.locale = Some(crate::i18n::normalize(choice).into());
                 self.workspaces(&localized, &snapshot).await
             }
-            "/topics" => self.topics(input, &snapshot, 0).await,
-            "/cleartopics" => self.confirm_clear_topics(input, &snapshot).await,
+            "/topics" => {
+                if args.trim() == "clear" {
+                    self.confirm_clear_topics(input, &snapshot).await
+                } else {
+                    self.topics(input, &snapshot, 0).await
+                }
+            }
             "/add" => self.add_workspace(input, &snapshot, args.trim()).await,
             "/remove" => self.remove_workspace(input, &snapshot, args.trim()).await,
             "/start" | "/workspaces" => self.workspaces(input, &snapshot).await,
             "/refresh" | "/back" => self.select_navigation(input, &snapshot).await,
             "/help" => {
+                let mut target = input.clone();
+                let key = if self
+                    .store
+                    .binding(self.bot, input.chat, input.topic)
+                    .await?
+                    .is_some()
+                {
+                    "tg.help.session"
+                } else {
+                    target = self.management_input(input, &snapshot).await?;
+                    "tg.help.management"
+                };
                 self.respond(
-                    input,
+                    &target,
                     &input.event_key,
-                    Outbound::text(crate::i18n::tr(input, "help")),
+                    Outbound::text(crate::i18n::tr(input, key)),
                 )
                 .await
             }
@@ -242,7 +258,7 @@ impl Service {
             }
             "/new" => {
                 if args.trim().is_empty() {
-                    return self.workspaces(input, &snapshot).await;
+                    return self.new_hosts(input, &snapshot).await;
                 }
                 let (workspace, text) = args
                     .trim()
@@ -263,16 +279,10 @@ impl Service {
                 connections::require_workspace(&current.cwd, workspace)?;
                 tracing::info!(thread_id=%current.reference.thread,workspace_id=%workspace.id,status=?current.status,"session details requested");
                 let text = if command == "/history" {
-                    let text = session::delivery::agent_history(
-                        &self
-                            .history(provider.as_ref(), workspace, &binding.thread_id, &snapshot)
-                            .await?,
-                    );
-                    if text.is_empty() {
-                        "暂无回复。".into()
-                    } else {
-                        text
-                    }
+                    let history = self
+                        .history(provider.as_ref(), workspace, &binding.thread_id, &snapshot)
+                        .await?;
+                    self.history_summary(input, &history)
                 } else {
                     let host = snapshot
                         .config
@@ -282,22 +292,22 @@ impl Service {
                         .and_then(|p| snapshot.config.hosts.iter().find(|h| h.id == p.host_id))
                         .ok_or(connections::Error::Selection)?;
                     let state = match current.status {
-                        session::RuntimeStatus::NotLoaded => "未加载",
-                        session::RuntimeStatus::Idle => "空闲",
+                        session::RuntimeStatus::NotLoaded => "state.not_loaded",
+                        session::RuntimeStatus::Idle => "state.idle",
                         session::RuntimeStatus::Active {
                             waiting_on_approval: true,
                             ..
-                        } => "等待审批",
+                        } => "state.waiting_approval",
                         session::RuntimeStatus::Active {
                             waiting_on_user_input: true,
                             ..
-                        } => "等待回答",
-                        session::RuntimeStatus::Active { .. } => "运行中",
-                        session::RuntimeStatus::SystemError => "服务异常",
-                        session::RuntimeStatus::Unknown => "状态未知",
+                        } => "state.waiting_input",
+                        session::RuntimeStatus::Active { .. } => "state.active",
+                        session::RuntimeStatus::SystemError => "state.error",
+                        session::RuntimeStatus::Unknown => "state.unknown",
                     };
-                    rust_i18n::t!(
-                        "details",
+                    ::i18n::t!(
+                        "tg.session.details",
                         locale = crate::i18n::lang(input),
                         emoji = crate::presentation::emoji(&current.status),
                         title = &current.title,
@@ -318,26 +328,10 @@ impl Service {
                 };
                 self.respond(input, &input.event_key, body).await
             }
-            "/unbind" => {
-                self.bound(input).await?;
-                self.store.unbind(self.bot, input.chat, input.topic).await?;
-                self.respond(
-                    input,
-                    &input.event_key,
-                    Outbound::text(
-                        "已解除此 topic 的映射，会话继续运行。此 topic 只能重新连接原会话。",
-                    ),
-                )
-                .await
-            }
             "/rename" => {
                 if args.trim().is_empty() {
                     return self
-                        .respond(
-                            input,
-                            &input.event_key,
-                            Outbound::text("请使用 /rename 新名称。"),
-                        )
+                        .respond(input, &input.event_key, Outbound::ui("tg.rename.usage"))
                         .await;
                 }
                 let binding = self.bound(input).await?;
@@ -364,8 +358,12 @@ impl Service {
                     .rename(self.bot, input.chat, input.topic, &title)
                     .await?;
                 let mut body = Outbound::text(
-                    rust_i18n::t!("renamed", locale = crate::i18n::lang(input), title = &title)
-                        .to_string(),
+                    ::i18n::t!(
+                        "tg.rename.done",
+                        locale = crate::i18n::lang(input),
+                        title = &title
+                    )
+                    .to_string(),
                 );
                 body.topic_title = Some(topic_title(workspace, &title, &binding.thread_id));
                 self.respond(input, &input.event_key, body).await
@@ -380,14 +378,8 @@ impl Service {
                 }
             }
             text if text.starts_with('/') => {
-                self.respond(
-                    input,
-                    &input.event_key,
-                    Outbound::text(
-                        "未知命令。使用 /help；如需把斜杠文本发送给 agent，使用 /ask 文本。",
-                    ),
-                )
-                .await
+                self.respond(input, &input.event_key, Outbound::ui("tg.command.unknown"))
+                    .await
             }
             _ => {
                 if self.delayed(input) {

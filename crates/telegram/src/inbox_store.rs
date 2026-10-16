@@ -179,9 +179,7 @@ impl Store {
                 input.chat,
                 input.topic,
                 &format!("recovered:{}", input.event_key),
-                &Outbound::text(
-                    "上次请求的处理结果未确认。没有自动重发；请先 /status 核对，必要时重新发送。",
-                ),
+                &Outbound::ui("tg.input.recovered"),
             )
             .await?;
             self.finish_input(bot, row.get("polling_epoch"), row.get("update_id"))

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/ssh", "crates/session", "crates/codex", "crates/telegram", "crates/discord", "crates/app"]
+members = ["crates/i18n", "crates/engine", "crates/ssh", "crates/session", "crates/codex", "crates/telegram", "crates/discord", "crates/app"]
 resolver = "3"
 
 [workspace.package]
@@ -9,6 +9,7 @@ rust-version = "1.94"
 publish = false
 
 [workspace.dependencies]
+i18n = { path = "crates/i18n" }
 async-trait = "0.1"
 base64 = "0.22"
 prost = "0.14"
@@ -40,6 +41,7 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 unicode-segmentation = "1"
+unicode-width = "0.2"
 url = "2"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 

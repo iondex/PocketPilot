@@ -14,6 +14,7 @@ impl Service {
         input: &Input,
         snapshot: &Snapshot,
     ) -> Result<String> {
+        let locale = self.locale(input);
         match &input.command {
             Command::Workspaces => Ok(snapshot
                 .config
@@ -39,19 +40,24 @@ impl Service {
                     .map(|s| {
                         format!(
                             "{} · {}\n{}",
-                            s.status.label(),
+                            s.status.label_in(&locale),
                             session::delivery::short_title(&s.title, 45),
                             s.reference.thread
                         )
                     })
                     .collect::<Vec<_>>()
                     .join("\n\n");
-                text.push_str(&format!(
-                    "\n\n添加：/pp-open workspace:{} thread:ID",
-                    ws.short_name
+                text.push_str(&i18n::t!(
+                    "discord.sessions.open",
+                    locale = &locale,
+                    workspace = &ws.short_name
                 ));
                 if let Some(cursor) = page.next_cursor {
-                    text.push_str(&format!("\n下一页 cursor：{cursor}"));
+                    text.push_str(&i18n::t!(
+                        "discord.sessions.next",
+                        locale = &locale,
+                        cursor = cursor
+                    ));
                 }
                 Ok(text)
             }
@@ -64,7 +70,7 @@ impl Service {
                 confirmed,
             } => {
                 if !confirmed || text.trim().is_empty() {
-                    return Err("创建需要 confirm:true 和首条输入。".into());
+                    return Err("discord.error.create_confirmation".into());
                 }
                 let ws = self.workspace(&snapshot.config, workspace)?;
                 let actor = self.connections.actor(&ws.provider_id, "__create").await;
@@ -114,7 +120,7 @@ impl Service {
             }
             Command::Ask { text } => {
                 if text.trim().is_empty() {
-                    return Err("请输入消息内容。".into());
+                    return Err("discord.error.empty_input".into());
                 }
                 let b = self.bound(input).await?;
                 let ws = self.validate_binding(&snapshot.config, &b)?;
@@ -160,12 +166,12 @@ impl Service {
                                 .active_turn(&b.thread)
                                 .await
                                 .map_err(error)?
-                                .ok_or("活跃轮尚不可读，请稍后重新确认。")?,
+                                .ok_or("discord.error.turn_pending")?,
                         },
                         text: text.clone(),
                         client_id,
                     },
-                    _ => return Err("当前状态不允许发送，请刷新 /pp-status。".into()),
+                    _ => return Err("discord.error.state".into()),
                 };
                 let receipt = self
                     .mutate(
@@ -181,16 +187,17 @@ impl Service {
                         mutation,
                     )
                     .await?;
-                Ok(format!(
-                    "已接受 · turn {}",
-                    receipt.turn.unwrap_or_default()
+                Ok(i18n::t!(
+                    "discord.input.accepted",
+                    locale = &locale,
+                    turn = receipt.turn.unwrap_or_default()
                 ))
             }
             Command::Unbind => {
                 let b = self.bound(input).await?;
                 self.fresh(api, input, snapshot, true).await?;
                 self.store.discord_unbind(&b).await.map_err(error)?;
-                Ok("已解除 channel 映射，会话继续运行。".into())
+                Ok(i18n::text(&locale, "discord.unbound"))
             }
             Command::Rename { title } => {
                 let b = self.bound(input).await?;
@@ -199,7 +206,7 @@ impl Service {
                 api.rename(input.channel, title, &b.thread)
                     .await
                     .map_err(error)?;
-                Ok("channel 显示名已更新。".into())
+                Ok(i18n::text(&locale, "discord.renamed"))
             }
             Command::Status | Command::History => {
                 let b = self.bound(input).await?;
@@ -212,16 +219,18 @@ impl Service {
                 let current = provider.read(&b.thread).await.map_err(error)?;
                 connections::require_workspace(&current.cwd, ws).map_err(error)?;
                 if matches!(input.command, Command::History) {
-                    Ok(session::delivery::full_history(
+                    Ok(session::delivery::full_history_in(
                         &self.history(provider.as_ref(), ws, &b.thread).await?,
+                        &locale,
                     ))
                 } else {
-                    Ok(format!(
-                        "{}\n状态：{}\n工作区：{}\nthread：{}",
-                        current.title,
-                        current.status.label(),
-                        ws.name,
-                        b.thread
+                    Ok(i18n::t!(
+                        "discord.session.details",
+                        locale = &locale,
+                        title = current.title,
+                        state = current.status.label_in(&locale),
+                        workspace = &ws.name,
+                        thread = &b.thread
                     ))
                 }
             }

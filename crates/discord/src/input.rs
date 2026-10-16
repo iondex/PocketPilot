@@ -28,7 +28,7 @@ impl Service {
             .await
             .map_err(error)?;
         if !provider.capabilities().control_verified {
-            return Err("此实例尚未完成共享/断线验证，当前只读。".into());
+            return Err("discord.error.read_only".into());
         }
         let id = self
             .store
@@ -46,10 +46,10 @@ impl Service {
                 .receipt(&id)
                 .await
                 .map_err(error)?
-                .ok_or("回执缺失，未重发。".into());
+                .ok_or("discord.error.missing_receipt".into());
         }
         if state != State::Received {
-            return Err("先前请求结果未知，未重发，请核对原客户端。".into());
+            return Err("discord.error.unknown".into());
         }
         self.store
             .transition(&id, State::Received, State::Prepared)
@@ -62,7 +62,7 @@ impl Service {
                 || current.thread != thread
                 || current.instance != ws.provider_id
             {
-                return Err("映射已更新，请重新发送。".into());
+                return Err("discord.error.binding_changed".into());
             }
         }
         self.store

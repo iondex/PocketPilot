@@ -46,6 +46,8 @@ pub enum Error {
     Expired,
     #[error("当前 topic 尚未绑定会话；请使用 /workspaces")]
     Unbound,
+    #[error("workspace name is ambiguous; choose a host or use its workspace ID")]
+    AmbiguousWorkspace,
     #[error("此执行实例尚未通过共享和断线验证，当前只读")]
     ReadOnly,
     #[error("请求结果未知，没有自动重发；请核对会话状态")]
@@ -58,11 +60,38 @@ pub enum Error {
     WorkerStopped,
 }
 
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::Webhook => ::i18n::Message::new("error.telegram_runtime.webhook"),
+            Self::Expired => ::i18n::Message::new("error.telegram_runtime.expired"),
+            Self::Unbound => ::i18n::Message::new("error.telegram_runtime.unbound"),
+            Self::AmbiguousWorkspace => {
+                ::i18n::Message::new("error.telegram_runtime.ambiguous_workspace")
+            }
+            Self::ReadOnly => ::i18n::Message::new("error.telegram_runtime.read_only"),
+            Self::Unknown => ::i18n::Message::new("error.telegram_runtime.unknown"),
+            Self::Stale => ::i18n::Message::new("error.telegram_runtime.stale"),
+            Self::TopicsDisabled => ::i18n::Message::new("error.telegram_runtime.topics_disabled"),
+            Self::WorkerStopped => ::i18n::Message::new("error.telegram_runtime.worker_stopped"),
+            Self::Config(error) => ::i18n::LocalizedError::message(error),
+            Self::Store(error) => ::i18n::LocalizedError::message(error),
+            Self::Connection(error) => ::i18n::LocalizedError::message(error),
+            Self::Provider(error) => ::i18n::LocalizedError::message(error),
+            Self::Telegram(error) => ::i18n::LocalizedError::message(error),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Action {
     Home,
     Host {
+        id: String,
+    },
+    NewSession,
+    NewHost {
         id: String,
     },
     NewPrompt {
@@ -120,6 +149,9 @@ mod input;
 #[path = "observation.rs"]
 mod observation;
 
+#[path = "history_view.rs"]
+mod history_view;
+
 #[path = "routing.rs"]
 mod routing;
 
@@ -165,7 +197,7 @@ impl engine::integrations::Integration for Telegram {
             .await
             .map_err(|e| engine::integrations::IntegrationError {
                 platform: "telegram",
-                message: e.to_string(),
+                message: ::i18n::LocalizedError::message(&e),
             })
     }
 }
@@ -229,19 +261,6 @@ async fn run_adapter(
         Err(Error::WorkerStopped)
     } else {
         Ok(())
-    }
-}
-
-impl Error {
-    fn user_message(&self) -> &'static str {
-        match self {
-            Self::Unknown => "⚠️ 结果未确认，请先核对会话，避免重复发送。",
-            Self::ReadOnly => "⚪ 此主机暂时只读。",
-            Self::Expired | Self::Stale => "请重新确认这条消息。",
-            Self::Unbound => "请先在管理 topic 选择会话。",
-            Self::TopicsDisabled => "请先为 bot 开启 Topics。",
-            _ => "⚠️ 暂时无法处理，请稍后重试。",
-        }
     }
 }
 

@@ -17,14 +17,22 @@ use tokio::task::JoinSet;
 impl Service {
     pub(super) async fn refresh(&self, api: &Api, b: &Binding) -> Result<()> {
         let snapshot = self.config.snapshot();
+        let locale = &snapshot.config.language;
         let ws = self.validate_binding(&snapshot.config, b)?;
-        let channel = b.channel.parse::<u64>().map_err(error)?;
+        let channel = b
+            .channel
+            .parse::<u64>()
+            .map_err(|_| i18n::Message::new("error.discord.backend"))?;
         let input = Input {
+            locale: None,
             id: 0,
             bot: api.bot,
             guild: api.guild,
             channel,
-            user: b.owner.parse().map_err(error)?,
+            user: b
+                .owner
+                .parse()
+                .map_err(|_| i18n::Message::new("error.discord.backend"))?,
             date: now(),
             command: Command::Status,
         };
@@ -42,14 +50,14 @@ impl Service {
         if current_binding.revision != b.revision {
             return Ok(());
         }
-        let old: BTreeMap<String, String> =
-            serde_json::from_str(&b.observed_items).map_err(error)?;
+        let old: BTreeMap<String, String> = serde_json::from_str(&b.observed_items)
+            .map_err(|_| i18n::Message::new("error.discord.backend"))?;
         let fresh = hashes(&history);
         let text = if !b.history_ready {
             if matches!(current.status, RuntimeStatus::Active { .. }) {
-                session::delivery::full_history(&history)
+                session::delivery::full_history_in(&history, locale)
             } else {
-                session::delivery::latest_interaction(&history)
+                session::delivery::latest_interaction_in(&history, locale)
             }
         } else {
             history
@@ -59,11 +67,14 @@ impl Service {
                 .map(|i| {
                     format!(
                         "{}\n{}",
-                        if i.role == session::Role::User {
-                            "用户"
-                        } else {
-                            "Agent"
-                        },
+                        i18n::text(
+                            locale,
+                            if i.role == session::Role::User {
+                                "common.role.user"
+                            } else {
+                                "common.role.agent"
+                            }
+                        ),
                         i.text
                     )
                 })
@@ -78,7 +89,7 @@ impl Service {
         }
         let card = format!(
             "{} · {}\nthread：{}",
-            current.status.label(),
+            current.status.label_in(locale),
             session::delivery::short_title(&current.title, 80),
             b.thread
         );
@@ -89,7 +100,10 @@ impl Service {
         if b.card_text.as_deref() == Some(text) {
             return Ok(());
         }
-        let channel = b.channel.parse().map_err(error)?;
+        let channel = b
+            .channel
+            .parse()
+            .map_err(|_| i18n::Message::new("error.discord.backend"))?;
         if let Some(id) = &b.card_message {
             if let Ok(id) = id.parse::<u64>()
                 && id != 0
@@ -103,10 +117,20 @@ impl Service {
         } else {
             // Zero is an unknown-send tombstone, never a valid Discord message ID.
             self.store
-                .discord_card(b, Some(0), "状态卡发送中；若结果未知请使用 /pp-status")
+                .discord_card(
+                    b,
+                    Some(0),
+                    &i18n::text(
+                        &self.config.snapshot().config.language,
+                        "discord.card.pending",
+                    ),
+                )
                 .await
                 .map_err(error)?;
-            let id = api.send(channel, text).await.map_err(error)?;
+            let id = api
+                .send_in(channel, text, &self.config.snapshot().config.language)
+                .await
+                .map_err(error)?;
             self.store
                 .discord_card(b, Some(id), text)
                 .await
@@ -140,6 +164,7 @@ impl Service {
                         // Only a validated, still-owned binding may receive a stale marker.
                         let snapshot = service.config.snapshot();
                         let input = Input {
+                            locale: None,
                             id: 0,
                             bot: api.bot,
                             guild: api.guild,
@@ -153,7 +178,11 @@ impl Service {
                             && service.fresh(&api, &input, &snapshot, false).await.is_ok()
                         {
                             let _ = service
-                                .update_card(&api, &b, "连接未知 · 请刷新 /pp-status")
+                                .update_card(
+                                    &api,
+                                    &b,
+                                    &i18n::text(&snapshot.config.language, "discord.card.offline"),
+                                )
                                 .await;
                         }
                     }

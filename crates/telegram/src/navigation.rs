@@ -7,20 +7,55 @@ use sqlx::Row;
 #[path = "topics.rs"]
 mod topics;
 
+#[path = "new_session.rs"]
+mod new_session;
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Choice {
-    label: String,
+    label: UiText,
     action: Action,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Menu {
-    heading: String,
-    note: String,
+    heading: UiText,
+    note: UiText,
     choices: Vec<Choice>,
     back: Action,
     refresh: Action,
     scope: Option<Scope>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum UiText {
+    Message { id: String },
+    Literal(String),
+}
+
+impl UiText {
+    fn id(id: &str) -> Self {
+        Self::Message { id: id.into() }
+    }
+
+    fn render(&self, locale: &str) -> String {
+        match self {
+            Self::Message { id } => ::i18n::text(locale, id),
+            Self::Literal(text) => text.clone(),
+        }
+    }
+}
+
+impl From<String> for UiText {
+    fn from(value: String) -> Self {
+        Self::Literal(value)
+    }
+}
+
+impl From<&str> for UiText {
+    fn from(value: &str) -> Self {
+        Self::Literal(value.into())
+    }
 }
 
 struct SavedMenu {
@@ -98,21 +133,19 @@ fn md(text: &str) -> String {
 
 impl Menu {
     fn render(&self, locale: &str) -> String {
-        let mut text = format!("*{}*\n", md(&crate::i18n::text(locale, &self.heading)));
-        if !self.note.is_empty() {
-            text.push_str(&format!(
-                "\n{}\n",
-                md(&crate::i18n::text(locale, &self.note))
-            ));
+        let mut text = format!("*{}*\n", md(&self.heading.render(locale)));
+        let note = self.note.render(locale);
+        if !note.is_empty() {
+            text.push_str(&format!("\n{}\n", md(&note)));
         }
         for (index, choice) in self.choices.iter().enumerate() {
             text.push_str(&format!(
                 "\n*{}*  {}",
                 index + 1,
-                md(&crate::i18n::text(locale, &choice.label))
+                md(&choice.label.render(locale))
             ));
         }
-        text.push_str(&crate::i18n::text(locale, "menu_footer"));
+        text.push_str(&crate::i18n::text(locale, "tg.nav.footer"));
         text
     }
 }
@@ -161,22 +194,23 @@ impl Service {
                         "💻"
                     },
                     host.name
-                ),
+                )
+                .into(),
                 action: Action::Host {
                     id: host.id.clone(),
                 },
             })
             .collect();
         choices.push(Choice {
-            label: "🗂 话题管理".into(),
+            label: UiText::id("tg.topics.heading"),
             action: Action::Topics { after: 0 },
         });
         self.show_navigation(
             input,
             snapshot,
             Menu {
-                heading: "🌐 主机".into(),
-                note: "选择要管理的主机。这里仅接受序号和管理命令。".into(),
+                heading: UiText::id("tg.nav.hosts_heading"),
+                note: UiText::id("tg.nav.hosts_note"),
                 choices,
                 back: Action::Home,
                 refresh: Action::Home,
@@ -207,7 +241,7 @@ impl Service {
                     .any(|p| p.id == w.provider_id && p.host_id == host.id)
             })
             .map(|w| Choice {
-                label: format!("📁 {}", w.name),
+                label: format!("📁 {}", w.name).into(),
                 action: Action::Workspace {
                     id: w.id.clone(),
                     cursor: None,
@@ -218,8 +252,13 @@ impl Service {
             input,
             snapshot,
             Menu {
-                heading: format!("📁 {} › {}", host.name, crate::i18n::tr(input, "工作区")),
-                note: "添加项目：/add /绝对路径 可选名称\n移除入口：/remove 名称".into(),
+                heading: format!(
+                    "📁 {} › {}",
+                    host.name,
+                    crate::i18n::tr(input, "nav.workspaces")
+                )
+                .into(),
+                note: UiText::id("tg.nav.workspace_actions"),
                 choices,
                 back: Action::Home,
                 refresh: Action::Host { id: id.into() },
@@ -251,7 +290,8 @@ impl Service {
                     "{} · {}",
                     crate::presentation::emoji(&s.status),
                     session::delivery::short_title(&s.title, 40)
-                ),
+                )
+                .into(),
                 action: Action::Open {
                     workspace: workspace.id.clone(),
                     thread: s.reference.thread,
@@ -259,14 +299,14 @@ impl Service {
             })
             .collect::<Vec<_>>();
         choices.push(Choice {
-            label: "✨ 新建会话".into(),
+            label: UiText::id("tg.new.heading"),
             action: Action::NewPrompt {
                 workspace: workspace.id.clone(),
             },
         });
         if let Some(cursor) = page.next_cursor {
             choices.push(Choice {
-                label: "➡️ 下一页".into(),
+                label: UiText::id("nav.next"),
                 action: Action::Workspace {
                     id: workspace.id.clone(),
                     cursor: Some(cursor),
@@ -284,8 +324,13 @@ impl Service {
             input,
             snapshot,
             Menu {
-                heading: format!("💬 {} › {}", workspace.name, crate::i18n::tr(input, "会话")),
-                note: String::new(),
+                heading: format!(
+                    "💬 {} › {}",
+                    self.workspace_breadcrumb(&snapshot.config, workspace)?,
+                    crate::i18n::tr(input, "nav.sessions")
+                )
+                .into(),
+                note: String::new().into(),
                 choices,
                 back: Action::Host { id: host },
                 refresh: Action::Workspace {
@@ -312,17 +357,19 @@ impl Service {
             Menu {
                 heading: format!(
                     "✨ {} › {}",
-                    workspace.name,
-                    crate::i18n::tr(input, "新建会话")
-                ),
-                note: rust_i18n::t!(
-                    "create_note",
-                    locale = crate::i18n::lang(input),
-                    title = text
+                    self.workspace_breadcrumb(&snapshot.config, workspace)?,
+                    crate::i18n::tr(input, "nav.new_session")
                 )
-                .to_string(),
+                .into(),
+                note: ::i18n::t!(
+                    "tg.new.confirm",
+                    locale = crate::i18n::lang(input),
+                    title = text,
+                    cwd = &workspace.cwd
+                )
+                .into(),
                 choices: vec![Choice {
-                    label: "✨ 确认创建".into(),
+                    label: UiText::id("tg.new.confirm_action"),
                     action: Action::Create {
                         workspace: workspace.id.clone(),
                         text: text.into(),
@@ -351,10 +398,10 @@ impl Service {
             input,
             snapshot,
             Menu {
-                heading: "✨ 会话已添加".into(),
-                note: "到对应会话 topic 发送第一条消息。".into(),
+                heading: UiText::id("tg.session.added"),
+                note: UiText::id("tg.session.first_message"),
                 choices: vec![Choice {
-                    label: "返回会话列表".into(),
+                    label: UiText::id("nav.back_sessions"),
                     action: Action::Workspace {
                         id: workspace.id.clone(),
                         cursor: None,
@@ -379,6 +426,8 @@ impl Service {
     ) -> Result<(), Error> {
         match action {
             Action::Home => self.workspaces(input, snapshot).await,
+            Action::NewSession => self.new_hosts(input, snapshot).await,
+            Action::NewHost { id } => self.new_workspaces(input, snapshot, &id).await,
             Action::Host { id } => self.host_workspaces(input, snapshot, &id).await,
             Action::Workspace { id, cursor } => self.sessions(input, snapshot, &id, cursor).await,
             Action::Topics { after } => self.topics(input, snapshot, after).await,
@@ -386,34 +435,7 @@ impl Service {
                 self.confirm_topic_removal(input, snapshot, topic).await
             }
             Action::ConfirmClearTopics => self.confirm_clear_topics(input, snapshot).await,
-            Action::NewPrompt { workspace } => {
-                let Ok(ws) = self.workspace(&snapshot.config, &workspace) else {
-                    return self.workspaces(input, snapshot).await;
-                };
-                self.show_navigation(
-                    input,
-                    snapshot,
-                    Menu {
-                        heading: format!("✨ {} › {}", ws.name, crate::i18n::tr(input, "新建会话")),
-                        note: rust_i18n::t!(
-                            "create_hint",
-                            locale = crate::i18n::lang(input),
-                            workspace = &ws.short_name
-                        )
-                        .to_string(),
-                        choices: Vec::new(),
-                        back: Action::Workspace {
-                            id: ws.id.clone(),
-                            cursor: None,
-                        },
-                        refresh: Action::NewPrompt {
-                            workspace: ws.id.clone(),
-                        },
-                        scope: None,
-                    },
-                )
-                .await
-            }
+            Action::NewPrompt { workspace } => self.new_prompt(input, snapshot, &workspace).await,
             _ => self.workspaces(input, snapshot).await,
         }
     }
@@ -423,6 +445,9 @@ impl Service {
         input: &Input,
         snapshot: &Snapshot,
     ) -> Result<(), Error> {
+        if self.capture_new_title(input, snapshot).await? {
+            return Ok(());
+        }
         let text = input.text.trim();
         let number = if matches!(text, "/back" | "返回") {
             Some(0)
@@ -434,7 +459,7 @@ impl Service {
                 .respond(
                     input,
                     &format!("management-reject:{}", input.event_key),
-                    Outbound::text("这里只接受菜单序号和管理命令。任务请发到对应会话 topic。"),
+                    Outbound::ui("tg.management.reject"),
                 )
                 .await;
         }
@@ -449,7 +474,7 @@ impl Service {
                 .respond(
                     input,
                     &format!("management-reject:{}", input.event_key),
-                    Outbound::text("这里只接受菜单序号和管理命令。任务请发到对应会话 topic。"),
+                    Outbound::ui("tg.management.reject"),
                 )
                 .await;
         };
@@ -466,7 +491,7 @@ impl Service {
                 .respond(
                     input,
                     &format!("menu-loading:{}", input.event_key),
-                    Outbound::text("菜单正在更新，请稍后回复序号。"),
+                    Outbound::ui("tg.nav.loading"),
                 )
                 .await;
         }
@@ -479,7 +504,7 @@ impl Service {
                 .respond(
                     input,
                     &format!("menu-range:{}", input.event_key),
-                    Outbound::text("请回复菜单中的序号，或回复 0 返回。"),
+                    Outbound::ui("tg.nav.invalid_number"),
                 )
                 .await;
         };
@@ -545,7 +570,7 @@ impl Service {
                 .respond(
                     input,
                     &input.event_key,
-                    Outbound::text("请先选择主机，再用 /add /绝对路径 可选名称 添加工作区。"),
+                    Outbound::ui("tg.workspace.choose_host"),
                 )
                 .await;
         };
@@ -561,9 +586,9 @@ impl Service {
                     input,
                     &input.event_key,
                     Outbound::text(if providers.is_empty() {
-                        "尚未发现此主机的 Codex 共享服务，请稍后刷新。"
+                        "tg.workspace.no_provider"
                     } else {
-                        "此主机有多个执行实例，请在本机用 workspaces add --provider 指定实例。"
+                        "tg.workspace.multiple_providers"
                     }),
                 )
                 .await;

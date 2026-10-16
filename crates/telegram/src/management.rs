@@ -131,7 +131,7 @@ impl Service {
             return Err(Error::Expired);
         }
         if topic != input.topic {
-            let body = Outbound::text("已转到「管理」topic 处理，请在那里查看结果。");
+            let body = Outbound::ui("tg.management.routed");
             // A different command needs its own visible reply in the origin.
             // Re-delivery of the same input still shares one durable source key.
             self.respond(
@@ -162,7 +162,7 @@ impl Service {
                 .respond(
                     &routed,
                     &format!("management-only:{}", input.event_key),
-                    Outbound::text("这里只接受序号和管理命令。任务请发到对应会话 topic。"),
+                    Outbound::ui("tg.management.reject_unbound"),
                 )
                 .await;
         }

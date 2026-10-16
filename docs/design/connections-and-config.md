@@ -74,3 +74,6 @@ logging.filter 直接控制 tracing，普通会话的成功续轮/steer 与详�
 只对识别到的原生空 rollout 读取竞态进行最多五秒、受 RPC 总 deadline 限制的重读；其他读取失败交给下一次观察/用户刷新。写超时、掉线或协议错误进入 OutcomeUnknown，不自动重试。SSH 断线只回收本机 proxy，不关闭远端 daemon。
 
 后台仅轮询列表/状态/历史，不发 resume。用户明确发消息且会话 NotLoaded 时才 resume；空闲 turn/start，活跃 turn/steer 必须携带实际 expectedTurnId。等待审批也可 steer，审批仍由原客户端处理。所有接口均没有 interrupt、unsubscribe、kill、archive 或 daemon 管理动作。
+
+
+根级 language 控制 CLI 与后台缺省展示，取值 zh-CN 或 en。Telegram 的 default_locale 和用户偏好继续独立。共享文案与错误索引见 [i18n 设计](i18n.md)；语言配置不改变 host/provider/workspace 身份或原生会话状态。

@@ -2,6 +2,9 @@
 # 运行时只读取根目录 pocketpilot.toml；不支持 include 或 .env。
 # 文件路径以本配置文件所在目录为基准。公开示例不包含真实令牌。
 
+# CLI 与后台展示的缺省语言；Telegram 用户偏好通过 /language 独立保存。
+language = "zh-CN"
+
 [service]
 data_dir = "var/data"
 

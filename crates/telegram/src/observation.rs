@@ -114,7 +114,9 @@ impl Service {
         self.presence.clear(&binding).await;
         let appearance = crate::presentation::Appearance {
             title: binding.topic_title.clone().unwrap_or_else(|| {
-                crate::presentation::title(binding.display_name.as_deref().unwrap_or("会话"))
+                crate::presentation::title(
+                    binding.display_name.as_deref().unwrap_or("nav.sessions"),
+                )
             }),
             emoji: crate::presentation::emoji(&RuntimeStatus::Unknown).into(),
         };
@@ -132,7 +134,7 @@ impl Service {
     ) -> Result<(), Error> {
         tracing::warn!(%error,"session history unavailable; keeping independently observed runtime");
         let mut body = Outbound::text(
-            self.ui_text(binding.chat_id, "⚠️ 历史暂不可用，请稍后 /history。")
+            self.ui_text(binding.chat_id, "tg.history.unavailable")
                 .await,
         );
         body.scope = Some(self.output_scope(&snapshot.config, workspace, cwd)?);

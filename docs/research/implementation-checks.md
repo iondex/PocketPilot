@@ -152,3 +152,20 @@ rust-i18n 4 提供编译期中英文 YAML，显式 locale 参数避免全局语�
 批量确认固定具体 topic ID，确认后新增的 topic 不会被删除；逐项授权、账本、绑定失效与单项删除共用，删除间隔至少 1.1 秒。遇失败/限流/未知结果停止，不重试、不在重启后继续。fixture 覆盖跨确认新增话题、保留管理和原生会话、旧确认重询及批量未知回执停下；中英文命令的实际 SDK payload、私聊 scope 与无 stop 命令亦有覆盖。没有对真实用户话题执行清除。
 
 本次最终 104 项测试（Telegram 66）、fmt、全 feature/all-targets Clippy 与无默认 feature app Clippy 全部通过。发布构建 10,672,880 字节，SHA-256 `386a28a9dc527c7ef07d4b8bb5c9e6496c3a55c37181ce92cbda7899d624aa6a`；新版桥接已重新启动。真实 getMyCommands 回读确认 zh/en 各 12 项私聊命令；四个已绑定会话的图标更新回执成功，缓存均为 💬。真实用户话题清除仍由用户在 Telegram 内确认。
+
+
+## 动态最近交互、创建定位、表格与共享 i18n
+
+/history 每次只读请求当前原生记录，选择最近用户输入之后、同一个 turn 的已确认 final_answer。动态 fixture 在两次调用之间修改原生结果，回读展示新结果；旧轮答案、中间说明和下一次 steer 之前的 final 不混入。未完整读取时不假定读到的是最近记录。进入活跃话题和普通实时投递的既有策略保留。
+
+窄表通过 unicode-width 以不超过 38 格的 pre 网格展示，覆盖 CJK/数字列宽；宽表和带链接/强调的表格转换为编号条目，保留首列表头与可点击链接，不截断内容。修正渲染开头多余空行。
+
+/new 提供主机 → 工作区 → 标题 → 确认，内部绑定 workspace/provider ID，确认页显示主机与实际路径；支持 HOST/WORKSPACE 或完整 ID，裸名称有歧义时拒绝。只有明确标题页可以接收标题文本，过期页和范围变更不执行。fixture 用两个主机同名且同路径的 workspace，确认写入精确 provider、创建空会话且未开启 turn。
+
+清理统一到 /topics，/topics clear 进入确认；Telegram /unbind 和 /cleartopics 的路由与注册移除。/refresh 重新获取当前管理页，/help 按绑定状态说明。官方当前 BotCommandScope 只有七种聊天/成员范围，没有 message_thread_id，不能原生分话题注册命令。
+
+新增共享 i18n crate，全部项目 crate 依赖稳定 ASCII ID；中英文资源集中、显式 locale、单次参数插值与类型化错误展示。所有错误枚举提供 LocalizedError，包装继续委托底层，不通过 Display 字符串反推；CLI 成功提示/诊断错误、Discord 交互与 Telegram UI 均接入。root language 缺省 zh-CN，Telegram 用户偏好独立。菜单和消息显式区分 ID 与原文，测试确保像 tg.new.heading 的用户内容不会被翻译。资源测试验证双语键/占位符及源码 ID 完整性。旧菜单可继续读取，未引入数据库 migration。
+
+Logo 按用户最新要求仅交付生成 prompt，未调用图像 API或安装头像，文件为 docs/design/logo-prompt.md。全 workspace 115 项测试通过（Telegram 72、共享 i18n 2、session 5、CLI 1）；全 feature/all-targets Clippy -D warnings 与 fmt 通过。真实用户话题未用于删除测试；原生生命周期检查仍由隔离 fixture 覆盖。
+
+发布构建验证：macOS arm64 binary 10,733,664 字节，SHA-256 `5bef83a73941b0fa27c559cbec0212856b362167ced06ee54164713f5cc8705d`。真实独立临时配置验证 CLI 中英文业务错误；新版桥接已重启并确认 Telegram ready，getMyCommands 回读 zh/en 各 10 项且无 unbind/cleartopics。配对、catalog 与绑定沿用原状态库；没有重启 Codex daemon。

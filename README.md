@@ -30,7 +30,15 @@ cargo build --workspace --locked
 ./target/debug/pocketpilot pair revoke BOT_ID USER_ID
 ```
 
-批准后再次 /start，在固定的「管理」topic 中选择工作区和已有会话。管理界面使用 Markdown 编号导航，每次输入后新发菜单：回复序号依次选择主机、工作区和会话，0 返回，/refresh 刷新；普通任务文本会被拒绝。新建使用 /new WORKSPACE_ID 标题，回复 1 确认后创建空会话；首条任务由用户在会话 topic 发送；已绑定的会话 topic 内直接发送文本即可续轮或 steer。topic 只保留截短的原始标题，状态用原生 emoji icon 表示，/status 查看详情。/status、/history、/info、/rename 和 /unbind 均可使用。私聊命令菜单启动时自动注册中英文说明。管理首页或 /topics 可列出已记录话题，确认后删除 Telegram 话题与聊天记录，Codex 会话继续保留；客户端手动删除可在 /topics 或 /refresh 时同步。/cleartopics 确认后清除全部已记录会话话题，保留管理入口及原生会话。
+批准后再次 /start，在固定的「管理」topic 中选择主机、工作区和会话。管理界面使用 Markdown 编号导航，每次输入后新发菜单；0 返回，/refresh 重新获取当前管理页。普通任务文本会被拒绝；只有明确进入新建流程后，下一条文字才作为会话标题。
+
+/new 按「主机 → 工作区 → 标题 → 确认」创建空会话；也可用 /new HOST/WORKSPACE 标题 或 /new WORKSPACE_ID 标题 快捷创建。同名工作区需指定主机或完整 ID，不会默认挑选一个。首条任务由用户在新话题中发送，活跃会话的输入直接 steer。
+
+/history 动态读取原生会话，返回最近一次用户输入及同轮最终结果，过滤中间说明；尚无最终结果时明确提示。/status 查看实际状态与完整详情。/topics 管理单个话题，也包含「清除全部会话话题」；/topics clear 可直接进入批量清理确认。删除 Telegram 话题与聊天记录时保留 Codex 会话和固定管理入口。Bot API 无法枚举全部话题，仅管理已记录的话题。
+
+私聊命令列表注册中英文说明。Telegram 不支持按 topic 分配不同的命令列表，/help 则按管理话题或会话话题显示对应说明。/unbind 与 /cleartopics 已移除。
+
+共享语言资源与类型化错误见 [i18n 设计](docs/design/i18n.md)。Logo 生成用 [这份 prompt](docs/design/logo-prompt.md)。
 
 Telegram 会话只展示 agent 正文，不回显用户输入，不加角色标签或“开始新一轮”通知；topic emoji 表达状态，运行时持续续期“正在输入”，不自动发送空闲状态卡。空闲首次显示对应 final，活跃历史为单个 agent 文本集合，超长用一个附件；内部完整历史模型保留全部角色。工具和推理不转发。短时输出进入持久批次，同一私聊的所有 topics 共享速率预算。
 

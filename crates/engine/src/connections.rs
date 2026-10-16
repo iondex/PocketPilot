@@ -21,6 +21,18 @@ pub enum Error {
     Rpc(#[from] codex::Error),
 }
 
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::Selection => ::i18n::Message::new("error.connection.selection"),
+            Self::Identity => ::i18n::Message::new("error.connection.identity"),
+            Self::Backoff => ::i18n::Message::new("error.connection.backoff"),
+            Self::Store(error) => ::i18n::LocalizedError::message(error),
+            Self::Rpc(error) => ::i18n::LocalizedError::message(error),
+        }
+    }
+}
+
 struct Entry {
     client: Option<Arc<Codex>>,
     retry_at: Instant,

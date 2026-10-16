@@ -51,7 +51,7 @@ cargo build --workspace --locked
 5. 连续产生几条可见文本，检查合并与私聊共享速率预算；多个 topic 不应各自突破预算。429 按 retry_after 等待。
 6. 修改根 TOML 增删允许的 host/workspace 或调节速率；有效配置自动生效，非法配置保留最后有效版本。已撤销配对、已解除映射或已移除 workspace 的排队动作/投递不得继续执行。
 7. 停掉并重启 PocketPilot，确认原端任务继续运行，桥接不自动 resume/start/steer，也不重发结果未知的请求。重启前的 pending 消息及轮询故障后补收的输入应显示草稿，点击新的确认按钮前不得进入 agent；解绑后旧草稿按钮失效。断网时状态卡应显示连接未知。
-8. /rename 只改平台显示名；/unbind 只解除映射。关闭/删除 topic 后再次添加应创建新容器，原容器不能被换绑到另一个 session。
+8. /rename 修改平台显示名，并在原生无标题时补写；移除话题使用 /topics。关闭/删除 topic 后再次添加应创建新容器，原容器不能被换绑到另一个 session。
 
 正常退出使用 Ctrl-C 或 SIGTERM。data_dir、Telegram/Discord token 和 Discord guild 修改需要重启桥接；host/workspace、SSH 认证策略和 delivery 设置支持热更新。日志输出位置/过滤器在启动时装配。
 
@@ -84,7 +84,7 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 5. 在管理 topic 使用 /new workberth 手动测试，回复 1 确认。应创建空会话与独立 session topic，标题不自动作为任务发送，并能在 Desktop 的同一 SSH 主机下看到该会话。后续写入测试只用这个专用新会话。
 6. 在 session topic 直接发消息，确认只进入该 session。需要验证 steer 时，让这个测试会话输出足够长的无工具文本，在它仍运行时追加一句；应追加到原 turn，不能被中断或重建。空闲时输入则开始下一轮。
 7. /status 查看状态，等待任务完成。topic 名应稳定，状态只更新 topic 原生 emoji icon，不发自动状态卡；成功输入不应收到“开始新一轮/已追加”通知或用户消息回显；历史读取错误若发生也不应在正常/连接未知标题之间循环。
-8. 可选 /unbind：仅解除测试 topic 映射，原生会话继续存在。验证退出/重启时仅操作 PocketPilot；不结束 Desktop 或远端 daemon。
+8. 可选 /topics：只对专用测试话题确认删除，原生会话继续存在。验证退出/重启时仅操作 PocketPilot；不结束 Desktop 或远端 daemon。
 
 遇到异常时记录所在 topic、操作命令和大致时间即可；不要重复发送结果未知的任务。
 
@@ -131,7 +131,7 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 
 ## 话题管理回归
 
-- /start 首页选择「🗂 话题管理」或 /topics，确认只列出本人的已记录话题，/unbind 后的话题仍可管理。
+- /start 首页选择「🗂 话题管理」或 /topics，确认只列出本人的已记录话题，以前已解绑的话题仍可管理。
 - 仅在专用测试 topic 验证删除：选择序号后先出现聊天记录删除确认，回复 0 不删除；新回复 1 才删除。Codex 原生会话和活跃 turn 继续保留，可从会话列表重新添加。
 - 从 Telegram 客户端删除专用测试 topic，再 /topics 或 /refresh，确认失效入口被清理；仅关闭、API 超时或限流不应当成删除。检查请求不覆盖用户改过的名称和图标。
 - 模拟删除回执丢失，确认本地转发暂停且重启不重发；旧菜单/离线积压的数字确认要求重新确认。无法删除固定管理 topic，也不能删除另一个私聊的 topic。
@@ -139,7 +139,16 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 
 ## 命令菜单与清除全部
 
-- Telegram 命令建议应有中英文说明，仅作用于私聊；/start 配对权限仍照常核验。/topics 管理话题，/cleartopics 只显示清除确认，不立即删除。
+- Telegram 命令建议应有中英文说明，仅作用于私聊；/start 配对权限仍照常核验。/topics 管理话题，/topics clear 只显示清除确认，不立即删除。
 - 用两个专用测试 topic 验证批量清理。确认页显示数量且明确删除全部 Telegram 聊天记录、保留管理入口及 Codex；回复 0 返回，回复 1 才逐项删除。
 - 确认页出现后新建第三个测试 topic，再确认旧清理页，第三个必须保留。回执未知/429 时停止本批次，重启不续删，未开始的其他 topic 保留。
 - 普通 session 未加载与空闲的原生图标均为 💬；等待/运行/错误仍独立表达，具体加载状态通过 /status 查看。
+
+
+## 表格、动态最近结果、新建定位与共享 i18n
+
+- 窄中文/数字表应等宽对齐；宽表和包含链接的表格应逐条展示且保留首列表头与可点击链接，不截断字段。
+- 原端更新会话后 /history 应直接显示最新用户输入与同轮 final_answer，排除中间说明；运行中且没有最终结果时明确提示，不搭配旧答案。只有主动 /history 回显这份用户输入。
+- 两个主机可有同名且同路径工作区：/new 依次选主机和工作区，标题为元数据，确认前无模型请求。快捷 /new HOST/WORKSPACE 标题 精确定位；无主机的重复名称必须拒绝。
+- /topics 中含批量清理；/topics clear 打开确认。/unbind 和 /cleartopics 不在菜单中，也不能改变绑定。/refresh 只重新获取当前管理页，/help 按话题类型区分。
+- 根 language=en 控制 CLI 业务错误与后台默认语言；Telegram 每用户偏好独立。共享资源只用 ID，保持中英文键与插值参数一致；用户标题或正文恰好为 tg.new.heading 时原样显示。SSH、Codex、配置、存储、配对等错误可按语言展示，日志不使用用户语言。

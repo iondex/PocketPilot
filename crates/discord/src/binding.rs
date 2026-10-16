@@ -17,7 +17,10 @@ impl Service {
         thread: &str,
     ) -> Result<History> {
         let limit = self.connections.history_limit(&ws.provider_id).await;
-        let _permit = limit.acquire().await.map_err(error)?;
+        let _permit = limit
+            .acquire()
+            .await
+            .map_err(|_| i18n::Message::new("error.discord.backend"))?;
         provider.history(thread).await.map_err(error)
     }
 
@@ -29,6 +32,7 @@ impl Service {
         workspace: &str,
         thread: &str,
     ) -> Result<String> {
+        let locale = self.locale(input);
         let ws = self.workspace(&snapshot.config, workspace)?;
         let actor = self.connections.actor(&ws.provider_id, thread).await;
         let _guard = actor.lock().await;
@@ -84,14 +88,14 @@ impl Service {
             .providers
             .iter()
             .find(|p| p.id == ws.provider_id)
-            .ok_or("执行实例已移除。")?;
+            .ok_or("discord.error.provider_removed")?;
         let host = snapshot
             .config
             .providers
             .iter()
             .find(|p| p.id == ws.provider_id)
             .and_then(|p| snapshot.config.hosts.iter().find(|h| h.id == p.host_id))
-            .ok_or("机器已移除。")?;
+            .ok_or("discord.error.host_removed")?;
         let b = Binding {
             bot: input.bot.to_string(),
             guild: input.guild.to_string(),
@@ -115,21 +119,23 @@ impl Service {
             .discord_binding(input.bot, input.guild, channel)
             .await
             .map_err(error)?
-            .ok_or("映射未保存。")?;
+            .ok_or("discord.error.binding_missing")?;
         if !b.history_ready {
             let text = if matches!(current.status, RuntimeStatus::Active { .. }) {
-                session::delivery::full_history(&history)
+                session::delivery::full_history_in(&history, &locale)
             } else {
-                session::delivery::latest_interaction(&history)
+                session::delivery::latest_interaction_in(&history, &locale)
             };
             self.store
                 .discord_publish(&b, "initial-history", &text, &hashes(&history))
                 .await
                 .map_err(error)?;
         }
-        Ok(format!(
-            "已添加 <#{channel}> · {}\n在该 channel 使用 /pp-ask text:内容。",
-            current.status.label()
+        Ok(i18n::t!(
+            "discord.session.added",
+            locale = &locale,
+            channel = channel,
+            state = current.status.label_in(&locale)
         ))
     }
 }

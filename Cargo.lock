@@ -107,6 +107,7 @@ dependencies = [
  "codex",
  "discord",
  "engine",
+ "i18n",
  "secrecy 0.10.3",
  "serde",
  "serde_json",
@@ -396,6 +397,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures-util",
+ "i18n",
  "prettyplease",
  "schemars 0.8.22",
  "serde",
@@ -709,6 +711,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "engine",
+ "i18n",
  "reqwest",
  "secrecy 0.10.3",
  "serde",
@@ -796,6 +799,7 @@ dependencies = [
  "async-trait",
  "codex",
  "fs2",
+ "i18n",
  "notify",
  "serde",
  "serde_json",
@@ -1319,6 +1323,14 @@ dependencies = [
  "tokio",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "i18n"
+version = "0.1.0"
+dependencies = [
+ "rust-i18n",
+ "serde_yaml",
 ]
 
 [[package]]
@@ -1979,7 +1991,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -2761,6 +2773,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.14.2",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "serenity"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2793,6 +2818,7 @@ name = "session"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "i18n",
  "serde",
  "thiserror 2.0.21",
  "unicode-segmentation",
@@ -3027,6 +3053,7 @@ dependencies = [
  "base64 0.22.1",
  "fs2",
  "glob",
+ "i18n",
  "prost",
  "regex",
  "secrecy 0.10.3",
@@ -3154,9 +3181,9 @@ dependencies = [
  "discord",
  "engine",
  "futures-util",
+ "i18n",
  "pulldown-cmark",
  "reqwest",
- "rust-i18n",
  "secrecy 0.10.3",
  "serde",
  "serde_json",
@@ -3170,6 +3197,7 @@ dependencies = [
  "tokio-tungstenite 0.28.0",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
+ "unicode-width",
  "url",
  "uuid",
  "wiremock",
@@ -3821,6 +3849,12 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

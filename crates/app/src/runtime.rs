@@ -23,6 +23,19 @@ pub enum Error {
     WorkerStopped,
 }
 
+impl ::i18n::LocalizedError for Error {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::Missing => ::i18n::Message::new("error.runtime.missing"),
+            Self::Feature => ::i18n::Message::new("error.runtime.feature"),
+            Self::WorkerStopped => ::i18n::Message::new("error.runtime.worker"),
+            Self::Config(error) => ::i18n::LocalizedError::message(error),
+            Self::Store(error) => ::i18n::LocalizedError::message(error),
+            Self::Integration(error) => ::i18n::LocalizedError::message(error),
+        }
+    }
+}
+
 pub async fn run(path: PathBuf) -> Result<(), Error> {
     let root = crate::config::load(&path)?.config;
     let config = Arc::new(ConfigFile::open(path, crate::config::runtime_parser)?);

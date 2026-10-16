@@ -28,6 +28,21 @@ pub enum StoreError {
     NotPaired,
 }
 
+impl ::i18n::LocalizedError for StoreError {
+    fn message(&self) -> ::i18n::Message {
+        match self {
+            Self::InstanceConflict => ::i18n::Message::new("error.store.instance_conflict"),
+            Self::Database => ::i18n::Message::new("error.store.database"),
+            Self::Transition => ::i18n::Message::new("error.store.transition"),
+            Self::ContainerConflict => ::i18n::Message::new("error.store.container_conflict"),
+            Self::Locked => ::i18n::Message::new("error.store.locked"),
+            Self::SourceConflict => ::i18n::Message::new("error.store.source_conflict"),
+            Self::ProvisionUnknown => ::i18n::Message::new("error.store.provision_unknown"),
+            Self::NotPaired => ::i18n::Message::new("error.store.not_paired"),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Store {
     pub(crate) pool: SqlitePool,

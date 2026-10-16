@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+i18n.workspace = true
 ssh = { path = "../ssh" }
 codex = { path = "../codex" }
 session = { path = "../session" }
