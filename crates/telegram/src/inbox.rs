@@ -84,13 +84,14 @@ impl Service {
                             if let Err(error) = result {
                                 tracing::warn!(%error,"input failed without replay");
                                 let mut response_input = input.clone();
-                                if service
-                                    .store
-                                    .binding(service.bot, input.chat, input.topic)
-                                    .await
-                                    .ok()
-                                    .flatten()
-                                    .is_none()
+                                if input.topic != 0
+                                    && service
+                                        .store
+                                        .binding(service.bot, input.chat, input.topic)
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                        .is_none()
                                     && let Ok(Some(topic)) = service
                                         .store
                                         .management_topic(service.bot, input.chat)

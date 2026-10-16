@@ -59,6 +59,10 @@ impl Service {
         let snapshot = self.config.snapshot();
         let mut scoped = input.clone();
         scoped.config_hash = Some(snapshot.hash.clone());
+        let off_topic = scoped.topic == 0 && scoped.callback.is_none();
+        if off_topic {
+            scoped = self.management_input(&scoped, &snapshot).await?;
+        }
         let input = &scoped;
         if input.callback.is_some() {
             if input.requires_confirmation {
@@ -118,19 +122,20 @@ impl Service {
             .unwrap_or((input.text.trim(), ""));
         let command = command.split('@').next().unwrap_or(command);
         let management;
-        let input = if matches!(
-            command,
-            "/start"
-                | "/workspaces"
-                | "/sessions"
-                | "/open"
-                | "/new"
-                | "/help"
-                | "/refresh"
-                | "/back"
-                | "/add"
-                | "/remove"
-        ) {
+        let input = if !off_topic
+            && matches!(
+                command,
+                "/start"
+                    | "/workspaces"
+                    | "/sessions"
+                    | "/open"
+                    | "/new"
+                    | "/help"
+                    | "/refresh"
+                    | "/back"
+                    | "/add"
+                    | "/remove"
+            ) {
             management = self.management_input(input, &snapshot).await?;
             &management
         } else {

@@ -121,7 +121,18 @@ impl Service {
         body.markdown = true;
         body.navigation_id = Some(id.clone());
         body.scope = menu.scope.clone();
-        body.edit_message = prior.and_then(|p| p.message);
+        // A locally cleared bot message may still be editable but invisible.
+        // Explicit /start restores the screen; numbered steps edit that post.
+        let start = input
+            .text
+            .split_whitespace()
+            .next()
+            .is_some_and(|command| command.split('@').next() == Some("/start"));
+        body.edit_message = if start {
+            None
+        } else {
+            prior.and_then(|p| p.message)
+        };
         self.store
             .save_navigation(self.bot, input, &id, &menu)
             .await?;

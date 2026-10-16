@@ -1908,11 +1908,171 @@ async fn each_off_topic_start_has_a_visible_reply_even_when_the_management_menu_
             .count(),
         1
     );
-    assert!(requests.iter().any(|r| {
-        r.url
-            .path()
-            .to_ascii_lowercase()
-            .ends_with("/editmessagetext")
-    }));
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| {
+                if !r.url.path().to_ascii_lowercase().ends_with("/sendmessage") {
+                    return false;
+                }
+                let sent: Sent = serde_json::from_slice(&r.body).unwrap();
+                sent.message_thread_id == Some(9)
+            })
+            .count(),
+        2,
+        "each explicit start restores a visible management menu"
+    );
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn off_topic_numbers_use_the_management_navigation_and_task_text_stays_rejected() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1100, 0, "/start"))
+        .await
+        .unwrap();
+    let id: String = sqlx::query_scalar("SELECT id FROM navigation WHERE topic_id=9")
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(&id, 777, now())
+        .await
+        .unwrap();
+    fixture.service.handle(&input(1101, 0, "1")).await.unwrap();
+    let menu = fixture
+        .outputs()
+        .await
+        .into_iter()
+        .rev()
+        .find(|b| b.navigation_id.is_some())
+        .unwrap();
+    assert!(
+        menu.text.contains("工作区"),
+        "Off-topic selection must advance the shared management menu"
+    );
+    fixture
+        .service
+        .handle(&input(1102, 0, "do not send this task"))
+        .await
+        .unwrap();
+    let last = fixture.outputs().await.into_iter().last().unwrap();
+    assert!(last.text.contains("这里只接受"));
+    assert!(!last.text.contains("do not send this task"));
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn start_posts_a_fresh_menu_after_client_history_clear_even_if_old_edits_would_succeed() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1200, 0, "/start"))
+        .await
+        .unwrap();
+    let id: String = sqlx::query_scalar("SELECT id FROM navigation WHERE topic_id=9")
+        .fetch_one(&fixture.service.store.pool)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(&id, 777, now())
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&input(1201, 0, "/start"))
+        .await
+        .unwrap();
+    let menu = fixture
+        .outputs()
+        .await
+        .into_iter()
+        .rev()
+        .find(|b| b.navigation_id.is_some())
+        .unwrap();
+    assert_eq!(
+        menu.edit_message, None,
+        "editing an old message cannot recover a menu hidden by local history clear"
+    );
+    assert_eq!(
+        fixture.service.store.management_topic(1, 10).await.unwrap(),
+        Some(9)
+    );
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn explicit_start_replaces_only_a_definitively_missing_management_topic() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1300, 0, "/start"))
+        .await
+        .unwrap();
+    Mock::given(method("POST")).and(path_regex("(?i).*/editforumtopic$"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(r#"{"ok":false,"error_code":400,"description":"Bad Request: message thread not found"}"#))
+        .with_priority(1).mount(&fixture.telegram).await;
+    Mock::given(method("POST")).and(path_regex("(?i).*/createforumtopic$"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":{"message_thread_id":19,"name":"PocketPilot · 管理","icon_color":7322096}}"#))
+        .with_priority(1).mount(&fixture.telegram).await;
+    fixture
+        .service
+        .handle(&input(1301, 0, "/start"))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.service.store.management_topic(1, 10).await.unwrap(),
+        Some(19)
+    );
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn uncertain_management_topic_check_does_not_create_another_topic() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(1400, 0, "/start"))
+        .await
+        .unwrap();
+    Mock::given(method("POST"))
+        .and(path_regex("(?i).*/editforumtopic$"))
+        .respond_with(ResponseTemplate::new(502))
+        .with_priority(1)
+        .mount(&fixture.telegram)
+        .await;
+    assert!(
+        fixture
+            .service
+            .handle(&input(1401, 0, "/start"))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        fixture.service.store.management_topic(1, 10).await.unwrap(),
+        Some(9)
+    );
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r
+                .url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/createforumtopic"))
+            .count(),
+        1
+    );
     assert!(fixture.state.lock().await.requests.is_empty());
 }

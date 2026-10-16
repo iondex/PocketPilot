@@ -77,7 +77,7 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 
 先测试已有工作正常的 SSH anjie-bsc-arb，本地 Desktop 的接入条件单独见 [本地会话说明](design/local-desktop.md)。
 
-1. 在 Off-topic 发送 /start，每条新命令均应在原位置收到前往「PocketPilot · 管理」的简短提示，再切换到该 topic 查看编号菜单。再次 /start 应复用同一管理 topic，不创建 Codex session。此前已经产生的 /start topic 不会自动删除。
+1. 在 Off-topic 发送 /start，每条新命令均应在原位置收到前往「PocketPilot · 管理」的简短提示，再切换到该 topic 查看编号菜单。再次 /start 会在健康的同一管理 topic 新发首页，不创建 Codex session；后续编号仍编辑同一菜单。此前已经产生的 /start topic 不会自动删除。
 2. 在管理 topic 发“测试消息归属”，确认回复明确提示未发送给 agent。未绑定入口的普通消息也应进入管理提示，不能发给最近使用过的会话。
 3. /start 显示主机编号。回复序号选择 anjie-bsc-arb，再选 workberth 和会话；0 返回，/refresh 刷新。确认 Markdown 正常渲染、没有按钮或空白占位，探针不显示。
 4. 添加之前报错的旧会话，仅查看历史和 /status。应无 provider protocol is incompatible，历史是一个集合/附件，状态卡独立。「待继续」只是执行实例未加载它，不等于历史不可读。此步骤不向旧会话发送任务。
@@ -108,3 +108,12 @@ BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备�
 数据库直接使用根 schema.sql；原型阶段不运行 migrations，不清空既有配对/绑定/投递。创建空目录和重开已有状态均有回归覆盖；现有一份 provider 与九个工作区已保留原 ID 导入 catalog。
 
 日常运维保留 serve/config-check/doctor/hosts/pair/providers/workspaces；删除测试专用 probe、sessions、state-init 和重复 telegram-check 命令。共享生命周期测试继续由隔离原生 fixture 覆盖，真实远端测试不写既有用户会话。
+
+
+## Off-topic 与清空记录回归
+
+1. Off-topic 发 /start 后，管理 topic 应出现新的可见首页；已有旧菜单即使可编辑也不再只编辑它。
+2. 在 Off-topic 回复 1，确认使用管理导航选择主机；普通文本只被管理入口拒绝，不能送到任一 agent。
+3. 仅清空自己的历史后再次 /start，确认新菜单可见。
+4. 明确删除管理话题后 /start，确认只在 Telegram 明确返回原话题不存在后恢复入口。网络错误不应生成重复话题。
+5. 服务端可以路由操作，不能替用户强制切换客户端页面；若新菜单仍不可见，需区分 topic 是否存在与客户端列表显示问题。

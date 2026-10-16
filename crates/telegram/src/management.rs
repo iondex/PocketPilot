@@ -43,7 +43,35 @@ impl Service {
             )
             .await;
         let _guard = actor.lock().await;
-        let topic = match self.store.management_topic(self.bot, input.chat).await? {
+        let mut existing = self.store.management_topic(self.bot, input.chat).await?;
+        let start = input
+            .text
+            .split_whitespace()
+            .next()
+            .is_some_and(|command| command.split('@').next() == Some("/start"));
+        if start && let Some(topic) = existing {
+            // A same-title edit validates this address without renaming it.
+            match self
+                .api
+                .rename_topic(input.chat, topic, "PocketPilot · 管理")
+                .await
+            {
+                Ok(()) => {}
+                Err(crate::Error::TopicUnavailable) => {
+                    self.store
+                        .unavailable_topic(self.bot, input.chat, topic)
+                        .await?;
+                    existing = None;
+                    tracing::info!(
+                        bot_id = self.bot,
+                        topic_id = topic,
+                        "missing management topic confirmed; restoring on explicit start"
+                    );
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let topic = match existing {
             Some(topic) => topic,
             None => {
                 if !self.topics_enabled {
@@ -90,9 +118,7 @@ impl Service {
             return Err(Error::Expired);
         }
         if topic != input.topic {
-            let body = Outbound::text(
-                "请到「PocketPilot · 管理」topic 继续操作。任务请发到对应会话 topic。",
-            );
+            let body = Outbound::text("已转到「PocketPilot · 管理」topic 处理，请在那里查看结果。");
             // A different command needs its own visible reply in the origin.
             // Re-delivery of the same input still shares one durable source key.
             self.respond(

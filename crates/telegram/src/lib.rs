@@ -57,6 +57,7 @@ pub(crate) fn safe_error(error: RequestError) -> Error {
                 "Bad Request: TOPIC_CLOSED"
                     | "Bad Request: message thread not found"
                     | "Bad Request: MESSAGE_THREAD_NOT_FOUND"
+                    | "Bad Request: TOPIC_ID_INVALID"
             ) =>
         {
             Error::TopicUnavailable

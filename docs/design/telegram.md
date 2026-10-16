@@ -47,7 +47,7 @@ PocketPilot 私聊
 
 topic 名只包含稳定短名和短 ID，不包含运行/连接状态。状态显示在一条复用的状态卡中；标题按成功回执缓存，只有名称确实变化时才改名。升级后的旧标题至多同步一次，避免 Telegram 为每次改名生成服务通知。
 
-未绑定 topic、General 入口或管理 topic 的普通任务文本只获得拒绝提示，不复述正文、不发送给 agent；已绑定 session topic 中的普通文本只发给该 session。首次从未绑定入口进入时提示管理消息去向，不把默认输入猜测成“最近会话”。
+未绑定 topic、General 入口或管理 topic 的普通任务文本只获得拒绝提示，不复述正文、不发送给 agent；已绑定 session topic 中的普通文本只发给该 session。全部 Off-topic 文字输入在配对后先归一到管理上下文；命令、序号和返回/刷新共享同一份管理导航。普通任务文本按管理规则拒绝，不把默认输入猜测成“最近会话”。转发是服务端路由，Bot API 无法强制客户端切换页面。
 
 Telegram 的「允许用户创建 topic」开关开启时，客户端会先为入口消息（包括 /start）创建 topic，再把消息发给 bot，这是平台行为。固定入口需要在 BotFather 开启 **Disallow users to create new threads**，保留 bot 的 Topics 功能。程序通过 getMe.allows_users_to_create_topics 诊断此设置，但 Bot API 不提供本项目可调用的对应设置方法；不会自动删除用户已有 topic。官方说明见 [Bot forums](https://core.telegram.org/api/forum#bot-forums)。
 
@@ -67,7 +67,7 @@ Telegram 的「允许用户创建 topic」开关开启时，客户端会先为�
 
 示意中的条目仅表示布局；实际列出配置允许的主机，没有工作区时可动态添加。回复序号依次选择主机 → 工作区 → 会话。会话条目前使用 🔵 运行中、🟢 空闲、⚪ 待继续、🟠 等待审批、🟡 等待回答、🔴 服务异常、⚫ 状态未知。
 
-0 返回上一级；/start 首页，/refresh 刷新当前位置。翻页同样是一个有名称的编号选项，不补空白行、不显示开发探针。从 Off-topic 或其他 topic 发起管理操作时，每条新的输入都在原位置收到简短跳转提示；提示按输入 event key 去重，不能按 topic 永久去重。管理菜单尽量编辑同一条消息；原消息被删除或不可编辑时，仅在 Telegram 明确拒绝编辑后新发一次，网络结果未知不重复发送。
+0 返回上一级；/start 首页，/refresh 刷新当前位置。翻页同样是一个有名称的编号选项，不补空白行、不显示开发探针。从 Off-topic 或其他 topic 发起管理操作时，每条新的输入都在原位置收到简短跳转提示；提示按输入 event key 去重，不能按 topic 永久去重。显式 /start 会在管理 topic 新发可见首页，恢复用户清空本地历史后不可见、但 Bot API 仍允许编辑的旧菜单；后续编号步骤继续编辑这条新菜单。原消息被删除或不可编辑时，仅在 Telegram 明确拒绝编辑后新发一次，网络结果未知不重复发送。
 
 导航上下文在 SQLite 中按 bot/user/chat/topic 持久化，没有按钮 TTL。重启及显示名、日志或速率变更不使只读菜单过期；每次选择仍核对当前配对和配置范围。创建确认绑定实际 instance/cwd/endpoint；实质范围变化时刷新上下文，不偷偷把旧任务改发其他地方。已消费选择、回复旧消息、菜单尚未成功投递时均不能触发旧写入。离线/过期的数字确认会重新展示确认页，必须新回复才执行。
 
@@ -106,3 +106,14 @@ Telegram 的「允许用户创建 topic」开关开启时，客户端会先为�
 根目录 pocketpilot.toml 的 `[telegram].token` 为唯一凭据输入，不读取 .env、不 include 其他配置。不需要 chat/user ID 配置。bot ID 由 getMe 确认，同 bot token 轮换保留配对；不同 bot 的旧配对、nonce、绑定、状态卡和积压不会自动继承。
 
 用户关闭/删除 topic 或阻止 bot 时仅调整本地映射/投递，不停止 agent。解绑、撤销配对、退出 PocketPilot 和配置 reload 都不能发 unsubscribe/cancel 或重启服务。
+
+
+## 8. 清空历史与话题恢复
+
+Telegram 官方说明：删除包含创建 topic 根服务消息的历史时，应将 topic 视为删除。仅清空本地显示可能导致旧菜单不可见，Bot API 的旧消息编辑却仍成功。不能从“缓存 topic ID + edit 成功”推断用户能看到入口。
+
+显式 /start 会对已有管理 topic 做一次同名 edit 验证，健康时名称不变；明确返回话题不存在则使旧本地入口失效，再创建一个管理 topic。未知网络结果不会触发重建。随后总是发送一条新的首页菜单，后续编号步骤仍复用它。Off-topic 的处理失败提示留在原位置，避免管理入口本身不可用时错误也被送到不可见处。
+
+当前 Bot API 适配器不能直接读取话题列表或强制跳转客户端视图。官方的 View as messages 切换文档明确仅适用于超级群，不应作为 bot 私聊的确定修复方法。话题的客户端可见性仍需实际界面验证。
+
+来源：[Bot forums / managing topics](https://core.telegram.org/api/forum#managing-topics)、[View as messages](https://core.telegram.org/api/forum#view-as-messages)。

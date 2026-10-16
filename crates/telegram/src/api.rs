@@ -217,7 +217,9 @@ impl Api {
         if topic > 0 {
             request = request.message_thread_id(ThreadId(MessageId(topic)));
         }
-        Ok(self.call(request).await?.id.0)
+        let message = self.call(request).await?;
+        tracing::info!(requested_topic=topic,returned_topic=?message.thread_id.map(|t|t.0.0),message_id=message.id.0,"Telegram send receipt");
+        Ok(message.id.0)
     }
 
     pub async fn edit(&self, chat: i64, message: i32, text: &str) -> Result<(), Error> {
