@@ -938,15 +938,11 @@ async fn session_messages_are_quiet_and_own_inputs_are_not_echoed() {
     let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
     fixture.service.refresh_binding(&binding).await.unwrap();
     let before = fixture.outputs().await;
+    assert!(before.iter().any(|b| b.text.contains("✅ original answer")));
     assert!(
         before
             .iter()
-            .any(|b| b.text.contains("✅\noriginal answer"))
-    );
-    assert!(
-        before
-            .iter()
-            .any(|b| b.text.contains("🧑‍💻\noriginal question"))
+            .any(|b| b.text.contains("🧑‍💻 original question"))
     );
     assert!(before.iter().all(|b| !b.text.contains("thread：")
         && !b.text.contains("用户\n")
@@ -970,7 +966,7 @@ async fn session_messages_are_quiet_and_own_inputs_are_not_echoed() {
     fixture.state.lock().await.items.push(serde_json::from_str::<p::ThreadItem>(r#"{"type":"agentMessage","id":"new-answer","text":"Only this reply","phase":"final_answer"}"#).unwrap());
     fixture.service.refresh_binding(&binding).await.unwrap();
     let outputs = fixture.outputs().await;
-    assert_eq!(outputs.last().unwrap().text, "✅\nOnly this reply");
+    assert_eq!(outputs.last().unwrap().text, "✅ Only this reply");
     assert!(outputs.iter().all(|b| !b.text.contains("do not echo")
         && !b.text.contains("已追加")
         && !b.text.contains("已开始")));
@@ -1586,11 +1582,11 @@ async fn private_pairing_topic_history_and_steer_form_a_durable_workflow() {
     let bodies = fixture.outputs().await;
     let history = bodies
         .iter()
-        .find(|b| b.text.contains("✅\noriginal answer"))
+        .find(|b| b.text.contains("✅ original answer"))
         .unwrap();
     assert!(
-        history.text.contains("✅\noriginal answer")
-            && history.text.contains("🧑‍💻\noriginal question")
+        history.text.contains("✅ original answer")
+            && history.text.contains("🧑‍💻 original question")
     );
     assert!(!history.text.contains("must never appear"));
     assert!(
@@ -1792,7 +1788,7 @@ async fn display_and_rate_changes_preserve_authorized_live_outputs() {
     let before = fixture.outputs().await;
     let history = before
         .iter()
-        .find(|b| b.text.contains("✅\noriginal answer"))
+        .find(|b| b.text.contains("✅ original answer"))
         .unwrap();
     let scope = history.scope.as_ref().unwrap();
     let path = fixture.service.config.path.clone();
@@ -3296,7 +3292,7 @@ async fn refreshing_a_host_reads_workspace_metadata_without_loading_history_or_s
 async fn native_topic_icons_replace_automatic_status_bubbles_and_agent_markdown_is_rendered() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
-    fixture.state.lock().await.items=vec![serde_json::from_str(r#"{"type":"agentMessage","id":"m","text":"**推荐** [链接](https://example.com)\n\n| 客户端 | 平台 |\n|---|---|\n| **Example** | Android |","phase":"final_answer"}"#).unwrap()];
+    fixture.state.lock().await.items=vec![serde_json::from_str(r##"{"type":"agentMessage","id":"m","text":"# 推荐\n\n**研究对象： **患者。\n\n**结论。**后续中文。 [链接](https://example.com)\n\n| 客户端 | 平台 |\n|---|---|\n| **Example** | Android |","phase":"final_answer"}"##).unwrap()];
     fixture
         .service
         .handle(&input(1600, 0, "/open workspace thread"))
@@ -3345,6 +3341,9 @@ async fn native_topic_icons_replace_automatic_status_bubbles_and_agent_markdown_
     let sent = &session_messages[0];
     assert_eq!(sent.parse_mode.as_deref(), Some("HTML"));
     assert!(sent.text.contains("<b>推荐</b>"));
+    assert!(sent.text.starts_with("✅ <b>推荐</b>"));
+    assert!(sent.text.contains("<b>研究对象：</b> 患者。"));
+    assert!(sent.text.contains("<b>结论。</b>后续中文。"));
     assert!(sent.text.contains("<b>平台</b>: Android"));
     assert!(!sent.text.contains("**"));
     assert!(
@@ -3523,9 +3522,9 @@ async fn external_inputs_and_phase_changes_are_visible_once_and_keep_original_at
     assert_eq!(outputs.len(), count + 1);
     let body = &outputs.last().unwrap().text;
     assert!(
-        body.contains("🧑‍💻\n补充截图")
+        body.contains("🧑‍💻 补充截图")
             && body.contains("📎 image\\.jpg")
-            && body.contains("💭\nsame text")
+            && body.contains("💭 same text")
     );
     assert!(
         !body.contains("/private/")
@@ -3548,7 +3547,7 @@ async fn external_inputs_and_phase_changes_are_visible_once_and_keep_original_at
             .last()
             .unwrap()
             .text
-            .contains("✅\nsame text")
+            .contains("✅ same text")
     );
     let count = fixture.outputs().await.len();
     fixture.service.refresh_binding(&binding).await.unwrap();
@@ -3618,7 +3617,7 @@ async fn errors_survive_reopening_storage_and_history_keeps_turn_attribution() {
         fixture
             .service
             .history_summary(&input(2202, 11, "/history"), &latest)
-            .contains("❌\nlatest failed")
+            .contains("❌ latest failed")
     );
     let isolated = reopened
         .retain_errors(
@@ -3811,7 +3810,7 @@ async fn native_turn_errors_reach_the_live_outbox_and_explicit_history_without_r
             .last()
             .unwrap()
             .text
-            .contains("❌\nupstream service failed")
+            .contains("❌ upstream service failed")
     );
     let count = fixture.outputs().await.len();
     fixture.service.refresh_binding(&binding).await.unwrap();

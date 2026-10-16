@@ -1,15 +1,25 @@
 //! CommonMark/GFM to Telegram's supported HTML, with escaped raw HTML and URLs.
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, Tag, TagEnd};
 use unicode_width::UnicodeWidthStr;
+
+#[path = "markdown_input.rs"]
+mod input;
 
 #[derive(Default)]
 pub struct Rendered {
     pub html: String,
     pub plain: String,
+    marker_pending: bool,
 }
 
 impl Rendered {
     fn text(&mut self, value: &str) {
+        if self.marker_pending {
+            if value.trim().is_empty() {
+                return;
+            }
+            self.marker_pending = false;
+        }
         self.html.push_str(&teloxide::utils::html::escape(value));
         self.plain.push_str(value);
     }
@@ -19,7 +29,7 @@ impl Rendered {
     }
 
     fn newline(&mut self) {
-        if !self.plain.is_empty() && !self.plain.ends_with('\n') {
+        if !self.marker_pending && !self.plain.is_empty() && !self.plain.ends_with('\n') {
             self.text("\n");
         }
     }
@@ -31,10 +41,8 @@ impl Rendered {
 }
 
 pub fn render(markdown: &str) -> Rendered {
-    let parser = Parser::new_ext(
-        markdown,
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS,
-    );
+    let source = input::source(markdown);
+    let parser = input::events(&source);
     let mut out = Rendered::default();
     let mut links = Vec::new();
     let mut list = Vec::<Option<u64>>::new();
@@ -174,6 +182,13 @@ fn inline(event: Event<'_>, out: &mut Rendered, links: &mut Vec<bool>) {
             );
         }
         Event::End(TagEnd::Image) => inline(Event::End(TagEnd::Link), out, links),
+        Event::Text(text)
+            if input::marker(&text) && (out.plain.is_empty() || out.plain.ends_with('\n')) =>
+        {
+            out.text(&text);
+            out.text(" ");
+            out.marker_pending = true;
+        }
         Event::Text(text) | Event::Html(text) | Event::InlineHtml(text) => out.text(&text),
         Event::Code(text) => {
             out.mark("<code>");
@@ -291,6 +306,72 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screenshot_chinese_bold_labels_and_sentence_boundaries_render_without_literal_stars() {
+        let r = render(
+            "- **研究对象： **拟纳入 30–75 岁患者。\n- **干预周期： **12 周干预。\n\n**第一，选题有研究依据，但不能预设联合方案有效。**运动降压已有研究支持。\n\n最需要加强的是研究问题的针对性：**为什么特别选择伴情绪症状的高血压患者，以及心理模块在其中承担什么关键作用，论证还不够集中。**目前情绪主要是入组条件。",
+        );
+        assert!(r.html.contains("<b>研究对象：</b> 拟纳入"), "{}", r.html);
+        assert!(r.html.contains("<b>干预周期：</b> 12 周干预"));
+        assert!(r.html.contains("有效。</b>运动降压"));
+        assert!(r.html.contains("针对性：<b>为什么"));
+        assert!(!r.html.contains("**"));
+    }
+
+    #[test]
+    fn phase_labels_share_the_first_line_without_breaking_block_markdown() {
+        for marker in ["💭", "✅", "💬", "🧑‍💻", "❌"] {
+            let r = render(&format!("{marker} **正文**\n\n下一段"));
+            assert_eq!(r.html, format!("{marker} <b>正文</b>\n\n下一段"));
+            let old = render(&format!("{marker}\n**正文**"));
+            assert_eq!(old.html, format!("{marker} <b>正文</b>"));
+        }
+        assert_eq!(render("✅ # 标题\n\n正文").html, "✅ <b>标题</b>\n正文");
+        assert_eq!(
+            render("💭 - 第一项\n- 第二项").plain,
+            "💭 • 第一项\n• 第二项"
+        );
+        assert_eq!(render("✅ ---\n\n正文").plain, "✅ ────────\n正文");
+        assert!(
+            render("✅     **代码： **\n")
+                .html
+                .contains("<pre>**代码： **")
+        );
+        let combined = render("💭 中间过程\n\n✅ ## 最终结果\n\n**研究对象： **患者");
+        assert!(combined.html.contains("💭 中间过程\n\n✅ <b>最终结果</b>"));
+        assert!(combined.html.contains("<b>研究对象：</b> 患者"));
+    }
+
+    #[test]
+    fn bold_compatibility_preserves_code_escapes_links_and_html_safety() {
+        let code = "```text\n✅ # 不应成为标题\n**研究对象： **患者\n```";
+        let r = render(code);
+        assert!(
+            r.html
+                .contains("<pre>✅ # 不应成为标题\n**研究对象： **患者\n</pre>")
+        );
+        assert!(!r.html.contains("<b>"));
+        let r = render(&format!("✅ {code}"));
+        assert!(
+            r.html
+                .contains("✅ <pre>✅ # 不应成为标题\n**研究对象： **患者\n</pre>"),
+            "{}",
+            r.html
+        );
+        let r = render(r"`**研究对象： **` 与 \*\*中文标签： \*\*正文");
+        assert!(r.html.contains("<code>**研究对象： **</code>"));
+        assert!(r.html.contains("**中文标签： **正文"));
+        assert!(!r.html.contains("<b>"));
+        assert_eq!(render("只有 **未闭合中文").plain, "只有 **未闭合中文");
+        assert_eq!(render("2 ** 3 ** 4").plain, "2 ** 3 ** 4");
+        let r = render("**中文结论。**正文 [链接](https://example.com/a**b) <script>x</script>");
+        assert!(r.html.contains("<b>中文结论。</b>正文"));
+        assert!(r.html.contains("href=\"https://example.com/a**b\""));
+        assert!(r.html.contains("&lt;script&gt;") && !r.html.contains("<script>"));
+        let r = render("| 项目 | 说明 |\n|---|---|\n| **研究对象： **患者 | 说明 |");
+        assert!(r.html.contains("<b>研究对象：</b> 患者"));
+    }
 
     #[test]
     fn compact_tables_align_cjk_and_numbers_within_a_phone_width() {

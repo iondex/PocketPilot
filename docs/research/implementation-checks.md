@@ -195,3 +195,14 @@ Telegram 按 phase 区分 💭 中间文本、✅ final_answer、💬 未知阶�
 全 workspace/all-features 133 项测试通过（Telegram 82、Codex 20、engine 8），fmt、diff 检查、全 feature/all-targets Clippy -D warnings 通过；无默认 feature app Clippy 也通过。真实 cpet 复核仅有列表与历史读取，临时检查程序和可执行产物已移除。问题/限制集中于 [Topics 回顾](telegram-topics.md)。
 
 发布包为 macOS arm64，10,948,384 字节，SHA-256 `0a13d663c98c21b89ca8a16bbeda409884befbaf1e03e37cd922fdeb5c511644`。只重启 launchd 管理的 PocketPilot，确认 Telegram ready、三个共享 app-server 连接成功及工作区 metadata 发现完成；配对 1、绑定 5、provider 3、工作区 32 均保留，已有 25 个工作区具备活动时间。新错误表已记录观察到的错误。没有向既有任务发送测试输入、停止或重启原生 daemon。真实 Telegram 客户端最终观感由用户继续手动复核。
+
+
+## 阶段 emoji 同行与中文粗体修复（2026-10-16）
+
+截图用例 `**研究对象： **拟纳入` 与 `**结论。**后续中文` 在真实渲染函数中稳定复现字面双星号。原因是 CommonMark 的空白和标点强调边界；采用 pulldown-cmark 的 offset/event 边界，只对未识别的普通中文文本补充成对粗体兼容，不处理代码、显式转义或 URL，不把原始 HTML 作为可信标签。原生文本和原始 Markdown 导出不修改。
+
+实时、初始和显式历史的阶段 emoji 后用空格直接接正文；渲染时单独识别前缀，不让它破坏后续标题、列表、分隔线或代码块。旧排队消息的独立 emoji 行也合并显示；已经发出的消息不自动编辑。fixture 实际 HTTP payload 已验证 `✅ <b>推荐</b>`、中文标签和标点粗体，仍使用 HTML 模式。
+
+136 项全 workspace/all-features 测试通过（Telegram 85），fmt、diff 检查、全 feature/all-targets Clippy -D warnings 及默认 Telegram release 构建通过。只重启 PocketPilot 并确认 Telegram ready，未重启原生 Codex daemon 或向用户会话注入测试任务。
+
+发布构建 macOS arm64：10,951,504 字节，SHA-256 `45549849e364f15be16228a26505f1c85a362b262f4e24b18e5c710cf980105b`。

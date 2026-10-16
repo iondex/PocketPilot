@@ -61,7 +61,7 @@ impl Service {
             if interaction.answers.is_empty() {
                 answer
             } else {
-                format!("✅\n{answer}")
+                format!("✅ {answer}")
             }
         );
         for error in interaction.errors {

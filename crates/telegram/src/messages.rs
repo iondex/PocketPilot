@@ -59,7 +59,7 @@ pub(super) fn error_text(item: &TextItem, locale: &str) -> String {
             escape_markdown(&text)
         )
     } else {
-        format!("❌\n{}", escape_markdown(&text))
+        format!("❌ {}", escape_markdown(&text))
     }
 }
 
@@ -68,14 +68,14 @@ pub(super) fn render(item: &TextItem, locale: &str) -> String {
         return error_text(item, locale);
     }
     if item.role == Role::User {
-        return format!("🧑‍💻\n{}", user_text(item));
+        return format!("🧑‍💻 {}", user_text(item));
     }
     let icon = match item.phase.as_deref() {
         Some("final_answer") => "✅",
         Some("commentary" | "partial_answer" | "plan") => "💭",
         _ => "💬",
     };
-    format!("{icon}\n{}", item.text)
+    format!("{icon} {}", item.text.trim_start_matches(['\r', '\n']))
 }
 
 pub(super) fn initial(
