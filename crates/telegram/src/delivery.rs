@@ -142,6 +142,13 @@ impl Service {
                 );
                 match result {
                     Ok(message) => {
+                        tracing::info!(
+                            bot_id = self.bot,
+                            topic_id = row.topic_id,
+                            message_id = message,
+                            edited = body.edit_message.is_some(),
+                            "Telegram message delivered"
+                        );
                         if let Some(id) = &body.navigation_id {
                             let _ = self.store.navigation_receipt(id, message, now()).await;
                         }

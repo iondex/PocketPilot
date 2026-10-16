@@ -99,3 +99,12 @@ tracing 已补充主机/provider 建连、重连退避、授权操作 dispatch/�
 SHA-256：`6d33716c7547bc16eb8c3211629024243b5960cd07f5f0acdbf4389bc5c5c9ff`。
 
 最终 fmt、全 feature Clippy（-D warnings）、无默认 feature 的 app Clippy、82 项测试及 release 构建均通过。配置检查确认 3 hosts / 3 providers / 9 workspaces。新版 release 桥接已启动并收到 Telegram ready 与共享服务连接事件，后台输出只保留受轮转管理的 tracing 文件。临时认证导出、秘密备份及测试 harness 已移除；真实根配置保持 0600 且 Git ignored。
+
+
+## Off-topic /start 没有可见回复的修复
+
+真实记录确认命令已处理，菜单也已成功编辑到管理 topic；原位置的跳转提示却使用 management-route:TOPIC 作为永久去重键，后续 /start 不再收到原位置提示。改为按真实输入 event key 去重，每条新命令分别回复，重投相同输入仍只投递一次；管理菜单继续复用同一条消息。新增入口接收、管理路由和投递成功日志，只记录 ID、目标 topic 与是否编辑，不记录正文。
+
+新增完整 SDK/mock 回归先复现“两次 /start 仅一次原位置回复”，修复后确认两次都收到提示、只创建一个管理 topic、复用菜单且没有任何 agent 请求。Telegram 46 项测试、全 feature Clippy 均通过。手动测试改用 launchd 临时 job 脱离工具进程，不安装登录启动项。
+
+修复版已替换并重启独立托管进程；仅为用户实际已发出的最近一条 Off-topic /start 补入缺失的 UI 跳转提示，未修改或重发 agent 输入。真实 Telegram 投递回执确认该提示作为新消息发送至 topic 0，后台轮询继续成功。当前修复构建为 10,192,656 字节，SHA-256：`45a432a9116d1545903d5e18b25554b91496931238bbc078d26e0e151270fffd`；上一节构建数值对应前一版重构检查点。

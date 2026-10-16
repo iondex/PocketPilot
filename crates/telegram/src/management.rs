@@ -89,18 +89,25 @@ impl Service {
         if input.callback.is_some() && topic != input.topic {
             return Err(Error::Expired);
         }
-        if topic != input.topic
-            && self
-                .store
-                .binding(self.bot, input.chat, input.topic)
-                .await?
-                .is_none()
-        {
+        if topic != input.topic {
             let body = Outbound::text(
-                "管理消息已转到「PocketPilot · 管理」topic。这里未关联 agent，普通消息不会发送给 Codex；请到管理 topic 添加会话。",
+                "请到「PocketPilot · 管理」topic 继续操作。任务请发到对应会话 topic。",
             );
-            self.respond(input, &format!("management-route:{}", input.topic), body)
-                .await?;
+            // A different command needs its own visible reply in the origin.
+            // Re-delivery of the same input still shares one durable source key.
+            self.respond(
+                input,
+                &format!("management-route:{}", input.event_key),
+                body,
+            )
+            .await?;
+            tracing::info!(
+                bot_id = self.bot,
+                update_id = input.update_id,
+                origin_topic = input.topic,
+                management_topic = topic,
+                "Telegram input routed to management"
+            );
         }
         Ok(routed)
     }

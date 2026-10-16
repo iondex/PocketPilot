@@ -71,6 +71,12 @@ impl Service {
                         let service = self.clone();
                         jobs.spawn(async move {
                             let input = &inbox.input;
+                            tracing::info!(
+                                bot_id = service.bot,
+                                update_id = input.update_id,
+                                origin_topic = input.topic,
+                                "Telegram input received"
+                            );
                             if let Some(id) = &input.callback_id {
                                 let _ = service.api.answer_callback(id).await;
                             }

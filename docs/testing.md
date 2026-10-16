@@ -71,13 +71,13 @@ cargo build --workspace --locked
 
 ## 当前本机桥接
 
-BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备测试的指示，修复版桥接已重新启动；配对保留，真实管理 topic 与新 session topic 已建立，菜单、历史和输入回执已有成功投递记录。进程号记录在忽略的 var/data/bridge.pid，实际存活仍应检查进程身份。只停止桥接时向该进程发 SIGTERM，不对 Codex daemon 或其进程组发信号。
+BotFather 设置已复核：user_topic_creation_enabled=false。按用户准备测试的指示，修复版桥接已重新启动；配对保留，真实管理 topic 与新 session topic 已建立，菜单、历史和输入回执已有成功投递记录。当前手动测试由 macOS launchd 的临时 job local.pocketpilot.manual-test 独立托管，不依赖本次工具进程，也不是登录启动项。进程号记录在忽略的 var/data/bridge.pid，实际存活以 launchctl list local.pocketpilot.manual-test 为准。停止此托管桥接使用 launchctl remove local.pocketpilot.manual-test；仅对 PID 发 SIGTERM 可能被重新拉起。不要对 Codex daemon 或其进程组发信号。
 
 ## 本轮最小回归流程
 
 先测试已有工作正常的 SSH anjie-bsc-arb，本地 Desktop 的接入条件单独见 [本地会话说明](design/local-desktop.md)。
 
-1. 私聊发送 /start，进入「PocketPilot · 管理」。再次 /start 应复用同一管理 topic，不创建 Codex session。此前已经产生的 /start topic 不会自动删除。
+1. 在 Off-topic 发送 /start，每条新命令均应在原位置收到前往「PocketPilot · 管理」的简短提示，再切换到该 topic 查看编号菜单。再次 /start 应复用同一管理 topic，不创建 Codex session。此前已经产生的 /start topic 不会自动删除。
 2. 在管理 topic 发“测试消息归属”，确认回复明确提示未发送给 agent。未绑定入口的普通消息也应进入管理提示，不能发给最近使用过的会话。
 3. /start 显示主机编号。回复序号选择 anjie-bsc-arb，再选 workberth 和会话；0 返回，/refresh 刷新。确认 Markdown 正常渲染、没有按钮或空白占位，探针不显示。
 4. 添加之前报错的旧会话，仅查看历史和 /status。应无 provider protocol is incompatible，历史是一个集合/附件，状态卡独立。「待继续」只是执行实例未加载它，不等于历史不可读。此步骤不向旧会话发送任务。

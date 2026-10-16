@@ -1836,3 +1836,83 @@ async fn management_adds_and_removes_catalog_entries_without_agent_operations() 
     );
     assert!(fixture.state.lock().await.requests.is_empty());
 }
+
+#[tokio::test]
+async fn each_off_topic_start_has_a_visible_reply_even_when_the_management_menu_exists() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let (stop, receiver) = watch::channel(false);
+    let worker = tokio::spawn(fixture.service.clone().deliver(receiver));
+
+    async fn drain(fixture: &Fixture) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let pending: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM deliveries WHERE state IN ('pending','dispatching')",
+            )
+            .fetch_one(&fixture.service.store.pool)
+            .await
+            .unwrap();
+            if pending == 0 {
+                return;
+            }
+            assert!(Instant::now() < deadline, "fixture delivery did not settle");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    fixture
+        .service
+        .handle(&input(1000, 0, "/start"))
+        .await
+        .unwrap();
+    drain(&fixture).await;
+    fixture
+        .service
+        .handle(&input(1001, 0, "/start"))
+        .await
+        .unwrap();
+    drain(&fixture).await;
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+
+    #[derive(Deserialize)]
+    struct Sent {
+        text: String,
+        message_thread_id: Option<i32>,
+    }
+
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    let root_replies = requests
+        .iter()
+        .filter(|r| {
+            if !r.url.path().to_ascii_lowercase().ends_with("/sendmessage") {
+                return false;
+            }
+            let sent: Sent = serde_json::from_slice(&r.body).unwrap();
+            sent.message_thread_id.is_none() && sent.text.contains("管理")
+        })
+        .count();
+    assert_eq!(
+        root_replies, 2,
+        "each distinct /start must visibly answer in its origin"
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r
+                .url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/createforumtopic"))
+            .count(),
+        1
+    );
+    assert!(requests.iter().any(|r| {
+        r.url
+            .path()
+            .to_ascii_lowercase()
+            .ends_with("/editmessagetext")
+    }));
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
