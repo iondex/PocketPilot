@@ -45,12 +45,12 @@ SSH 使用有效 OpenSSH config，支持 ProxyJump、ProxyCommand、agent 和 kn
 | 创建 | `/new` 选择主机、工作区、标题并确认；只创建命名空会话，首条任务由用户另发；重名工作区要求明确定位 |
 | 续轮与 steer | 空闲输入启动新轮，活跃输入带当前 turn ID 追加；冲突要求新确认，不自动换轮；不覆盖执行策略 |
 | 共享状态 | Desktop、CLI 和 Telegram 观察同一 active turn；`/status` 返回实际状态，等待审批时不替用户回答审批 |
-| 历史 | `/history` 动态读取最新输入及其后同轮 final，排除中间文本；无 final 不搭配旧结果；`/history errors` 单独列近期错误 |
+| 历史 | 进入长会话只显示短预览，不导出文件；再次打开不重播。`/history` 查看最近输入和同轮 final；`/history errors` 列近期错误；`/history export` 主动导出全部可见历史 |
 | 输入来源 | 同一原生会话的外部输入以 🧑‍💻 展示；Telegram 自身输入精确去重；其他会话内容不得串入 |
 | 阶段与格式 | 💭 过程、✅ final、💬 阶段未知、❌ 失败、⚠️ 服务端重试；emoji 后空格接首行；粗体、链接、代码及表格正常显示 |
 | 附件 | 标准附件包装缩为正文与文件名，不显示绝对路径或图片；Telegram 上传只转发 caption 文字并提示限制，纯附件不启动任务 |
 | 标题与状态 | topic 仅保留截短原始标题，管理 icon 为 📁，空闲/未加载为 💬；状态变化更新 icon，运行中持续 typing |
-| 限速 | 短时输出持久合并，同一私聊的全部 topics 共享预算；429 遵守 retry_after；长集合用单个 Markdown 附件 |
+| 限速 | 短时输出持久合并，同一私聊的全部 topics 共享预算；429 遵守 retry_after；普通长输出或主动历史查询可用单个 Markdown 附件，入场预览不产生文件 |
 | 语言 | 中英文菜单和类型化错误按用户偏好显示；标题、路径、用户输入及 agent 正文不翻译 |
 | 话题管理 | `/topics` 单项删除或批量确认；只影响已记录的 Telegram topics，保留管理入口和全部原生会话 |
 

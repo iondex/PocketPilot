@@ -3,6 +3,7 @@ use super::{Error, Service};
 use crate::{api::escape_markdown, ledger::Binding, storage::Store};
 use session::{History, Role, TextItem};
 use std::collections::HashSet;
+use unicode_segmentation::UnicodeSegmentation;
 
 impl Store {
     pub async fn own_client_ids(
@@ -83,31 +84,100 @@ pub(super) fn initial(
     active: bool,
     own: &HashSet<String>,
     locale: &str,
+    limit: usize,
 ) -> String {
-    let last = history.items.iter().rposition(|i| i.role == Role::User);
-    let latest_turn = last
+    if !history.all_pages_read {
+        return ::i18n::text(locale, "tg.history.preview_unavailable");
+    }
+    let last = history
+        .items
+        .iter()
+        .rposition(|item| item.role == Role::User);
+    let turn = last
         .map(|i| history.items[i].turn_id.as_str())
         .or_else(|| history.items.last().map(|i| i.turn_id.as_str()));
-    history
+    let candidates = history
         .items
         .iter()
         .enumerate()
         .filter(|(index, item)| {
-            if item.role == Role::User && item.client_id.as_ref().is_some_and(|id| own.contains(id))
-            {
-                return false;
-            }
-            if active {
-                return true;
-            }
             item.role == Role::Agent
-                && Some(item.turn_id.as_str()) == latest_turn
-                && last.is_none_or(|n| *index > n)
-                && (item.is_error() || item.phase.as_deref() == Some("final_answer"))
+                && Some(item.turn_id.as_str()) == turn
+                && last.is_none_or(|user| *index > user)
         })
-        .map(|(_, item)| render(item, locale))
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        .collect::<Vec<_>>();
+    let answer = candidates
+        .iter()
+        .rev()
+        .find(|(_, item)| item.phase.as_deref() == Some("final_answer"))
+        .or_else(|| {
+            active
+                .then(|| candidates.iter().rev().find(|(_, item)| !item.is_error()))
+                .flatten()
+        });
+    let error = candidates.iter().rev().find(|(_, item)| {
+        item.is_error() && (answer.is_none() || item.phase.as_deref() != Some("error_retry"))
+    });
+    let mut selected = Vec::new();
+    if let Some(index) = last {
+        let item = &history.items[index];
+        if !item.client_id.as_ref().is_some_and(|id| own.contains(id)) {
+            selected.push((index, 1));
+        }
+    }
+    if let Some((index, _)) = answer {
+        selected.push((*index, 3));
+    }
+    if let Some((index, _)) = error {
+        selected.push((*index, 1));
+    }
+    if selected.is_empty() {
+        return String::new();
+    }
+    let weights = selected.iter().map(|(_, weight)| weight).sum::<usize>();
+    let mut clipped = false;
+    let mut parts = Vec::new();
+    for (index, weight) in &selected {
+        let text = render(&history.items[*index], locale);
+        let budget = (limit * weight / weights).saturating_sub(8);
+        let (preview, shortened) = preview_text(&text, budget);
+        clipped |= shortened;
+        parts.push(preview);
+    }
+    let visible = history
+        .items
+        .iter()
+        .filter(|item| {
+            item.role != Role::User || !item.client_id.as_ref().is_some_and(|id| own.contains(id))
+        })
+        .count();
+    if clipped || visible > selected.len() {
+        parts.push(escape_markdown(&::i18n::text(
+            locale,
+            "tg.history.preview_hint",
+        )));
+    }
+    parts.join("\n\n")
+}
+
+fn preview_text(markdown: &str, budget: usize) -> (String, bool) {
+    if markdown.encode_utf16().count() <= budget {
+        return (markdown.into(), false);
+    }
+    let plain = crate::markdown::render(markdown).plain;
+    let mut preview = String::new();
+    let mut units = 0;
+    for grapheme in plain.graphemes(true) {
+        let escaped = escape_markdown(grapheme);
+        let size = escaped.encode_utf16().count();
+        if units + size > budget.saturating_sub(1) {
+            break;
+        }
+        preview.push_str(&escaped);
+        units += size;
+    }
+    preview.push('…');
+    (preview, true)
 }
 
 impl Service {
@@ -119,6 +189,65 @@ impl Service {
     ) -> Result<String, Error> {
         let own = self.store.own_client_ids(binding).await?;
         let locale = self.ui_locale(binding.chat_id).await;
-        Ok(initial(history, active, &own, &locale))
+        Ok(initial(
+            history,
+            active,
+            &own,
+            &locale,
+            self.config.snapshot().config.delivery.history_preview_chars,
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entry_preview_is_bounded_for_unicode_and_escaped_markdown_at_the_configured_limit() {
+        let history = History {
+            all_pages_read: true,
+            items: vec![TextItem {
+                turn_id: "t".into(),
+                item_id: "a".into(),
+                role: Role::Agent,
+                phase: Some("final_answer".into()),
+                text: "👩🏽‍💻 **Synthetic result** <value> ".repeat(1000),
+                complete: true,
+                client_id: None,
+                attachments: vec![],
+            }],
+        };
+        for limit in [256, 1200, 2800] {
+            let preview = initial(&history, true, &HashSet::new(), "en", limit);
+            assert!(preview.encode_utf16().count() < 3800);
+            assert!(preview.contains('…') && preview.contains("/history export"));
+        }
+    }
+
+    #[test]
+    fn entry_preview_uses_the_latest_turn_without_pairing_an_old_answer() {
+        let item = |turn: &str, role, phase: Option<&str>, text: &str| TextItem {
+            turn_id: turn.into(),
+            item_id: text.into(),
+            role,
+            phase: phase.map(str::to_owned),
+            text: text.into(),
+            complete: true,
+            client_id: None,
+            attachments: vec![],
+        };
+        let history = History {
+            all_pages_read: true,
+            items: vec![
+                item("old", Role::User, None, "Earlier request"),
+                item("old", Role::Agent, Some("final_answer"), "Earlier final"),
+                item("new", Role::User, None, "Current request"),
+                item("new", Role::Agent, Some("commentary"), "Current progress"),
+            ],
+        };
+        let preview = initial(&history, true, &HashSet::new(), "en", 1200);
+        assert!(preview.contains("Current request") && preview.contains("💭 Current progress"));
+        assert!(!preview.contains("Earlier"));
     }
 }

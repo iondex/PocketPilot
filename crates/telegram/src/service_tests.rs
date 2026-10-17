@@ -86,6 +86,7 @@ struct State {
     turn_changed_on_steer: bool,
     incompatible_history: bool,
     turn_error: Option<String>,
+    full_history_reads: usize,
 }
 
 impl State {
@@ -202,7 +203,7 @@ telegram_messages_per_minute=60000
             serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"original question"}]}"#).unwrap(),
             serde_json::from_str(r#"{"type":"agentMessage","id":"a","text":"original answer","phase":"final_answer"}"#).unwrap(),
             serde_json::from_str(r#"{"type":"reasoning","id":"r","summary":["must never appear in Telegram"]}"#).unwrap(),
-        ],requests:vec![],drop_write:false,legacy:false,turn_changed_on_steer:false,incompatible_history:false,turn_error:None}));
+        ],requests:vec![],drop_write:false,legacy:false,turn_changed_on_steer:false,incompatible_history:false,turn_error:None,full_history_reads:0}));
         let server_state = state.clone();
         let server = tokio::spawn(async move {
             loop {
@@ -267,6 +268,9 @@ telegram_messages_per_minute=60000
                             Method::Turns(params) => {
                                 assert_eq!(params.thread_id, "thread");
                                 state.requests.push("thread/turns/list");
+                                if matches!(params.items_view, Some(p::TurnItemsView::Full)) {
+                                    state.full_history_reads += 1;
+                                }
                                 let mut turn = state.turn();
                                 if state.incompatible_history
                                     && matches!(params.items_view, Some(p::TurnItemsView::Full))
@@ -4302,4 +4306,158 @@ async fn consumed_write_buttons_do_not_recreate_confirmation_after_an_interrupte
     let current = fixture.outputs().await.pop().unwrap();
     assert!(current.text.contains("请发送会话标题"));
     assert!(!menu_labels(&current).contains("确认创建"));
+}
+
+#[tokio::test]
+async fn entering_a_long_running_session_sends_a_preview_instead_of_a_history_document() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    {
+        let mut state = fixture.state.lock().await;
+        state.items=vec![serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"Synthetic latest request"}]}"#).unwrap()];
+        for index in 0..10 {
+            state.items.push(
+                serde_json::from_str(&format!(
+                    r#"{{"type":"agentMessage","id":"p{index}","text":{},"phase":"commentary"}}"#,
+                    serde_json::to_string(&format!(
+                        "Synthetic progress {index}. {}",
+                        "中间记录".repeat(100)
+                    ))
+                    .unwrap()
+                ))
+                .unwrap(),
+            );
+        }
+        state.items.push(
+            serde_json::from_str(&format!(
+                r#"{{"type":"agentMessage","id":"f","text":{},"phase":"final_answer"}}"#,
+                serde_json::to_string(&format!("Latest final result. {}", "最终内容".repeat(1500)))
+                    .unwrap()
+            ))
+            .unwrap(),
+        );
+    }
+    fixture
+        .service
+        .handle(&input(5100, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    fixture.deliver_pending().await;
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    assert!(
+        requests
+            .iter()
+            .all(|r| !r.url.path().to_ascii_lowercase().ends_with("/senddocument")),
+        "entering a session must not automatically export history"
+    );
+    #[derive(Deserialize)]
+    struct Sent {
+        message_thread_id: Option<i32>,
+        text: String,
+    }
+    let preview = requests
+        .iter()
+        .filter(|r| r.url.path().to_ascii_lowercase().ends_with("/sendmessage"))
+        .map(|r| serde_json::from_slice::<Sent>(&r.body).unwrap())
+        .find(|r| r.message_thread_id == Some(11))
+        .unwrap();
+    assert!(preview.text.contains("Latest final result"));
+    assert!(!preview.text.contains("Synthetic progress 0"));
+    assert!(preview.text.contains("/history"));
+    assert!(preview.text.encode_utf16().count() < 3800);
+}
+
+#[tokio::test]
+async fn reopening_a_bound_session_keeps_its_cursor_and_pending_live_output() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(5110, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    let before = fixture
+        .service
+        .store
+        .binding(1, 10, 11)
+        .await
+        .unwrap()
+        .unwrap();
+    let histories = fixture.state.lock().await.full_history_reads;
+    fixture.state.lock().await.items.push(serde_json::from_str(r#"{"type":"agentMessage","id":"later","text":"Synthetic pending live output","phase":"commentary"}"#).unwrap());
+    fixture
+        .service
+        .handle(&input(5111, 9, "/open workspace thread"))
+        .await
+        .unwrap();
+    let reopened = fixture
+        .service
+        .store
+        .binding(1, 10, 11)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reopened.revision, before.revision);
+    assert_eq!(reopened.observed_items, before.observed_items);
+    assert_eq!(fixture.state.lock().await.full_history_reads, histories);
+    fixture.service.refresh_binding(&reopened).await.unwrap();
+    let outputs = fixture.outputs().await;
+    assert_eq!(
+        outputs
+            .iter()
+            .filter(|body| body.text.contains("original answer"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        outputs
+            .iter()
+            .filter(|body| body.text.contains("Synthetic pending live output"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn explicit_history_export_sends_full_visible_history_only_when_requested() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(5120, 0, "/open workspace thread"))
+        .await
+        .unwrap();
+    fixture.deliver_pending().await;
+    fixture
+        .service
+        .handle(&input(5121, 11, "/history export"))
+        .await
+        .unwrap();
+    let output = fixture.outputs().await.pop().unwrap();
+    assert!(output.document);
+    assert!(output.text.contains("original question") && output.text.contains("original answer"));
+    assert!(!output.text.contains("must never appear"));
+    fixture.deliver_pending().await;
+    let requests = fixture.telegram.received_requests().await.unwrap();
+    let documents = requests
+        .iter()
+        .filter(|request| {
+            request
+                .url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/senddocument")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(documents.len(), 1);
+    assert!(String::from_utf8_lossy(&documents[0].body).contains("session.md"));
+    assert!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .all(|method| !matches!(*method, "thread/resume" | "turn/start" | "turn/steer"))
+    );
 }

@@ -123,6 +123,16 @@ impl Service {
             }
         };
         self.authorize(input, &snapshot.hash).await?;
+        if let Some(binding) = self.store.binding(self.bot, input.chat, topic).await?
+            && binding.history_ready
+            && binding.instance_id == workspace.provider_id
+            && binding.thread_id == thread
+            && binding.workspace_id.as_deref() == Some(workspace.id.as_str())
+        {
+            self.refresh_status(&binding, workspace, &current, snapshot)
+                .await?;
+            return self.opened(input, snapshot, workspace, topic).await;
+        }
         self.store
             .bind(self.bot, input.chat, topic, &workspace.provider_id, thread)
             .await?;

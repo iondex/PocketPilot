@@ -245,7 +245,10 @@ impl Api {
         topic: i32,
         body: &crate::ledger::Outbound,
     ) -> Result<i32, Error> {
-        if body.agent_markdown {
+        if body.document {
+            self.send_document(chat, topic, &body.text, body.buttons.clone())
+                .await
+        } else if body.agent_markdown {
             self.send_agent(chat, topic, &body.text, body.buttons.clone())
                 .await
         } else {

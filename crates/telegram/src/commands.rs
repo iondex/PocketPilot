@@ -305,7 +305,32 @@ impl Service {
                     let history = self
                         .history(provider.as_ref(), workspace, &binding.thread_id, &snapshot)
                         .await?;
-                    if args.trim() == "errors" {
+                    if args.trim() == "export" {
+                        if !history.all_pages_read {
+                            return self
+                                .respond(
+                                    input,
+                                    &input.event_key,
+                                    Outbound::ui("tg.history.export_incomplete"),
+                                )
+                                .await;
+                        }
+                        let mut body = Outbound::agent(
+                            history
+                                .items
+                                .iter()
+                                .map(|item| super::messages::render(item, crate::i18n::lang(input)))
+                                .collect::<Vec<_>>()
+                                .join("\n\n"),
+                        );
+                        if body.text.is_empty() {
+                            return self
+                                .respond(input, &input.event_key, Outbound::ui("tg.history.empty"))
+                                .await;
+                        }
+                        body.document = true;
+                        return self.respond(input, &input.event_key, body).await;
+                    } else if args.trim() == "errors" {
                         self.error_history(input, &history)
                     } else {
                         self.history_summary(input, &history)

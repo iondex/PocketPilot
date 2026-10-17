@@ -199,6 +199,7 @@ pub struct Delivery {
     #[serde(alias = "telegram_messages_per_minute")]
     pub messages_per_minute: u32,
     pub history_active: String,
+    pub history_preview_chars: usize,
     pub history_idle: String,
     pub overflow: String,
 }
@@ -211,7 +212,8 @@ impl Default for Delivery {
             max_flush_delay_ms: 5000,
             history_barrier_timeout_seconds: 60,
             messages_per_minute: 18,
-            history_active: "full_bundle".into(),
+            history_active: "recent_preview".into(),
+            history_preview_chars: 1200,
             history_idle: "last_user_and_final".into(),
             overflow: "single_document".into(),
         }
@@ -377,7 +379,8 @@ impl Config {
             || d.max_flush_delay_ms < d.burst_window_ms
             || d.history_barrier_timeout_seconds == 0
             || d.messages_per_minute == 0
-            || d.history_active != "full_bundle"
+            || d.history_active != "recent_preview"
+            || !(256..=2800).contains(&d.history_preview_chars)
             || d.history_idle != "last_user_and_final"
             || d.overflow != "single_document"
             || self.config_reload.periodic_rescan_seconds == 0

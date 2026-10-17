@@ -24,6 +24,7 @@ tracing.workspace = true
 reqwest.workspace = true
 url.workspace = true
 unicode-width.workspace = true
+unicode-segmentation.workspace = true
 
 [features]
 test-support = []

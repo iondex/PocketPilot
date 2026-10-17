@@ -21,6 +21,8 @@ pub struct Outbound {
     #[serde(default)]
     pub agent_markdown: bool,
     #[serde(default)]
+    pub document: bool,
+    #[serde(default)]
     pub appearance: Option<crate::presentation::Appearance>,
     #[serde(default)]
     pub icon_lookup_deferred: bool,
@@ -69,6 +71,7 @@ impl Outbound {
             text: text.into(),
             text_id: None,
             agent_markdown: false,
+            document: false,
             appearance: None,
             icon_lookup_deferred: false,
             remove_status: None,
