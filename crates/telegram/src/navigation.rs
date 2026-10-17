@@ -1,4 +1,4 @@
-//! Durable, numbered private management screens. Navigation never grants agent permissions.
+//! Durable inline management screens. Navigation never grants agent permissions.
 use super::*;
 use crate::ledger::{Outbound, Scope};
 use engine::reload::Snapshot;
@@ -117,6 +117,22 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) async fn navigation_current(
+        &self,
+        bot: i64,
+        chat: i64,
+        topic: i32,
+        id: &str,
+    ) -> Result<bool, StoreError> {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM navigation WHERE bot_id=? AND chat_id=? AND topic_id=? AND id=?)")
+            .bind(bot).bind(chat).bind(topic).bind(id).fetch_one(&self.pool).await.map_err(|_|StoreError::Database)
+    }
+
+    async fn navigation_pending(&self, bot: i64, id: &str) -> Result<bool, StoreError> {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM deliveries WHERE bot_id=? AND state IN ('pending','dispatching') AND json_extract(payload,'$.navigation_id')=?)")
+            .bind(bot).bind(id).fetch_one(&self.pool).await.map_err(|_|StoreError::Database)
+    }
+
     async fn claim_navigation(&self, id: &str) -> Result<bool, StoreError> {
         Ok(
             sqlx::query("UPDATE navigation SET consumed=1 WHERE id=? AND consumed=0")
@@ -141,15 +157,64 @@ impl Menu {
         if !note.is_empty() {
             text.push_str(&format!("\n{}\n", md(&note)));
         }
-        for (index, choice) in self.choices.iter().enumerate() {
-            text.push_str(&format!(
-                "\n*{}*  {}",
-                index + 1,
-                md(&choice.label.render(locale))
-            ));
-        }
-        text.push_str(&crate::i18n::text(locale, "tg.nav.footer"));
         text
+    }
+
+    fn buttons(&self, id: &str, locale: &str) -> Vec<Vec<crate::api::Button>> {
+        let compact = matches!(
+            self.refresh,
+            Action::Home
+                | Action::Host { .. }
+                | Action::HostPage { .. }
+                | Action::NewSession
+                | Action::NewHost { .. }
+                | Action::NewHostPage { .. }
+        );
+        let mut rows = Vec::new();
+        let mut row = Vec::new();
+        let mut utility_row = false;
+        for (index, choice) in self.choices.iter().enumerate() {
+            let utility = matches!(
+                choice.action,
+                Action::NewSession | Action::Topics { after: 0 } | Action::ConfirmClearTopics
+            );
+            let paging = matches!(
+                choice.action,
+                Action::HostPage { .. }
+                    | Action::NewHostPage { .. }
+                    | Action::Workspace {
+                        cursor: Some(_),
+                        ..
+                    }
+            );
+            if (paging || utility != utility_row) && !row.is_empty() {
+                rows.push(std::mem::take(&mut row));
+            }
+            utility_row = utility;
+            row.push(crate::api::Button {
+                label: session::delivery::short_title(
+                    &choice.label.render(locale),
+                    if compact { 24 } else { 40 },
+                ),
+                data: format!("nav:{id}:{}", index + 1),
+            });
+            if !compact || paging || row.len() == 2 {
+                rows.push(std::mem::take(&mut row));
+            }
+        }
+        if !row.is_empty() {
+            rows.push(row);
+        }
+        rows.push(
+            [("nav.back", "b"), ("nav.home", "h"), ("nav.refresh", "r")]
+                .into_iter()
+                .map(|(key, action)| crate::api::Button {
+                    label: ::i18n::text(locale, key),
+                    data: format!("nav:{id}:{action}"),
+                })
+                .collect(),
+        );
+        rows
     }
 }
 
@@ -161,9 +226,19 @@ impl Service {
         menu: Menu,
     ) -> Result<(), Error> {
         self.authorize(input, &snapshot.hash).await?;
+        let previous = self.store.navigation(self.bot, input).await?;
         let id = uuid::Uuid::new_v4().to_string();
         let mut body = Outbound::text(menu.render(crate::i18n::lang(input)));
         body.markdown = true;
+        body.buttons = menu.buttons(&id, crate::i18n::lang(input));
+        let fresh_entry = input
+            .text
+            .split_whitespace()
+            .next()
+            .is_some_and(|command| command.split('@').next() == Some("/start"));
+        if !fresh_entry {
+            body.edit_message = previous.as_ref().and_then(|saved| saved.message);
+        }
         body.navigation_id = Some(id.clone());
         body.scope = menu.scope.clone();
         self.store
@@ -204,6 +279,10 @@ impl Service {
                 },
             })
             .collect();
+        choices.push(Choice {
+            label: UiText::id("tg.new.heading"),
+            action: Action::NewSession,
+        });
         choices.push(Choice {
             label: UiText::id("tg.topics.heading"),
             action: Action::Topics { after: 0 },
@@ -480,6 +559,129 @@ impl Service {
         }
     }
 
+    pub(super) async fn select_navigation_button(
+        &self,
+        input: &Input,
+        snapshot: &Snapshot,
+    ) -> Result<(), Error> {
+        if self.store.management_topic(self.bot, input.chat).await? != Some(input.topic) {
+            return Ok(());
+        }
+        let Some(data) = input
+            .callback
+            .as_deref()
+            .and_then(|s| s.strip_prefix("nav:"))
+        else {
+            return Ok(());
+        };
+        let Some((id, selection)) = data.split_once(':') else {
+            return Ok(());
+        };
+        let mut trusted = input.clone();
+        // Selection below is authorized from the private persisted page, never callback payload actions.
+        trusted.callback = None;
+        trusted.callback_id = None;
+        let Some(saved) = self.store.navigation(self.bot, &trusted).await? else {
+            return self.workspaces(&trusted, snapshot).await;
+        };
+        if saved.published.is_none() {
+            if self.store.navigation_pending(self.bot, &saved.id).await? {
+                return Ok(());
+            }
+            return self
+                .restore_navigation(&trusted, snapshot, saved.menu)
+                .await;
+        }
+        if saved.consumed {
+            // A claimed write may already have reached the provider even if its UI update did not.
+            return self
+                .show_action(&trusted, snapshot, saved.menu.refresh)
+                .await;
+        }
+        if saved.id != id || saved.message != Some(input.message_id) {
+            return self
+                .restore_navigation(&trusted, snapshot, saved.menu)
+                .await;
+        }
+        let action = match selection {
+            "b" => return self.show_action(&trusted, snapshot, saved.menu.back).await,
+            "h" => return self.workspaces(&trusted, snapshot).await,
+            "r" => {
+                trusted.text = "/refresh".into();
+                return self
+                    .show_action(&trusted, snapshot, saved.menu.refresh)
+                    .await;
+            }
+            _ => match selection
+                .parse::<usize>()
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|n| saved.menu.choices.get(n))
+            {
+                Some(choice) => choice.action.clone(),
+                None => {
+                    return self
+                        .show_action(&trusted, snapshot, saved.menu.refresh)
+                        .await;
+                }
+            },
+        };
+        // Telegram callbacks contain the menu's original message timestamp, not click time.
+        // Mutating confirmations instead rely on our delivery receipt and inbox recovery marker.
+        let stale = input.requires_confirmation
+            || saved
+                .published
+                .is_none_or(|at| at < self.started_at || now().saturating_sub(at) > 300);
+        if stale {
+            match &action {
+                Action::Create { workspace, text } => {
+                    return self
+                        .confirm_creation(&trusted, snapshot, workspace, text)
+                        .await;
+                }
+                Action::RemoveTopic { topic } => {
+                    return self.confirm_topic_removal(&trusted, snapshot, *topic).await;
+                }
+                Action::ClearTopics { .. } => {
+                    return self.confirm_clear_topics(&trusted, snapshot).await;
+                }
+                Action::Open { .. } => {
+                    return self
+                        .show_action(&trusted, snapshot, saved.menu.refresh)
+                        .await;
+                }
+                _ => {}
+            }
+        }
+        trusted.date = now();
+        self.apply_navigation(&trusted, snapshot, saved, action)
+            .await
+    }
+
+    async fn restore_navigation(
+        &self,
+        input: &Input,
+        snapshot: &Snapshot,
+        menu: Menu,
+    ) -> Result<(), Error> {
+        let confirmation = menu.choices.iter().any(|choice| {
+            matches!(
+                choice.action,
+                Action::Create { .. } | Action::RemoveTopic { .. } | Action::ClearTopics { .. }
+            )
+        });
+        if confirmation
+            && menu
+                .scope
+                .as_ref()
+                .is_none_or(|scope| self.scope_allowed(&snapshot.config, scope))
+        {
+            self.show_navigation(input, snapshot, menu).await
+        } else {
+            self.show_action(input, snapshot, menu.refresh).await
+        }
+    }
+
     pub(super) async fn select_navigation(
         &self,
         input: &Input,
@@ -548,12 +750,24 @@ impl Service {
                 )
                 .await;
         };
-        if number != 0
-            && saved
-                .menu
-                .scope
-                .as_ref()
-                .is_some_and(|scope| !self.scope_allowed(&snapshot.config, scope))
+        if number == 0 {
+            return self.show_action(input, snapshot, action).await;
+        }
+        self.apply_navigation(input, snapshot, saved, action).await
+    }
+
+    async fn apply_navigation(
+        &self,
+        input: &Input,
+        snapshot: &Snapshot,
+        saved: SavedMenu,
+        action: Action,
+    ) -> Result<(), Error> {
+        if saved
+            .menu
+            .scope
+            .as_ref()
+            .is_some_and(|scope| !self.scope_allowed(&snapshot.config, scope))
         {
             return self.show_action(input, snapshot, saved.menu.refresh).await;
         }

@@ -58,12 +58,7 @@ impl Service {
             .entries
             .iter()
             .map(|w| Choice {
-                label: format!(
-                    "📁 {} · {}",
-                    w.name,
-                    session::delivery::short_title(&w.cwd, 50)
-                )
-                .into(),
+                label: format!("📁 {}", w.name).into(),
                 action: Action::NewPrompt {
                     workspace: w.id.clone(),
                 },

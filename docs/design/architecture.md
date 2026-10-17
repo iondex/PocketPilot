@@ -177,7 +177,7 @@ pub trait Integration: Send + Sync {
 
 Context 提供共享 ConfigFile、Store 和 Connections；Telegram 与 Discord 均实际实现此接口，由 app::runtime 同一条装配路径启动。run 拥有平台收发任务，stop 只退出桥接工作。平台不能把 stop 翻译为 agent 生命周期操作。
 
-编号菜单/topic 和 slash/category/channel 的交互差异保留在平台内部；统一的是启动、退出、状态依赖、会话锁、AgentProvider 与操作结果语义。没有为了统一外观强行设计通用整数地址或按钮 API。未来 Lark 实现同一 Integration，Claude shim 实现 AgentProvider。
+按钮菜单/topic 和 slash/category/channel 的交互差异保留在平台内部；统一的是启动、退出、状态依赖、会话锁、AgentProvider 与操作结果语义。没有为了统一外观强行设计通用整数地址或按钮 API。未来 Lark 实现同一 Integration，Claude shim 实现 AgentProvider。
 
 ### 3.4 RpcTransport
 

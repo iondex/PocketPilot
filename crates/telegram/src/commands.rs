@@ -105,6 +105,13 @@ impl Service {
             scoped = self.management_input(&scoped, &snapshot).await?;
         }
         let input = &scoped;
+        if input
+            .callback
+            .as_deref()
+            .is_some_and(|data| data.starts_with("nav:"))
+        {
+            return self.select_navigation_button(input, &snapshot).await;
+        }
         if input.callback.is_some() {
             if input.requires_confirmation {
                 let mut routed = input.clone();

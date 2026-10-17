@@ -44,7 +44,16 @@ impl Service {
                 } else {
                     true
                 };
-                if (body.require_pairing && !paired)
+                let navigation_valid = if let Some(id) = &body.navigation_id {
+                    self.store
+                        .navigation_current(self.bot, row.chat_id, row.topic_id, id)
+                        .await
+                        .unwrap_or(false)
+                } else {
+                    true
+                };
+                if !navigation_valid
+                    || (body.require_pairing && !paired)
                     || row.chat_id <= 0
                     || !binding_valid
                     || body.expires_at.is_some_and(|expiry| expiry <= now())

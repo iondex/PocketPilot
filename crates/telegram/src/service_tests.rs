@@ -465,18 +465,62 @@ telegram_messages_per_minute=60000
     }
 
     async fn choose(&self, id: u32, number: &str) {
-        let row: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM navigation WHERE bot_id=1 AND chat_id=10 AND topic_id=9",
+        let (page, message): (String, Option<i32>) = sqlx::query_as(
+            "SELECT id,message_id FROM navigation WHERE bot_id=1 AND chat_id=10 AND topic_id=9",
         )
-        .fetch_optional(&self.service.store.pool)
+        .fetch_one(&self.service.store.pool)
         .await
         .unwrap();
+        let menu = self
+            .outputs()
+            .await
+            .into_iter()
+            .rev()
+            .find(|b| b.navigation_id.as_deref() == Some(page.as_str()))
+            .unwrap();
+        let suffix = if number == "0" { "b" } else { number };
+        let data = menu
+            .buttons
+            .iter()
+            .flatten()
+            .find(|b| b.data == format!("nav:{page}:{suffix}"))
+            .unwrap()
+            .data
+            .clone();
+        let message = message.unwrap_or(id as i32 - 1);
         self.service
             .store
-            .navigation_receipt(&row.unwrap(), 777, now())
+            .navigation_receipt(&page, message, now())
             .await
             .unwrap();
-        self.service.handle(&input(id, 9, number)).await.unwrap();
+        let mut click = input(id, 9, "");
+        click.message_id = message;
+        click.date = 100; // Telegram keeps the menu's send date even after an edit.
+        click.callback = Some(data);
+        click.callback_id = Some(format!("fixture-{id}"));
+        click.event_key = format!("callback:fixture-{id}");
+        self.service.handle(&click).await.unwrap();
+    }
+
+    async fn deliver_pending(&self) {
+        let (stop, receiver) = watch::channel(false);
+        let worker = tokio::spawn(self.service.clone().deliver(receiver));
+        let deadline = Instant::now() + Duration::from_secs(4);
+        loop {
+            let pending: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM deliveries WHERE state IN ('pending','dispatching')",
+            )
+            .fetch_one(&self.service.store.pool)
+            .await
+            .unwrap();
+            if pending == 0 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "fixture delivery did not settle");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        stop.send(true).unwrap();
+        worker.await.unwrap();
     }
 
     async fn outputs(&self) -> Vec<Outbound> {
@@ -488,6 +532,15 @@ telegram_messages_per_minute=60000
             .map(|p| serde_json::from_str(&p).unwrap())
             .collect()
     }
+}
+
+fn menu_labels(body: &Outbound) -> String {
+    body.buttons
+        .iter()
+        .flatten()
+        .map(|b| b.label.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn input(id: u32, topic: i32, text: &str) -> Input {
@@ -680,7 +733,7 @@ async fn management_topic_is_separate_and_unbound_messages_never_reach_an_agent(
 }
 
 #[tokio::test]
-async fn numbered_navigation_sends_a_new_markdown_screen_without_inline_buttons() {
+async fn management_buttons_edit_the_same_message_and_keep_a_compact_workspace_layout() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     fixture
@@ -694,37 +747,25 @@ async fn numbered_navigation_sends_a_new_markdown_screen_without_inline_buttons(
         .into_iter()
         .find(|b| b.navigation_id.is_some())
         .unwrap();
-    assert!(home.markdown && home.buttons.is_empty());
+    assert!(home.markdown && !home.buttons.is_empty());
     assert!(home.text.contains("🌐 主机"));
+    assert!(home.buttons.iter().flatten().all(|b| b.data.len() <= 64));
+    fixture.deliver_pending().await;
     fixture.choose(211, "1").await;
-    let workspace = fixture.outputs().await.into_iter().last().unwrap();
+    let workspace = fixture.outputs().await.pop().unwrap();
     assert!(workspace.text.contains("工作区"));
-    assert!(workspace.edit_message.is_none());
+    assert_eq!(workspace.edit_message, Some(700));
+    fixture.deliver_pending().await;
     fixture.choose(212, "1").await;
-    let sessions = fixture.outputs().await.into_iter().last().unwrap();
-    assert!(sessions.text.contains("⚡"));
-    assert!(!sessions.text.contains("运行中"));
-    assert!(sessions.text.contains("新建会话"));
-    let (stop, receiver) = watch::channel(false);
-    let worker = tokio::spawn(fixture.service.clone().deliver(receiver));
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        let pending: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM deliveries WHERE state IN ('pending','dispatching')",
-        )
-        .fetch_one(&fixture.service.store.pool)
-        .await
-        .unwrap();
-        if pending == 0 {
-            break;
-        }
-        assert!(Instant::now() < deadline);
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    stop.send(true).unwrap();
-    worker.await.unwrap();
+    let sessions = fixture.outputs().await.pop().unwrap();
+    assert!(menu_labels(&sessions).contains("⚡"));
+    assert!(!menu_labels(&sessions).contains("运行中"));
+    assert!(menu_labels(&sessions).contains("新建会话"));
+    fixture.deliver_pending().await;
     #[derive(Deserialize)]
     struct Sent {
+        message_thread_id: Option<i32>,
+        message_id: Option<i32>,
         parse_mode: Option<String>,
         reply_markup: Markup,
     }
@@ -733,22 +774,31 @@ async fn numbered_navigation_sends_a_new_markdown_screen_without_inline_buttons(
         inline_keyboard: Vec<Vec<serde::de::IgnoredAny>>,
     }
     let requests = fixture.telegram.received_requests().await.unwrap();
-    assert!(!requests.iter().any(|r| {
-        r.url
-            .path()
-            .to_ascii_lowercase()
-            .ends_with("/editmessagetext")
-    }));
     let menus = requests
         .iter()
         .filter(|r| r.url.path().to_ascii_lowercase().ends_with("/sendmessage"))
+        .map(|r| serde_json::from_slice::<Sent>(&r.body).unwrap())
+        .filter(|r| r.message_thread_id == Some(9))
+        .collect::<Vec<_>>();
+    assert_eq!(menus.len(), 1);
+    assert_eq!(menus[0].parse_mode.as_deref(), Some("MarkdownV2"));
+    assert!(!menus[0].reply_markup.inline_keyboard.is_empty());
+    let edits = requests
+        .iter()
         .filter(|r| {
-            let sent: Sent = serde_json::from_slice(&r.body).unwrap();
-            assert!(sent.reply_markup.inline_keyboard.is_empty());
-            sent.parse_mode.as_deref() == Some("MarkdownV2")
+            r.url
+                .path()
+                .to_ascii_lowercase()
+                .ends_with("/editmessagetext")
         })
-        .count();
-    assert_eq!(menus, 3);
+        .map(|r| serde_json::from_slice::<Sent>(&r.body).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(edits.len(), 2);
+    assert!(
+        edits
+            .iter()
+            .all(|r| r.message_id == Some(700) && !r.reply_markup.inline_keyboard.is_empty())
+    );
     fixture.choose(213, "0").await;
     assert!(
         fixture
@@ -762,7 +812,7 @@ async fn numbered_navigation_sends_a_new_markdown_screen_without_inline_buttons(
 }
 
 #[tokio::test]
-async fn numbered_workspace_and_session_lists_only_contain_actual_entries() {
+async fn workspace_and_session_buttons_only_contain_actual_entries() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     let file = &fixture.service.config.path;
@@ -779,21 +829,42 @@ async fn numbered_workspace_and_session_lists_only_contain_actual_entries() {
         .unwrap();
     fixture.choose(216, "1").await;
     let menu = fixture.outputs().await.into_iter().last().unwrap();
-    assert!(menu.buttons.is_empty());
-    assert!(menu.text.contains("*1*") && menu.text.contains("*3*"));
-    assert!(!menu.text.contains("*4*"));
+    let choices = menu
+        .buttons
+        .iter()
+        .flatten()
+        .filter(|b| {
+            b.data
+                .rsplit(':')
+                .next()
+                .is_some_and(|n| n.parse::<usize>().is_ok())
+        })
+        .count();
+    assert_eq!(choices, 3);
+    assert!(menu.buttons.iter().filter(|row| row.len() == 2).count() >= 1);
+    assert!(!menu.text.contains("*1*"));
     fixture
         .service
         .handle(&input(217, 9, "/sessions workspace"))
         .await
         .unwrap();
     let menu = fixture.outputs().await.into_iter().last().unwrap();
-    assert!(menu.text.contains("*1*") && menu.text.contains("*2*"));
-    assert!(!menu.text.contains("*3*"));
+    let choices = menu
+        .buttons
+        .iter()
+        .flatten()
+        .filter(|b| {
+            b.data
+                .rsplit(':')
+                .next()
+                .is_some_and(|n| n.parse::<usize>().is_ok())
+        })
+        .count();
+    assert_eq!(choices, 2);
 }
 
 #[tokio::test]
-async fn numbered_menu_survives_recovery_and_non_authority_config_changes() {
+async fn management_navigation_survives_recovery_and_non_authority_config_changes() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     fixture
@@ -824,8 +895,8 @@ async fn numbered_menu_survives_recovery_and_non_authority_config_changes() {
     fixture.service.config.reload().unwrap();
     fixture.service.handle(&input(301, 9, "1")).await.unwrap();
     let menu = fixture.outputs().await.into_iter().last().unwrap();
-    assert!(menu.text.contains("New display name"));
-    assert!(menu.buttons.is_empty());
+    assert!(menu_labels(&menu).contains("New display name"));
+    assert!(!menu.buttons.is_empty());
     assert!(fixture.state.lock().await.requests.is_empty());
 }
 
@@ -1044,7 +1115,7 @@ async fn menus_do_not_depend_on_editing_deleted_management_messages() {
                     .ends_with("/editmessagetext")
             })
             .count();
-        if edits == 0 && sends >= 3 {
+        if edits == 1 && sends == 2 {
             break;
         }
         assert!(
@@ -1112,9 +1183,9 @@ async fn picker_hides_only_sessions_proven_to_be_local_operator_probes() {
         .into_iter()
         .find(|b| b.navigation_id.is_some() && b.text.contains("会话"))
         .unwrap();
-    assert!(menu.buttons.is_empty());
-    assert!(!menu.text.contains("Fixture title"));
-    assert!(menu.text.contains("新建会话"));
+    assert!(!menu.buttons.is_empty());
+    assert!(!menu_labels(&menu).contains("Fixture title"));
+    assert!(menu_labels(&menu).contains("新建会话"));
     assert!(
         !fixture
             .state
@@ -3047,7 +3118,12 @@ cwd="/workspace"
             && prompt.text.contains("sample")
             && prompt.text.contains("请发送会话标题")
     );
-    fixture.choose(2115, "123").await;
+    fixture.deliver_pending().await;
+    fixture
+        .service
+        .handle(&input(2115, 9, "123"))
+        .await
+        .unwrap();
     let confirmation = fixture.outputs().await.pop().unwrap();
     assert!(confirmation.text.contains("Other host") && confirmation.text.contains("123"));
     assert!(
@@ -3206,29 +3282,23 @@ async fn host_workspace_menu_pages_all_registered_projects_including_paged_proje
     );
 
     assert!(
-        first.text.contains("下一页"),
+        menu_labels(&first).contains("下一页"),
         "registered workspaces beyond a page need a next-page choice"
     );
     fixture.choose(2142, "9").await;
     let next = fixture.outputs().await.pop().unwrap();
-    assert!(!next.text.contains("下一页"));
-    let project = crate::api::escape_markdown("paged-project");
-    assert!(first.text.contains(&project) || next.text.contains(&project));
+    assert!(!menu_labels(&next).contains("下一页"));
+    assert!(
+        menu_labels(&first).contains("paged-project")
+            || menu_labels(&next).contains("paged-project")
+    );
     fixture
         .service
         .handle(&input(2143, 9, "/new"))
         .await
         .unwrap();
     fixture.choose(2144, "1").await;
-    assert!(
-        fixture
-            .outputs()
-            .await
-            .last()
-            .unwrap()
-            .text
-            .contains("下一页")
-    );
+    assert!(menu_labels(fixture.outputs().await.last().unwrap()).contains("下一页"));
     fixture.choose(2145, "9").await;
     fixture.choose(2146, "1").await;
     assert!(
@@ -3277,15 +3347,7 @@ async fn refreshing_a_host_reads_workspace_metadata_without_loading_history_or_s
         *r,
         "initialize" | "initialized" | "thread/loaded/list" | "thread/read" | "thread/list"
     )));
-    assert!(
-        fixture
-            .outputs()
-            .await
-            .last()
-            .unwrap()
-            .text
-            .contains("Fixture workspace")
-    );
+    assert!(menu_labels(fixture.outputs().await.last().unwrap()).contains("Fixture workspace"));
 }
 
 #[tokio::test]
@@ -3745,7 +3807,7 @@ async fn workspace_pages_use_recency_before_name_in_both_navigation_flows() {
         .await
         .unwrap();
     fixture.choose(2261, "1").await;
-    let text = fixture.outputs().await.pop().unwrap().text;
+    let text = menu_labels(&fixture.outputs().await.pop().unwrap());
     assert!(text.find("zzz recent").unwrap() < text.find("Fixture workspace").unwrap());
     fixture
         .service
@@ -3753,7 +3815,7 @@ async fn workspace_pages_use_recency_before_name_in_both_navigation_flows() {
         .await
         .unwrap();
     fixture.choose(2263, "1").await;
-    let text = fixture.outputs().await.pop().unwrap().text;
+    let text = menu_labels(&fixture.outputs().await.pop().unwrap());
     assert!(text.find("zzz recent").unwrap() < text.find("Fixture workspace").unwrap());
 }
 
@@ -4016,4 +4078,228 @@ async fn unverified_appearance_receipts_are_repaired_once_without_replaying_hist
             .count(),
         before
     );
+}
+
+fn navigation_click(menu: &Outbound, id: u32, selection: &str, message: i32) -> Input {
+    let mut click = input(id, 9, "");
+    click.event_key = format!("callback:synthetic-{id}");
+    click.callback_id = Some(format!("synthetic-{id}"));
+    click.callback = Some(format!(
+        "nav:{}:{selection}",
+        menu.navigation_id.as_deref().unwrap()
+    ));
+    click.message_id = message;
+    click.date = 100;
+    click
+}
+
+#[tokio::test]
+async fn read_only_buttons_survive_recovery_and_display_changes_without_an_expiry_error() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(5000, 0, "/start"))
+        .await
+        .unwrap();
+    let menu = fixture.outputs().await.pop().unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(menu.navigation_id.as_ref().unwrap(), 700, now() - 86400)
+        .await
+        .unwrap();
+    fixture.service.store.recover_inbox(1).await.unwrap();
+    let file = &fixture.service.config.path;
+    let text = std::fs::read_to_string(file)
+        .unwrap()
+        .replace("Fixture workspace", "Updated project");
+    std::fs::write(file, text).unwrap();
+    fixture.service.config.reload().unwrap();
+    fixture
+        .service
+        .handle(&navigation_click(&menu, 5001, "1", 700))
+        .await
+        .unwrap();
+    let current = fixture.outputs().await.pop().unwrap();
+    assert_eq!(current.edit_message, Some(700));
+    assert!(menu_labels(&current).contains("Updated project"));
+    assert!(!current.text.contains("过期"));
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn expired_or_recovered_create_clicks_reconfirm_and_duplicate_buttons_never_create_again() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(5010, 9, "/new workspace Synthetic title"))
+        .await
+        .unwrap();
+    let original = fixture.outputs().await.pop().unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(original.navigation_id.as_ref().unwrap(), 700, now() - 86400)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&navigation_click(&original, 5011, "1", 700))
+        .await
+        .unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    let renewed = fixture.outputs().await.pop().unwrap();
+    assert!(renewed.text.contains("Synthetic title"));
+    assert_eq!(renewed.edit_message, Some(700));
+    fixture
+        .service
+        .store
+        .navigation_receipt(renewed.navigation_id.as_ref().unwrap(), 700, now())
+        .await
+        .unwrap();
+    let mut recovered = navigation_click(&renewed, 5012, "1", 700);
+    recovered.requires_confirmation = true;
+    fixture.service.handle(&recovered).await.unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    fixture.choose(5013, "1").await;
+    fixture
+        .service
+        .handle(&navigation_click(&original, 5014, "1", 700))
+        .await
+        .unwrap();
+    let state = fixture.state.lock().await;
+    assert_eq!(
+        state
+            .requests
+            .iter()
+            .filter(|method| **method == "thread/start")
+            .count(),
+        1
+    );
+    assert!(!state.requests.contains(&"turn/start"));
+}
+
+#[tokio::test]
+async fn menu_buttons_cannot_authorize_a_changed_workspace_scope_or_another_topic() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(5020, 9, "/new workspace Synthetic title"))
+        .await
+        .unwrap();
+    let menu = fixture.outputs().await.pop().unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(menu.navigation_id.as_ref().unwrap(), 700, now())
+        .await
+        .unwrap();
+    let mut wrong_topic = navigation_click(&menu, 5021, "1", 700);
+    wrong_topic.topic = 11;
+    fixture.service.handle(&wrong_topic).await.unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    let mut wrong_message = navigation_click(&menu, 5022, "1", 701);
+    fixture.service.handle(&wrong_message).await.unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    let current = fixture.outputs().await.pop().unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(current.navigation_id.as_ref().unwrap(), 700, now())
+        .await
+        .unwrap();
+    let file = &fixture.service.config.path;
+    let text = std::fs::read_to_string(file)
+        .unwrap()
+        .replace("cwd=\"/workspace\"", "cwd=\"/workspace/changed\"");
+    std::fs::write(file, text).unwrap();
+    fixture.service.config.reload().unwrap();
+    fixture
+        .service
+        .handle(&navigation_click(&current, 5023, "1", 700))
+        .await
+        .unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    assert!(
+        fixture
+            .outputs()
+            .await
+            .last()
+            .unwrap()
+            .text
+            .contains("请发送会话标题")
+    );
+    wrong_message.user = 20;
+    wrong_message.chat = 20;
+    fixture.service.handle(&wrong_message).await.unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn queued_obsolete_menus_do_not_overwrite_the_current_page() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(5030, 0, "/start"))
+        .await
+        .unwrap();
+    let home = fixture.outputs().await.pop().unwrap();
+    fixture.choose(5031, "1").await;
+    let before = fixture.outputs().await.len();
+    fixture
+        .service
+        .handle(&navigation_click(&home, 5032, "1", 5030))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.outputs().await.len(),
+        before,
+        "old clicks must not enqueue duplicate pending pages"
+    );
+    fixture.deliver_pending().await;
+    let obsolete: String = sqlx::query_scalar(
+        "SELECT state FROM deliveries WHERE json_extract(payload,'$.navigation_id')=?",
+    )
+    .bind(home.navigation_id)
+    .fetch_one(&fixture.service.store.pool)
+    .await
+    .unwrap();
+    assert_eq!(obsolete, "rejected");
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn consumed_write_buttons_do_not_recreate_confirmation_after_an_interrupted_ui_update() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    fixture
+        .service
+        .handle(&input(5040, 9, "/new workspace Synthetic title"))
+        .await
+        .unwrap();
+    let menu = fixture.outputs().await.pop().unwrap();
+    fixture
+        .service
+        .store
+        .navigation_receipt(menu.navigation_id.as_ref().unwrap(), 700, now())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE navigation SET consumed=1 WHERE id=?")
+        .bind(menu.navigation_id.as_ref().unwrap())
+        .execute(&fixture.service.store.pool)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .handle(&navigation_click(&menu, 5041, "1", 700))
+        .await
+        .unwrap();
+    assert!(fixture.state.lock().await.requests.is_empty());
+    let current = fixture.outputs().await.pop().unwrap();
+    assert!(current.text.contains("请发送会话标题"));
+    assert!(!menu_labels(&current).contains("确认创建"));
 }
