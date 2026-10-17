@@ -48,8 +48,8 @@ impl Store {
     }
 
     pub async fn pending_deliveries(&self, bot: i64, now: i64) -> Result<Vec<Delivery>, Error> {
-        sqlx::query_as("SELECT id,chat_id,topic_id,payload,source_key FROM deliveries d WHERE bot_id=? AND state='pending' AND not_before<=? AND NOT EXISTS(SELECT 1 FROM deliveries earlier WHERE earlier.bot_id=d.bot_id AND earlier.chat_id=d.chat_id AND earlier.state IN ('pending','dispatching') AND earlier.rowid<d.rowid) ORDER BY rowid LIMIT 100")
-            .bind(bot).bind(now).fetch_all(&self.pool).await.map_err(|_| Error::Database)
+        sqlx::query_as("SELECT id,chat_id,topic_id,payload,source_key FROM deliveries d WHERE bot_id=? AND state='pending' AND not_before<=? AND NOT EXISTS(SELECT 1 FROM deliveries earlier WHERE earlier.bot_id=d.bot_id AND earlier.chat_id=d.chat_id AND earlier.state IN ('pending','dispatching') AND earlier.rowid<d.rowid AND NOT (earlier.state='pending' AND earlier.not_before>? AND json_extract(earlier.payload,'$.appearance') IS NOT NULL AND json_extract(earlier.payload,'$.icon_lookup_deferred')=1)) ORDER BY rowid LIMIT 100")
+            .bind(bot).bind(now).bind(now).fetch_all(&self.pool).await.map_err(|_| Error::Database)
     }
 
     pub async fn delivery_state(
@@ -110,6 +110,23 @@ impl Store {
                         .map_err(|_| Error::Database)?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn defer_icon_lookup(
+        &self,
+        id: &str,
+        body: &Outbound,
+        not_before: i64,
+    ) -> Result<(), Error> {
+        let mut deferred = body.clone();
+        deferred.icon_lookup_deferred = true;
+        let payload = serde_json::to_string(&deferred).map_err(|_| Error::Database)?;
+        let updated = sqlx::query("UPDATE deliveries SET state='pending',payload=?,not_before=? WHERE id=? AND state='dispatching'")
+            .bind(payload).bind(not_before).bind(id).execute(&self.pool).await.map_err(|_| Error::Database)?.rows_affected();
+        if updated != 1 {
+            return Err(Error::Transition);
         }
         Ok(())
     }

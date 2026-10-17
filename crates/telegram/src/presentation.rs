@@ -51,6 +51,12 @@ pub struct Appearance {
     pub emoji: String,
 }
 
+impl Appearance {
+    pub(crate) fn receipt(&self) -> String {
+        format!("icon:v1:{}", self.emoji)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

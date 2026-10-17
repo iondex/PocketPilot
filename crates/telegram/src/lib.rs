@@ -42,6 +42,8 @@ pub enum Error {
     Protocol,
     #[error("Telegram rate limit; retry in {0} seconds")]
     RetryAfter(u64),
+    #[error("Telegram topic icon catalog is unavailable; retry in {0} seconds")]
+    IconUnavailable(u64),
     #[error("Telegram rejected the request")]
     Rejected,
     #[error("Telegram recipient is unavailable")]
@@ -70,6 +72,9 @@ impl ::i18n::LocalizedError for Error {
             Self::RetryAfter(value) => {
                 ::i18n::Message::new("error.telegram.retry_after").arg("seconds", value)
             }
+            Self::IconUnavailable(value) => {
+                ::i18n::Message::new("error.telegram.icon_unavailable").arg("seconds", value)
+            }
             Self::Rejected => ::i18n::Message::new("error.telegram.rejected"),
             Self::NoRecipient => ::i18n::Message::new("error.telegram.no_recipient"),
             Self::NotModified => ::i18n::Message::new("error.telegram.not_modified"),
@@ -78,6 +83,46 @@ impl ::i18n::LocalizedError for Error {
             Self::TopicClosed => ::i18n::Message::new("error.telegram.topic_closed"),
             Self::MessageUnavailable => ::i18n::Message::new("error.telegram.message_unavailable"),
         }
+    }
+}
+
+pub(crate) fn error_reason(error: &RequestError) -> &'static str {
+    match error {
+        RequestError::Network(error) if error.is_timeout() => "network_timeout",
+        RequestError::Network(error) if error.is_connect() => "connection_failed",
+        RequestError::Network(_) => "network_failure",
+        RequestError::InvalidJson { .. } => "incompatible_response",
+        RequestError::RetryAfter(_) => "rate_limited",
+        RequestError::Api(ApiError::Unknown(text))
+            if matches!(
+                text.as_str(),
+                "Internal Server Error" | "Bad Gateway" | "Gateway Timeout"
+            ) =>
+        {
+            "server_unavailable"
+        }
+        RequestError::Api(ApiError::Unknown(text))
+            if matches!(
+                text.as_str(),
+                "Bad Request: CUSTOM_EMOJI_ID_INVALID"
+                    | "Bad Request: custom emoji not found"
+                    | "Bad Request: wrong custom emoji identifier specified"
+            ) =>
+        {
+            "invalid_custom_emoji"
+        }
+        RequestError::Api(ApiError::Unknown(text))
+            if matches!(
+                text.as_str(),
+                "Bad Request: not enough rights to manage topics"
+                    | "Bad Request: CHAT_ADMIN_REQUIRED"
+            ) =>
+        {
+            "topic_permission_denied"
+        }
+        RequestError::Api(ApiError::MessageNotModified) => "not_modified",
+        RequestError::Api(_) => "api_rejected",
+        _ => "request_failure",
     }
 }
 
@@ -186,5 +231,28 @@ mod tests {
         assert_eq!(access(10, 11, true, true), Access::Denied);
         assert_eq!(access(10, 10, true, false), Access::PairingRequired);
         assert_eq!(access(10, 10, true, true), Access::Authorized);
+    }
+
+    #[test]
+    fn diagnostic_reasons_only_expose_fixed_categories() {
+        for (message, expected) in [
+            (
+                "Bad Request: CUSTOM_EMOJI_ID_INVALID",
+                "invalid_custom_emoji",
+            ),
+            (
+                "Bad Request: not enough rights to manage topics",
+                "topic_permission_denied",
+            ),
+            ("Internal Server Error", "server_unavailable"),
+            (
+                "private-response-body-with-sensitive-content",
+                "api_rejected",
+            ),
+        ] {
+            let error = RequestError::Api(ApiError::Unknown(message.into()));
+            assert_eq!(error_reason(&error), expected);
+            assert!(!safe_error(error).to_string().contains(message));
+        }
     }
 }

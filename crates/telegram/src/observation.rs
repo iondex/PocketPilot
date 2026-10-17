@@ -228,7 +228,7 @@ impl Service {
         snapshot: &Snapshot,
     ) -> Result<(), Error> {
         if binding.topic_title.as_deref() == Some(appearance.title.as_str())
-            && binding.status_text.as_deref() == Some(appearance.emoji.as_str())
+            && binding.status_text.as_deref() == Some(appearance.receipt().as_str())
             && binding.status_message_id.is_none()
         {
             return Ok(());
@@ -310,7 +310,9 @@ impl Service {
         let mut new = old.clone();
         new.remove("@connection_error");
         new.extend(item_hashes(&history));
-        let upgrading = old.values().all(|hash| !hash.starts_with("v2:"));
+        let upgrading = old
+            .values()
+            .all(|hash| !hash.starts_with("v2:") && !hash.starts_with("v3:"));
         let latest_turn = history
             .items
             .iter()
@@ -323,10 +325,7 @@ impl Service {
             .filter(|item| {
                 let key = item_key(item);
                 let previous = old.get(&key);
-                if previous == new.get(&key)
-                    || previous
-                        .is_some_and(|h| !h.starts_with("v2:") && *h == super::digest(&item.text))
-                {
+                if super::unchanged(item, previous) {
                     return false;
                 }
                 if item.role == session::Role::User
@@ -347,6 +346,26 @@ impl Service {
             .collect::<Vec<_>>()
             .join("\n\n");
         let visible_members = changed.len();
+        if visible_members > 0 {
+            tracing::info!(
+                topic_id = binding.topic_id,
+                binding_revision = binding.revision,
+                observed_items = history.items.len(),
+                changed_items = visible_members,
+                intermediate_items = changed
+                    .iter()
+                    .filter(|i| matches!(
+                        i.phase.as_deref(),
+                        Some("commentary" | "partial_answer" | "plan")
+                    ))
+                    .count(),
+                final_items = changed
+                    .iter()
+                    .filter(|i| i.phase.as_deref() == Some("final_answer"))
+                    .count(),
+                "session visible changes evaluated"
+            );
+        }
         if text.is_empty() {
             if new != old {
                 self.store.observe(binding, &new).await?;

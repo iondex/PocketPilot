@@ -23,6 +23,8 @@ pub struct Outbound {
     #[serde(default)]
     pub appearance: Option<crate::presentation::Appearance>,
     #[serde(default)]
+    pub icon_lookup_deferred: bool,
+    #[serde(default)]
     pub remove_status: Option<i32>,
     #[serde(default)]
     pub buttons: Vec<Vec<Button>>,
@@ -68,6 +70,7 @@ impl Outbound {
             text_id: None,
             agent_markdown: false,
             appearance: None,
+            icon_lookup_deferred: false,
             remove_status: None,
             buttons: vec![],
             require_pairing: true,
@@ -329,7 +332,7 @@ impl Store {
         appearance: &crate::presentation::Appearance,
     ) -> Result<(), Error> {
         sqlx::query("UPDATE bindings SET topic_title=?,status_text=?,status_message_id=NULL WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1")
-            .bind(&appearance.title).bind(&appearance.emoji).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision).execute(&self.pool).await.map_err(|_|Error::Database)?;
+            .bind(&appearance.title).bind(appearance.receipt()).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision).execute(&self.pool).await.map_err(|_|Error::Database)?;
         Ok(())
     }
 
@@ -470,8 +473,8 @@ impl Store {
         body: &Outbound,
     ) -> Result<(), Error> {
         let payload = serde_json::to_string(body).map_err(|_| Error::Database)?;
-        sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,topic_id,source_key) DO UPDATE SET payload=excluded.payload,state='pending' WHERE deliveries.state<>'dispatching' AND deliveries.payload<>excluded.payload")
-            .bind(uuid::Uuid::now_v7().to_string()).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(format!("appearance:{}:{}",binding.thread_id,binding.revision)).bind(payload).execute(&self.pool).await.map_err(|_|Error::Database)?;
+        sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,topic_id,source_key) DO UPDATE SET payload=CASE WHEN deliveries.state='pending' AND json_extract(deliveries.payload,'$.icon_lookup_deferred')=1 THEN json_set(excluded.payload,'$.icon_lookup_deferred',json('true')) ELSE excluded.payload END,state='pending' WHERE deliveries.state<>'dispatching' AND deliveries.payload<>excluded.payload")
+            .bind(uuid::Uuid::now_v7().to_string()).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(format!("appearance:v2:{}:{}",binding.thread_id,binding.revision)).bind(payload).execute(&self.pool).await.map_err(|_|Error::Database)?;
         Ok(())
     }
 

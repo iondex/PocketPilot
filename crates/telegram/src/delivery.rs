@@ -196,7 +196,18 @@ impl Service {
                         }
                     }
                     Err(error) => {
-                        tracing::warn!(%error,"Telegram delivery failed");
+                        tracing::warn!(delivery_id = row.id, topic_id = row.topic_id, appearance = body.appearance.is_some(), error_id = ::i18n::LocalizedError::message(&error).id, %error,"Telegram delivery failed");
+                        if let crate::Error::IconUnavailable(seconds) = &error {
+                            let _ = self
+                                .store
+                                .defer_icon_lookup(
+                                    &row.id,
+                                    &body,
+                                    now().saturating_add((*seconds).min(i64::MAX as u64) as i64),
+                                )
+                                .await;
+                            continue;
+                        }
                         if matches!(error, crate::Error::TopicUnavailable) {
                             let management = self
                                 .store

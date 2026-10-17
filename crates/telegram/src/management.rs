@@ -66,6 +66,12 @@ impl Service {
                 .await
             {
                 Ok(()) => {}
+                Err(crate::Error::IconUnavailable(seconds)) => {
+                    tracing::debug!(
+                        retry_after_seconds = seconds,
+                        "management icon repair deferred; navigation remains available"
+                    );
+                }
                 Err(crate::Error::TopicUnavailable) => {
                     self.store
                         .unavailable_topic(self.bot, input.chat, topic)

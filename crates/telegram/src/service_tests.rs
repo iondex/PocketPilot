@@ -583,7 +583,7 @@ async fn failed_history_does_not_flip_a_known_runtime_or_repeatedly_rename_the_t
         "history failure caused {renames} repeated topic renames"
     );
     assert!(
-        binding.status_text.as_deref() == Some("⚡️"),
+        binding.status_text.as_deref() == Some("icon:v1:⚡️"),
         "readable runtime was replaced by unknown"
     );
 }
@@ -3665,7 +3665,7 @@ async fn legacy_cursors_upgrade_without_replaying_old_text_and_outages_emit_one_
     fixture.service.refresh_binding(&binding).await.unwrap();
     assert_eq!(fixture.outputs().await.len(), count);
     let upgraded = store.binding(1, 10, 11).await.unwrap().unwrap();
-    assert!(upgraded.observed_items.contains("v2:"));
+    assert!(upgraded.observed_items.contains("v3:"));
     fixture
         .service
         .offline_status(&binding, &Error::Provider(ProviderError::Timeout))
@@ -3847,5 +3847,173 @@ async fn native_turn_errors_reach_the_live_outbox_and_explicit_history_without_r
                 *request,
                 "thread/start" | "thread/resume" | "turn/start" | "turn/steer"
             ))
+    );
+}
+
+#[tokio::test]
+async fn completing_a_turn_does_not_replay_unchanged_commentary_in_the_final_delivery() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    store.set_workspace(1, 10, 11, "workspace").await.unwrap();
+    fixture.state.lock().await.items = vec![
+        serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"synthetic request"}]}"#).unwrap(),
+        serde_json::from_str(r#"{"type":"agentMessage","id":"c1","text":"first progress update","phase":"commentary"}"#).unwrap(),
+        serde_json::from_str(r#"{"type":"agentMessage","id":"c2","text":"second progress update","phase":"commentary"}"#).unwrap(),
+    ];
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    let before = fixture.outputs().await.len();
+    {
+        let mut state = fixture.state.lock().await;
+        state.status = p::ThreadStatus::Idle;
+        state.items.push(serde_json::from_str(r#"{"type":"agentMessage","id":"f","text":"final result only","phase":"final_answer"}"#).unwrap());
+    }
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    let outputs = fixture.outputs().await;
+    assert_eq!(outputs.len(), before + 1);
+    assert_eq!(
+        outputs.last().unwrap().text,
+        "✅ final result only",
+        "turn completion must not replay already observed progress"
+    );
+}
+
+#[test]
+fn visible_cursor_upgrade_ignores_completion_flags_but_preserves_content_and_phase_changes() {
+    let mut item = visible_item(
+        "t",
+        "i",
+        session::Role::Agent,
+        Some("commentary"),
+        "synthetic progress",
+    );
+    item.complete = false;
+    let legacy = format!(
+        "v2:{}",
+        super::digest(&serde_json::to_string(&item).unwrap())
+    );
+    let visible = super::visible_hash(&item);
+    item.complete = true;
+    assert!(super::unchanged(&item, Some(&legacy)));
+    assert!(super::unchanged(&item, Some(&visible)));
+    item.phase = Some("final_answer".into());
+    assert!(!super::unchanged(&item, Some(&legacy)));
+    assert!(!super::unchanged(&item, Some(&visible)));
+    item.phase = Some("commentary".into());
+    item.text.push_str(" revised");
+    assert!(!super::unchanged(&item, Some(&visible)));
+}
+
+#[tokio::test]
+async fn icon_discovery_backoff_does_not_confirm_the_icon_or_block_session_messages() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    store.set_workspace(1, 10, 11, "workspace").await.unwrap();
+    Mock::given(path_regex("(?i).*/getforumtopiciconstickers$"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"ok":false,"error_code":500,"description":"Internal Server Error"}"#,
+        ))
+        .expect(1)
+        .with_priority(1)
+        .mount(&fixture.telegram)
+        .await;
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    let (stop, receiver) = watch::channel(false);
+    let worker = tokio::spawn(fixture.service.clone().deliver(receiver));
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        let states: Vec<String> = sqlx::query_scalar(
+            "SELECT state FROM deliveries WHERE source_key LIKE 'initial-history:%'",
+        )
+        .fetch_all(&store.pool)
+        .await
+        .unwrap();
+        if states == vec!["delivered".to_string()] {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "icon backoff blocked the visible message"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    assert!(
+        binding.status_text.is_none(),
+        "failed icon discovery was recorded as applied"
+    );
+    let deferred: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM deliveries WHERE source_key LIKE 'appearance:%' AND state='pending' AND not_before>?)")
+        .bind(now()).fetch_one(&store.pool).await.unwrap();
+    assert!(deferred);
+}
+
+#[tokio::test]
+async fn unverified_appearance_receipts_are_repaired_once_without_replaying_history() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let store = &fixture.service.store;
+    store.bind(1, 10, 11, "instance", "thread").await.unwrap();
+    store.set_workspace(1, 10, 11, "workspace").await.unwrap();
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    let (stop, receiver) = watch::channel(false);
+    let worker = tokio::spawn(fixture.service.clone().deliver(receiver));
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        if store
+            .binding(1, 10, 11)
+            .await
+            .unwrap()
+            .unwrap()
+            .status_text
+            .as_deref()
+            == Some("icon:v1:⚡️")
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    // Simulate a prior version's receipt that did not prove an icon was in the request.
+    sqlx::query(
+        "UPDATE bindings SET status_text='⚡️' WHERE bot_id=1 AND chat_id=10 AND topic_id=11",
+    )
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    // Remove only this fixture's new receipt row to model an older queue identity.
+    sqlx::query(
+        "UPDATE deliveries SET source_key='appearance:legacy' WHERE source_key LIKE 'appearance:%'",
+    )
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    let before = fixture
+        .outputs()
+        .await
+        .iter()
+        .filter(|b| !b.text.is_empty())
+        .count();
+    fixture.service.refresh_binding(&binding).await.unwrap();
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM deliveries WHERE source_key LIKE 'appearance:v2:%' AND state='pending'")
+        .fetch_one(&store.pool).await.unwrap();
+    assert_eq!(pending, 1);
+    assert_eq!(
+        fixture
+            .outputs()
+            .await
+            .iter()
+            .filter(|b| !b.text.is_empty())
+            .count(),
+        before
     );
 }

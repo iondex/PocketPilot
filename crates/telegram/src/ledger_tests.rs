@@ -320,3 +320,53 @@ async fn an_uncertain_delivery_is_not_automatically_sent_again() {
         .unwrap();
     assert!(store.pending_deliveries(1, 10000).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn deferred_icon_reads_allow_text_but_rate_limited_metadata_retains_queue_order() {
+    let (_dir, store) = setup().await;
+    store.bind(1, 10, 11, "host", "thread").await.unwrap();
+    let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
+    let mut icon = Outbound::text("");
+    icon.appearance = Some(crate::presentation::Appearance {
+        title: "Synthetic title".into(),
+        emoji: "💬".into(),
+    });
+    store.enqueue_appearance(&binding, &icon).await.unwrap();
+    let row = store
+        .pending_deliveries(1, 100)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    store
+        .delivery_state(&row.id, "pending", "dispatching", None, 0)
+        .await
+        .unwrap();
+    store
+        .delivery_state(&row.id, "dispatching", "pending", None, 200)
+        .await
+        .unwrap();
+    store
+        .enqueue(1, 10, 11, "text", &Outbound::agent("Synthetic reply"))
+        .await
+        .unwrap();
+    assert!(
+        store.pending_deliveries(1, 100).await.unwrap().is_empty(),
+        "a real rate limit must not be bypassed"
+    );
+    store
+        .delivery_state(&row.id, "pending", "dispatching", None, 0)
+        .await
+        .unwrap();
+    store.defer_icon_lookup(&row.id, &icon, 200).await.unwrap();
+    let text = store.pending_deliveries(1, 100).await.unwrap();
+    assert_eq!(text.len(), 1);
+    assert_eq!(text[0].source_key, "text");
+    icon.appearance.as_mut().unwrap().emoji = "⚡️".into();
+    store.enqueue_appearance(&binding, &icon).await.unwrap();
+    assert_eq!(
+        store.pending_deliveries(1, 100).await.unwrap()[0].source_key,
+        "text",
+        "coalescing a new state must preserve the read backoff bypass"
+    );
+}

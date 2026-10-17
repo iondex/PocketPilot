@@ -11,12 +11,14 @@ use teloxide::{
     prelude::Requester,
     requests::Request,
     types::{
-        AllowedUpdate, ChatAction, ChatId, CustomEmojiId, InlineKeyboardButton,
-        InlineKeyboardMarkup, InputFile, LinkPreviewOptions, MessageId, ParseMode, ThreadId,
-        Update, UpdateKind,
+        AllowedUpdate, ChatAction, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile,
+        LinkPreviewOptions, MessageId, ParseMode, ThreadId, Update, UpdateKind,
     },
 };
-use tokio::sync::OnceCell;
+use tokio::sync::Mutex;
+
+#[path = "topic_icons.rs"]
+mod topic_icons;
 
 #[path = "command_menu.rs"]
 mod command_menu;
@@ -136,7 +138,7 @@ pub struct Button {
 pub struct Api {
     bot: Bot,
     timeout: Duration,
-    icons: Arc<OnceCell<Vec<(String, CustomEmojiId)>>>,
+    icons: Arc<Mutex<topic_icons::Cache>>,
 }
 
 impl Api {
@@ -410,8 +412,13 @@ impl Api {
         symbol: &str,
     ) -> Result<i32, Error> {
         let mut request = self.bot.create_forum_topic(ChatId(chat), title);
-        if let Some(icon) = self.icon(symbol).await {
-            request = request.icon_custom_emoji_id(icon);
+        match self.icon(symbol).await {
+            Ok(icon) => request = request.icon_custom_emoji_id(icon),
+            Err(Error::RetryAfter(seconds)) => return Err(Error::RetryAfter(seconds)),
+            Err(error) => tracing::warn!(
+                error_id = ::i18n::LocalizedError::message(&error).id,
+                "topic creation will use default icon; state icon remains unconfirmed"
+            ),
         }
         Ok(self.call(request).await?.thread_id.0.0)
     }
@@ -456,34 +463,6 @@ impl Api {
         Ok(())
     }
 
-    async fn icon(&self, symbol: &str) -> Option<CustomEmojiId> {
-        let icons = self
-            .icons
-            .get_or_init(|| async {
-                match tokio::time::timeout(
-                    Duration::from_secs(5),
-                    self.bot.get_forum_topic_icon_stickers().send(),
-                )
-                .await
-                {
-                    Ok(Ok(stickers)) => stickers
-                        .into_iter()
-                        .filter_map(|s| Some((s.emoji?, s.kind.custom_emoji_id()?.clone())))
-                        .collect(),
-                    _ => {
-                        tracing::warn!("topic icon catalog unavailable; keeping existing icons");
-                        vec![]
-                    }
-                }
-            })
-            .await;
-        let normalized = |s: &str| s.chars().filter(|c| *c != '\u{fe0f}').collect::<String>();
-        icons
-            .iter()
-            .find(|(emoji, _)| normalized(emoji) == normalized(symbol))
-            .map(|(_, id)| id.clone())
-    }
-
     pub async fn set_appearance(
         &self,
         chat: i64,
@@ -497,12 +476,29 @@ impl Api {
         if current_title != Some(appearance.title.as_str()) {
             request = request.name(appearance.title.clone());
         }
-        if let Some(icon) = self.icon(&appearance.emoji).await {
-            request = request.icon_custom_emoji_id(icon);
-        }
+        let icon = self.icon(&appearance.emoji).await?;
+        request = request.icon_custom_emoji_id(icon);
+        let started = tokio::time::Instant::now();
         match self.call(request).await {
-            Ok(_) | Err(Error::NotModified) => Ok(()),
-            Err(e) => Err(e),
+            Ok(_) | Err(Error::NotModified) => {
+                tracing::info!(
+                    topic_id = topic,
+                    emoji = appearance.emoji,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "Telegram topic icon confirmed"
+                );
+                Ok(())
+            }
+            Err(error) => {
+                tracing::warn!(
+                    topic_id = topic,
+                    emoji = appearance.emoji,
+                    error_id = ::i18n::LocalizedError::message(&error).id,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "Telegram topic icon update failed"
+                );
+                Err(error)
+            }
         }
     }
 
@@ -540,10 +536,30 @@ impl Api {
         &self,
         request: R,
     ) -> Result<<R::Payload as teloxide::requests::Payload>::Output, Error> {
-        tokio::time::timeout(self.timeout, request.send())
+        let started = tokio::time::Instant::now();
+        let response = tokio::time::timeout(self.timeout, request.send())
             .await
-            .map_err(|_| Error::Timeout)?
-            .map_err(safe_error)
+            .map_err(|_| Error::Timeout);
+        let (result, reason) = match response {
+            Ok(Ok(value)) => (Ok(value), "none"),
+            Ok(Err(error)) => {
+                let reason = crate::error_reason(&error);
+                (Err(safe_error(error)), reason)
+            }
+            Err(error) => (Err(error), "deadline"),
+        };
+        if let Err(error) = &result
+            && !matches!(error, Error::NotModified)
+        {
+            tracing::warn!(
+                method = <R::Payload as teloxide::requests::Payload>::NAME,
+                error_id = ::i18n::LocalizedError::message(error).id,
+                reason,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "Telegram API request failed"
+            );
+        }
+        result
     }
 }
 
@@ -619,6 +635,111 @@ pub(crate) async fn account(bot: &Bot, timeout: Duration) -> Result<Account, Err
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn icon_catalog_failure_is_not_cached_or_reported_as_applied() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path_regex};
+        let server = MockServer::start().await;
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let calls = attempts.clone();
+        Mock::given(path_regex("(?i).*/getforumtopiciconstickers$"))
+            .respond_with(move |_: &wiremock::Request| {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    ResponseTemplate::new(200).set_body_string(r#"{"ok":false,"error_code":500,"description":"Internal Server Error"}"#)
+                } else {
+                    ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":[{"file_id":"f","file_unique_id":"u","width":100,"height":100,"type":"custom_emoji","is_animated":false,"is_video":false,"emoji":"💬","custom_emoji_id":"idle"}]}"#)
+                }
+            }).mount(&server).await;
+        Mock::given(path_regex("(?i).*/editforumtopic$"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":true}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = Api::local_fixture("1:abcdefghijklmnopqrstuvwxyz".into(), &server.uri()).unwrap();
+        let appearance = crate::presentation::Appearance {
+            title: "Synthetic title".into(),
+            emoji: "💬".into(),
+        };
+        assert!(
+            api.set_appearance(10, 11, &appearance, Some(&appearance.title))
+                .await
+                .is_err(),
+            "an unavailable icon must not produce a success receipt"
+        );
+        assert!(matches!(
+            api.set_appearance(10, 11, &appearance, Some(&appearance.title))
+                .await,
+            Err(Error::IconUnavailable(_))
+        ));
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "catalog failure must back off"
+        );
+        api.icons.lock().await.retry_at = None;
+        api.set_appearance(10, 11, &appearance, Some(&appearance.title))
+            .await
+            .unwrap();
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        #[derive(Deserialize)]
+        struct Edit {
+            icon_custom_emoji_id: Option<String>,
+        }
+        let requests = server.received_requests().await.unwrap();
+        let edit = requests
+            .iter()
+            .find(|r| r.url.path().to_lowercase().ends_with("/editforumtopic"))
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Edit>(&edit.body)
+                .unwrap()
+                .icon_custom_emoji_id
+                .as_deref(),
+            Some("idle")
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_icons_and_catalog_rate_limits_never_send_an_empty_icon_edit() {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path_regex};
+        for response in [
+            r#"{"ok":true,"result":[{"file_id":"f","file_unique_id":"u","width":100,"height":100,"type":"custom_emoji","is_animated":false,"is_video":false,"emoji":"📁","custom_emoji_id":"folder"}]}"#,
+            r#"{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 20","parameters":{"retry_after":20}}"#,
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(path_regex("(?i).*/getforumtopiciconstickers$"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(response))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(path_regex("(?i).*/editforumtopic$"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":true}"#),
+                )
+                .expect(0)
+                .mount(&server)
+                .await;
+            let api =
+                Api::local_fixture("1:abcdefghijklmnopqrstuvwxyz".into(), &server.uri()).unwrap();
+            let appearance = crate::presentation::Appearance {
+                title: "Synthetic title".into(),
+                emoji: "💬".into(),
+            };
+            for _ in 0..2 {
+                let result = api
+                    .set_appearance(10, 11, &appearance, Some(&appearance.title))
+                    .await;
+                if response.contains("429") {
+                    assert!(matches!(result, Err(Error::RetryAfter(seconds)) if seconds >= 20));
+                } else {
+                    assert!(matches!(result, Err(Error::IconUnavailable(_))));
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn production_poll_budget_survives_a_response_slower_than_the_sdk_default() {
