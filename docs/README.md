@@ -14,9 +14,10 @@
 | 做 Telegram 交互 | [Telegram](design/telegram.md)、[Topics 行为边界](research/telegram-topics.md) | 菜单、topic、绑定、新建、状态与用户可见异常 |
 | 做 Discord 交互 | [Discord 原型](design/discord.md) | category/channel、owner slash、可选运行与原型限制 |
 | 测试 Discord 服务器 | [Discord 验收](testing-discord.md) | bot 安装、owner、只读/写入测试、展示与断连 |
-| 接入 Slack | [安装与测试](slack-setup.md)、[Slack 方案](design/slack.md)、[平台边界](research/slack-platform-boundaries.md) | Socket Mode 原型、频道/thread、权限、ACK 与去重 |
+| 接入 Slack | [安装与测试](slack-setup.md)、[Slack 方案](design/slack.md)、[平台边界](research/slack-platform-boundaries.md) | Socket Mode、owner 私聊/thread、权限、ACK 与去重 |
 | 接入本地 Desktop | [本地会话说明](design/local-desktop.md) | 当前限制、已确认入口与后续共享部署验证 |
 | 做配置和连接 | [连接与配置](design/connections-and-config.md) | 根目录单一 TOML、内联 token、CLI 私聊配对、SSH config、OTP、热更新、生命周期 |
+| 处理 Markdown 与 emoji | [两端格式核对](research/chat-formatting.md) | 平台语法、正文渲染、状态图标、mention 与当前实现差距 |
 | 做历史与投递 | [历史与消息](design/history-and-delivery.md) | 最后输入/最终输出、单条历史集合、合并、附件与限速 |
 | 查事实与限制 | [Codex 探索](research/codex-app-server.md)、[资料](research/sources.md) | 静态观察、来源、版本差异和未验证能力 |
 | 更换开发机 | [迁移指南](migration.md) | 私有配置、SQLite 账本、SSH、共享实例、切换与验收 |
@@ -32,7 +33,7 @@
 | `session` | 统一模型、接口、允许的动作、历史与投递规则 | 架构、历史与消息 |
 | `codex` | Codex wire/RPC、provider、只读观察、本地/SSH transport | 架构、连接与配置、研究 |
 | `telegram` | Bot API、poller、授权、菜单/topic、渲染和平台限速 | Telegram、历史与消息 |
-| `slack` | slack-morphism、Socket Mode、项目频道/session thread、持久收发和交互 | Slack 原型 |
+| `slack` | slack-morphism、Socket Mode、owner 私聊/session thread、持久收发和交互 | Slack 原型 |
 | `discord` | Serenity Bot API、owner slash gateway、category/channel 平台操作 | Discord 原型 |
 | `ssh` | SSH 有效配置、连接、TOTP/askpass | 连接与配置 |
 | `engine` | 共享执行、操作账本、配置快照与动态 catalog | 架构、连接与配置 |
