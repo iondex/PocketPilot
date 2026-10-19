@@ -1,13 +1,17 @@
 use super::{Result, Service, error};
 use crate::{
     Api, Command, Input,
-    ui::{self, Action, Screen, View},
+    ui::{self, Screen, View},
 };
 use engine::{
     navigation::{self, Navigator},
     reload::Snapshot,
 };
-use serenity::all::{CreateButton, CreateSelectMenuOption};
+
+#[path = "menu_model.rs"]
+mod model;
+
+use model::Menu;
 
 const PAGE_SIZE: usize = 20;
 
@@ -54,11 +58,10 @@ impl Service {
                 _ => return Err("discord.ui.expired".into()),
             }
         };
-        let screen = match view {
-            View::Workspaces { offset } => self.workspace_screen(&input, &snapshot, offset).await?,
+        let menu = match view {
+            View::Workspaces { offset } => self.workspace_screen(&input, &snapshot, offset),
             View::Projects { workspace, offset } => {
-                self.project_screen(&input, &snapshot, &workspace, offset)
-                    .await?
+                self.project_screen(&input, &snapshot, &workspace, offset)?
             }
             View::Sessions { project, cursors } => {
                 self.session_screen(&input, &snapshot, &project, cursors)
@@ -79,7 +82,7 @@ impl Service {
                 };
                 let text = self.open(api, &input, &snapshot, &project, &thread).await?;
                 // The only raw platform markup in this response is the generated numeric channel link.
-                let mut screen = Screen::new(text);
+                let mut menu = Menu::new(text, "");
                 let b = self
                     .store
                     .discord_bindings(input.bot, input.guild)
@@ -92,182 +95,105 @@ impl Service {
                     .channel
                     .parse::<u64>()
                     .map_err(|_| i18n::Message::new("error.discord.backend"))?;
-                let open = CreateButton::new_link(format!(
-                    "https://discord.com/channels/{}/{channel}",
-                    input.guild
-                ))
-                .label(i18n::text(&self.locale(&input), "discord.ui.channel"));
-                let back = self
-                    .menu_button(
-                        &input,
-                        &snapshot,
-                        "discord.ui.back_sessions",
-                        View::Sessions { project, cursors },
-                    )
-                    .await?;
-                screen.buttons(vec![open, back]);
-                screen
+                menu.link(
+                    "discord.ui.channel",
+                    format!("https://discord.com/channels/{}/{channel}", input.guild),
+                );
+                menu.button(
+                    "discord.ui.back_sessions",
+                    View::Sessions { project, cursors },
+                );
+                menu
             }
         };
+        let screen = menu
+            .bind(&self.store, &input, &snapshot.hash, &self.locale(&input))
+            .await?;
         self.fresh(api, &input, &snapshot, false).await?;
         Ok(screen)
     }
 
-    async fn menu_button(
-        &self,
-        input: &Input,
-        snapshot: &Snapshot,
-        id: &str,
-        view: View,
-    ) -> Result<CreateButton> {
-        let token = self
-            .store
-            .ui_action(input, &snapshot.hash, Action::Navigate(view))
-            .await
-            .map_err(error)?;
-        Ok(ui::button(&token, &i18n::text(&self.locale(input), id)))
-    }
-
-    async fn menu_select(
-        &self,
-        input: &Input,
-        snapshot: &Snapshot,
-        screen: &mut Screen,
-        id: &str,
-        choices: Vec<View>,
-        options: Vec<CreateSelectMenuOption>,
-    ) -> Result<()> {
-        if !choices.is_empty() {
-            let token = self
-                .store
-                .ui_action(input, &snapshot.hash, Action::Select(choices))
-                .await
-                .map_err(error)?;
-            screen.select(&token, &i18n::text(&self.locale(input), id), options);
-        }
-        Ok(())
-    }
-
-    async fn workspace_screen(
-        &self,
-        input: &Input,
-        snapshot: &Snapshot,
-        offset: usize,
-    ) -> Result<Screen> {
+    fn workspace_screen(&self, input: &Input, snapshot: &Snapshot, offset: usize) -> Menu {
         let locale = self.locale(input);
         let page = navigation::page(
             Navigator::new(&snapshot.config).workspaces(),
             offset,
             PAGE_SIZE,
         );
-        let mut screen = Screen::new(format!(
-            "**🌐 {}**\n{}",
-            i18n::text(&locale, "discord.ui.workspaces"),
-            i18n::text(&locale, "discord.ui.workspace_hint")
-        ));
-        let mut options = Vec::new();
-        let mut choices = Vec::new();
-        for (index, view) in page.items.into_iter().enumerate() {
-            options.push(ui::option(
+        let mut menu = Menu::new(
+            format!(
+                "**🌐 {}**\n{}",
+                i18n::text(&locale, "discord.ui.workspaces"),
+                i18n::text(&locale, "discord.ui.workspace_hint")
+            ),
+            "discord.ui.choose_workspace",
+        );
+        for view in page.items {
+            menu.choice(
                 &view.host.name,
                 &i18n::t!(
                     "discord.ui.project_count",
                     locale = &locale,
                     count = view.projects.len()
                 ),
-                index,
-            ));
-            choices.push(View::Projects {
-                workspace: view.host.id.clone(),
-                offset: 0,
-            });
-        }
-        if choices.is_empty() {
-            screen.text.push_str(&format!(
-                "\n\n{}",
-                i18n::text(&locale, "discord.ui.no_workspaces")
-            ));
-        }
-        self.menu_select(
-            input,
-            snapshot,
-            &mut screen,
-            "discord.ui.choose_workspace",
-            choices,
-            options,
-        )
-        .await?;
-        let mut buttons = Vec::new();
-        if let Some(offset) = page.previous {
-            buttons.push(
-                self.menu_button(
-                    input,
-                    snapshot,
-                    "discord.ui.previous",
-                    View::Workspaces { offset },
-                )
-                .await?,
+                View::Projects {
+                    workspace: view.host.id.clone(),
+                    offset: 0,
+                },
+                None,
             );
+        }
+        menu.empty_hint(&locale, "discord.ui.no_workspaces");
+        if let Some(offset) = page.previous {
+            menu.button("discord.ui.previous", View::Workspaces { offset });
         }
         if let Some(offset) = page.next {
-            buttons.push(
-                self.menu_button(
-                    input,
-                    snapshot,
-                    "discord.ui.next",
-                    View::Workspaces { offset },
-                )
-                .await?,
-            );
+            menu.button("discord.ui.next", View::Workspaces { offset });
         }
-        buttons.push(
-            self.menu_button(
-                input,
-                snapshot,
-                "discord.ui.refresh",
-                View::Workspaces {
-                    offset: page.offset,
-                },
-            )
-            .await?,
+        menu.button(
+            "discord.ui.refresh",
+            View::Workspaces {
+                offset: page.offset,
+            },
         );
-        screen.buttons(buttons);
-        Ok(screen)
+        menu
     }
 
-    async fn project_screen(
+    fn project_screen(
         &self,
         input: &Input,
         snapshot: &Snapshot,
         workspace: &str,
         offset: usize,
-    ) -> Result<Screen> {
+    ) -> Result<Menu> {
         let locale = self.locale(input);
         let view = Navigator::new(&snapshot.config)
             .workspace(workspace)
             .map_err(error)?;
         let page = navigation::page(view.projects, offset, PAGE_SIZE);
-        let mut screen = Screen::new(format!(
-            "**📁 {}**\n{}",
-            i18n::text(&locale, "discord.ui.projects"),
-            ui::quoted(&view.host.name)
-        ));
-        let mut options = Vec::new();
-        let mut choices = Vec::new();
-        for (index, project) in page.items.into_iter().enumerate() {
-            options.push(ui::option(&project.name, &directory(&project.cwd), index));
-            choices.push(View::Sessions {
-                project: project.id.clone(),
-                cursors: vec![None],
-            });
+        let mut menu = Menu::new(
+            format!(
+                "**📁 {}**\n{}",
+                i18n::text(&locale, "discord.ui.projects"),
+                ui::quoted(&view.host.name)
+            ),
+            "discord.ui.choose_project",
+        );
+        for project in page.items {
+            menu.choice(
+                &project.name,
+                &directory(&project.cwd),
+                View::Sessions {
+                    project: project.id.clone(),
+                    cursors: vec![None],
+                },
+                None,
+            );
         }
-        if choices.is_empty() {
-            screen.text.push_str(&format!(
-                "\n\n{}",
-                i18n::text(&locale, "discord.projects.empty")
-            ));
+        if page.total == 0 {
+            menu.empty_hint(&locale, "discord.projects.empty");
         } else {
-            screen.text.push_str(&format!(
+            menu.text.push_str(&format!(
                 "\n{}",
                 i18n::t!(
                     "discord.ui.range",
@@ -278,66 +204,33 @@ impl Service {
                 )
             ));
         }
-        self.menu_select(
-            input,
-            snapshot,
-            &mut screen,
-            "discord.ui.choose_project",
-            choices,
-            options,
-        )
-        .await?;
-        let mut buttons = vec![
-            self.menu_button(
-                input,
-                snapshot,
-                "discord.ui.back_workspaces",
-                View::Workspaces { offset: 0 },
-            )
-            .await?,
-        ];
+        menu.button("discord.ui.back_workspaces", View::Workspaces { offset: 0 });
         if let Some(offset) = page.previous {
-            buttons.push(
-                self.menu_button(
-                    input,
-                    snapshot,
-                    "discord.ui.previous",
-                    View::Projects {
-                        workspace: workspace.into(),
-                        offset,
-                    },
-                )
-                .await?,
+            menu.button(
+                "discord.ui.previous",
+                View::Projects {
+                    workspace: workspace.into(),
+                    offset,
+                },
             );
         }
         if let Some(offset) = page.next {
-            buttons.push(
-                self.menu_button(
-                    input,
-                    snapshot,
-                    "discord.ui.next",
-                    View::Projects {
-                        workspace: workspace.into(),
-                        offset,
-                    },
-                )
-                .await?,
-            );
-        }
-        buttons.push(
-            self.menu_button(
-                input,
-                snapshot,
-                "discord.ui.refresh",
+            menu.button(
+                "discord.ui.next",
                 View::Projects {
                     workspace: workspace.into(),
-                    offset: page.offset,
+                    offset,
                 },
-            )
-            .await?,
+            );
+        }
+        menu.button(
+            "discord.ui.refresh",
+            View::Projects {
+                workspace: workspace.into(),
+                offset: page.offset,
+            },
         );
-        screen.buttons(buttons);
-        Ok(screen)
+        Ok(menu)
     }
 
     async fn session_screen(
@@ -346,7 +239,7 @@ impl Service {
         snapshot: &Snapshot,
         project: &str,
         mut cursors: Vec<Option<String>>,
-    ) -> Result<Screen> {
+    ) -> Result<Menu> {
         let locale = self.locale(input);
         let selected = Navigator::new(&snapshot.config)
             .parent(project)
@@ -369,15 +262,16 @@ impl Service {
         )
         .await
         .map_err(error)?;
-        let mut screen = Screen::new(format!(
-            "**💬 {}**\n{} › {}\n{}",
-            i18n::text(&locale, "discord.ui.sessions"),
-            ui::quoted(&selected.host.name),
-            ui::quoted(&ws.name),
-            i18n::text(&locale, "discord.ui.session_hint")
-        ));
-        let mut options = Vec::new();
-        let mut choices = Vec::new();
+        let mut menu = Menu::new(
+            format!(
+                "**💬 {}**\n{} › {}\n{}",
+                i18n::text(&locale, "discord.ui.sessions"),
+                ui::quoted(&selected.host.name),
+                ui::quoted(&ws.name),
+                i18n::text(&locale, "discord.ui.session_hint")
+            ),
+            "discord.ui.choose_session",
+        );
         let labels = page
             .data
             .iter()
@@ -404,30 +298,18 @@ impl Service {
             } else {
                 labels[index].clone()
             };
-            options.push(ui::option(&title, &detail, index).emoji(
-                serenity::all::ReactionType::Unicode(ui::status_icon(&session.status).into()),
-            ));
-            choices.push(View::Open {
-                project: ws.id.clone(),
-                thread: session.reference.thread,
-                cursors: cursors.clone(),
-            });
+            menu.choice(
+                &title,
+                &detail,
+                View::Open {
+                    project: ws.id.clone(),
+                    thread: session.reference.thread,
+                    cursors: cursors.clone(),
+                },
+                Some(ui::status_icon(&session.status)),
+            );
         }
-        if choices.is_empty() {
-            screen.text.push_str(&format!(
-                "\n\n{}",
-                i18n::text(&locale, "discord.sessions.empty")
-            ));
-        }
-        self.menu_select(
-            input,
-            snapshot,
-            &mut screen,
-            "discord.ui.choose_session",
-            choices,
-            options,
-        )
-        .await?;
+        menu.empty_hint(&locale, "discord.sessions.empty");
         let project_offset = Navigator::new(&snapshot.config)
             .workspace(&selected.host.id)
             .map_err(error)?
@@ -437,32 +319,22 @@ impl Service {
             .unwrap_or(0)
             / PAGE_SIZE
             * PAGE_SIZE;
-        let mut buttons = vec![
-            self.menu_button(
-                input,
-                snapshot,
-                "discord.ui.back_projects",
-                View::Projects {
-                    workspace: selected.host.id.clone(),
-                    offset: project_offset,
-                },
-            )
-            .await?,
-        ];
+        menu.button(
+            "discord.ui.back_projects",
+            View::Projects {
+                workspace: selected.host.id.clone(),
+                offset: project_offset,
+            },
+        );
         if cursors.len() > 1 {
             let mut previous = cursors.clone();
             previous.pop();
-            buttons.push(
-                self.menu_button(
-                    input,
-                    snapshot,
-                    "discord.ui.previous",
-                    View::Sessions {
-                        project: project.into(),
-                        cursors: previous,
-                    },
-                )
-                .await?,
+            menu.button(
+                "discord.ui.previous",
+                View::Sessions {
+                    project: project.into(),
+                    cursors: previous,
+                },
             );
         }
         if let Some(cursor) = page.next_cursor
@@ -470,33 +342,22 @@ impl Service {
         {
             let mut next = cursors.clone();
             next.push(Some(cursor));
-            buttons.push(
-                self.menu_button(
-                    input,
-                    snapshot,
-                    "discord.ui.next",
-                    View::Sessions {
-                        project: project.into(),
-                        cursors: next,
-                    },
-                )
-                .await?,
-            );
-        }
-        buttons.push(
-            self.menu_button(
-                input,
-                snapshot,
-                "discord.ui.refresh",
+            menu.button(
+                "discord.ui.next",
                 View::Sessions {
                     project: project.into(),
-                    cursors: vec![None],
+                    cursors: next,
                 },
-            )
-            .await?,
+            );
+        }
+        menu.button(
+            "discord.ui.refresh",
+            View::Sessions {
+                project: project.into(),
+                cursors: vec![None],
+            },
         );
-        screen.buttons(buttons);
-        Ok(screen)
+        Ok(menu)
     }
 }
 
