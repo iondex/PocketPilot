@@ -1,6 +1,6 @@
 # MVP 实施计划
 
-状态：Telegram MVP 的消息、控制、持久化、OTP helper 和热更新已落地；完整验收仍按目标部署进行，缺少共享入口的 Desktop 活跃实例无法直接接入。Discord 可选原型已加入，见 [原型说明](../design/discord.md)。
+状态：Telegram MVP 的消息、控制、持久化、OTP helper 和热更新已落地；完整验收仍按目标部署进行，缺少共享入口的 Desktop 活跃实例无法直接接入。Discord 和 Slack 可选原型已加入，见 [Discord](../design/discord.md) 与 [Slack 安装](../slack-setup.md)。真实平台继续单独验收。
 
 下文 W00–W17 保留为设计工作包；描述中的目标接口不全部与当前源码名称一一对应。当前行为与边界以 [验证记录](../research/implementation-checks.md)、[配置实现](../design/connections-and-config.md) 和源码为准。
 
@@ -44,7 +44,7 @@ JSON-RPC 不直接套标准 jsonrpsee server/client：Codex wire 省略 jsonrpc 
 
 ## 3. crate 与文件边界
 
-当前采用八个简短本地 package：i18n、ssh、session、codex、engine、telegram、discord、app，全部 publish=false。app 的 binary 仍叫 pocketpilot。确切职责和依赖方向见 [架构](../design/architecture.md)。
+当前采用九个简短本地 package：i18n、ssh、session、codex、engine、telegram、discord、slack、app，全部 publish=false。app 的 binary 仍叫 pocketpilot。确切职责和依赖方向见 [架构](../design/architecture.md)。
 
 ```text
 crates/
@@ -55,12 +55,13 @@ crates/
   engine/src/     配置快照、共享连接、操作账本、catalog、integrations
   telegram/src/   API、配对、管理、收发、观察及平台 SQL
   discord/src/    可选平台 API、gateway、收发、观察及 SQL
+  slack/src/      可选 Socket Mode、频道/thread、持久收发及 SQL
   app/src/        根配置、CLI、装配、inventory、tracing
 schema.sql        原型数据库定义；稳定 0.1 前直接修改
 crates/codex/build.rs  官方 schema/DTO 只生成到 Cargo OUT_DIR
 ```
 
-源码不使用多层文件目录。provider/workspace 从根配置移入 SQLite catalog，bin/socket 自动发现，现有 ID 和绑定继续有效。SSH 单独成库并保持 native OpenSSH 后端；接入更多 provider 不要求复制认证代码。日常 CLI 保留 serve/doctor/hosts/pair/providers/workspaces，删除测试专用会话探针和重复诊断命令。
+源码不使用多层文件目录。provider/workspace 从根配置移入 SQLite catalog，bin/socket 自动发现，现有 ID 和绑定继续有效。SSH 单独成库并保持 native OpenSSH 后端；接入更多 provider 不要求复制认证代码。日常 CLI 保留 serve/doctor/hosts/pair/providers/workspaces，离线配置检查并入 doctor，删除测试专用会话探针和重复诊断命令。
 
 ## 4. 顺序与阶段门禁
 
@@ -248,7 +249,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 依赖：W15。归属：app cli、service 模板、CI、运行手册。
 
-- 保留 serve/doctor/hosts/pair/providers/workspaces 运维入口；默认输出不含正文或秘密，不提供 raw RPC/stop/restart agent。
+- 保留 serve/doctor/hosts/pair/providers/workspaces 运维入口；doctor 默认离线检查配置，联网探测使用显式选项；默认输出不含正文或秘密，不提供 raw RPC/stop/restart agent。
 - Linux x86_64/macOS arm64 build；桥接器服务与 agent daemon 独立，配置路径显式、运行目录不决定 secret 来源。
 - 单写者/poller 锁、日志滚动、队列/状态年龄诊断、SQLite 一致性备份与受控升级说明。
 - 产物：可安装产物、运行步骤、健康/能力分离的诊断。

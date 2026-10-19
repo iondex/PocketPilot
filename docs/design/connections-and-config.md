@@ -43,7 +43,7 @@ notify 监听根配置的父目录，处理原子替换；debounce 和周期 res
 | 显示名、Telegram 合并与速率 | 新操作采用当前配置；持久批次已有固定 flush 截止时间 |
 | 密码/seed/认证策略 | 现有连接保持；后续认证读取相同已验证配置 hash |
 | 自动检测到其他 socket / 有效远程用户变化 | 原 provider ID 拒绝重定向，须分配新 ID 并重新绑定 |
-| Telegram token/default_locale、Discord token/guild、data_dir | 整份候选拒绝，需重启桥接后应用 |
+| Telegram token/default_locale、Discord token/guild、Slack token/app/team/user/channel 范围、data_dir | 整份候选拒绝，需重启桥接后应用 |
 | logging | 启动时装配，需重启桥接应用 |
 | OpenSSH config | 发现时读取，重连时重新解析；不监控全部 Include 文件并主动断开有效连接 |
 

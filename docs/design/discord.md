@@ -1,6 +1,6 @@
 # Discord 原型
 
-此版本是可运行的可选原型，尚未连接真实 guild。它复用 Codex provider、连接缓存、每会话锁和操作账本；Telegram 和 Discord 同时控制同一会话时，在同一进程内共享锁，原生服务端仍负责跨 Desktop/CLI 的并发条件检查。
+此版本是可运行的可选原型，尚未完成真实 guild 验收。它复用 Codex provider、连接缓存、每会话锁和操作账本；Telegram 和 Discord 同时控制同一会话时，在同一进程内共享锁，原生服务端仍负责跨 Desktop/CLI 的并发条件检查。已有 bot 和测试服务器时，按 [Discord 验收](../testing-discord.md) 从只读到写入逐步测试。
 
 ## 配置和启动
 
@@ -9,8 +9,8 @@
 在根 pocketpilot.toml 中填写 [discord].token 和 guild_id，token 不进入 .env、日志或示例。然后运行：
 
 ```sh
-cargo build -p app --features discord --locked
-./target/debug/pocketpilot serve
+cargo build --release -p app --features discord --locked
+./target/release/pocketpilot serve
 ```
 
 可以只配 Discord，也可以与 Telegram 同进程启动。未启用编译 feature 却填写 Discord 配置会明确报错；没有两个并行服务争用同一个账本的部署方式。host/workspace 沿用同一根配置，平台 token/guild 和 data_dir 改动需要重启桥接。

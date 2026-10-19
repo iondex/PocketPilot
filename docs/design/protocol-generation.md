@@ -2,16 +2,16 @@
 
 全部生成逻辑在 crates/codex/build.rs。构建时调用所选 Codex 的 `app-server generate-json-schema`，筛选只读接口与执行写接口和仅补齐空标题的元数据接口的传递引用，再通过 typify 生成 Rust DTO。provider 使用类型化字段，不直接操作 serde_json::Value。
 
-官方 schema、协议投影、版本记录和 protocol.rs 都写入 Cargo OUT_DIR，通常位于 target/debug/build/codex-*/out/。仓库不提交生成的 schema、代码或版本快照，不保留 Python 生成脚本。
+官方 schema、协议投影、版本记录和 protocol.rs 都写入 Cargo OUT_DIR，通常位于 target/release/build/codex-*/out/。仓库不提交生成的 schema、代码或版本快照，不保留 Python 生成脚本。
 
 ## 选择构建工具
 
-默认使用 PATH 中的 codex。安装当前版本后运行 cargo build/test 即会自动导出，不需手动执行脚本。CI 显式安装 @openai/codex 0.162.1 作为当前验证的构建输入。
+默认使用 PATH 中的 codex。安装当前版本后运行 `cargo build --release` 或 `cargo test --release` 即会自动导出，不需手动执行脚本。CI 显式安装 @openai/codex 0.162.1 作为当前验证的构建输入。
 
 如需使用桌面内置或其他指定 binary，可通过 **仅构建时** 的 CODEX_SCHEMA_BIN 选择；它不读取 .env，也不覆盖运行时 TOML 或远程连接配置：
 
 ```sh
-CODEX_SCHEMA_BIN=/absolute/path/to/codex cargo build --locked
+CODEX_SCHEMA_BIN=/absolute/path/to/codex cargo build --release --locked
 ```
 
 Cargo 监听 build.rs、PATH、CODEX_SCHEMA_BIN 和实际 executable 的变化。替换工具后必要时执行 cargo clean -p codex，确保重新生成。构建记录实际 --version 到 OUT_DIR/schema-version.txt；Rust 侧可通过 codex::protocol::SCHEMA_CLI_VERSION 查看。

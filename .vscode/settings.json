@@ -1,0 +1,24 @@
+{
+  "rust-analyzer.cargo.buildScripts.overrideCommand": [
+    "cargo",
+    "check",
+    "--release",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--message-format=json",
+    "--locked",
+    "--keep-going"
+  ],
+  "rust-analyzer.check.overrideCommand": [
+    "cargo",
+    "check",
+    "--release",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--message-format=json",
+    "--locked",
+    "--keep-going"
+  ]
+}

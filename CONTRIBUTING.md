@@ -4,10 +4,12 @@
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
-cargo test --workspace --all-features --locked
-cargo clippy -p app --no-default-features --locked -- -D warnings
+cargo clippy --release --workspace --all-features --all-targets --locked -- -D warnings
+cargo test --release --workspace --all-features --locked
+cargo clippy --release -p app --no-default-features --locked -- -D warnings
 ```
+
+构建、检查、测试与 Clippy 统一使用 release profile；可运行 `make check` 完成上述验证。需要保留的可执行文件先通过 `make package` 放入 Git 忽略的 `dist/`，每轮验证/打包完成后运行 `cargo clean` 清理 `target/`；`make release FEATURES=discord,slack` 顺序执行检查、全平台打包和清理。构建期间不并行清理。
 
 - crate 使用简短职责名，binary 名为 pocketpilot。源码物理目录平铺为 crates/*/src/*.rs；按职责增加文件，避免多层文件目录。
 - 每个类型、函数、方法、impl、trait、常量和模块定义之间留一个空行，文档注释和属性紧贴所属定义。rustfmt 不会主动补齐全部空行，编辑时须保留。

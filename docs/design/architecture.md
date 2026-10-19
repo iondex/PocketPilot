@@ -1,10 +1,10 @@
 # 架构、Rust 接口与数据设计
 
-状态：架构契约与接口设计。当前已实现 Telegram 服务和可选 Discord 原型；下方接口示例表达职责，部分名称/高级能力仍为设计目标。实际文件与验证边界见实施计划和验证记录，不能将示例当作已导出的 Rust API。
+状态：架构契约与接口设计。当前已实现 Telegram 服务和可选 Discord / Slack 原型；下方接口示例表达职责，部分名称/高级能力仍为设计目标。实际文件与验证边界见实施计划和验证记录，不能将示例当作已导出的 Rust API。
 
 ## 当前源码边界
 
-八个 crate 均为 publish=false，源码物理目录保持 src/ 下单层文件。
+九个 crate 均为 publish=false，源码物理目录保持 src/ 下单层文件。
 
 | crate | 所有权 |
 | --- | --- |
@@ -15,9 +15,10 @@
 | engine | 全局服务锁、操作账本、共享连接/会话锁、配置快照、catalog 与 Integration trait |
 | telegram | 全部 Telegram API、配对、管理导航、topic、SQL、收发与观察 |
 | discord | 全部 Discord API、owner gateway、category/channel、SQL、收发与观察；可选 runtime feature |
+| slack | slack-morphism、Socket Mode、频道/thread、SQL、持久收发与观察；可选 runtime feature |
 | app | 根配置组合、日常 CLI、tracing、catalog 后台刷新、Integration 装配与退出 |
 
-依赖方向：各 crate → i18n；app → telegram/discord/engine；平台 → engine → codex → ssh/session。engine 不引用任何平台，平台不依赖 app。各平台持有自己的 Store 包装，共用 engine 的连接池与服务锁；平台 SQL 不放回 app。这是一份应用内边界，不是数据库权限隔离。
+依赖方向：各 crate → i18n；app → telegram/discord/slack/engine；平台 → engine → codex → ssh/session。engine 不引用任何平台，平台不依赖 app。各平台持有自己的 Store 包装，共用 engine 的连接池与服务锁；平台 SQL 不放回 app。这是一份应用内边界，不是数据库权限隔离。
 
 Telegram runtime 只组装任务；commands/input/routing/binding/navigation/new_session/topics/history_view/management/observation/delivery/inbox 分担职责。持久收发进一步分为 inbox_store/outbox/ledger。Discord 使用对应平铺模块。engine::operations 统一处理已获授权写操作的回执与 OutcomeUnknown，平台分别保留授权/时效/绑定检查与 dispatch 原子边界。
 
@@ -32,7 +33,7 @@ PocketPilot 是会话的附加客户端和聊天平台桥接器。Codex 继续�
 边界独立于三个变化方向：
 
 - AgentProvider：Codex/未来 Claude 的会话行为。
-- ChatPlatform：Telegram/未来 Lark、Discord 的用户交互和消息投递。
+- ChatPlatform：Telegram、Discord、Slack/未来 Lark 的用户交互和消息投递。
 - RpcTransport：本地 proxy、SSH proxy、WebSocket 的连接和 framing。
 
 运行时采用单进程 Tokio 服务、SQLite 持久化和 有界任务并发与每会话串行锁。MVP 不需要 Redis、Kafka、HTTP 管理后台、动态插件 ABI 或分布式调度。
@@ -41,6 +42,7 @@ PocketPilot 是会话的附加客户端和聊天平台桥接器。Codex 继续�
 flowchart TB
   T[Telegram adapter] --> I[持久化 Inbox + 授权]
   D[可选 Discord adapter] --> I
+  S[可选 Slack adapter] --> I
   I --> C[应用服务 / Command router]
   C --> A[每 thread 串行 SessionActor]
   A --> P[AgentProvider]
@@ -68,7 +70,7 @@ flowchart TB
 | SessionRef | `instance_id + provider_thread_id`；不以新协议 sessionId 作主键 |
 | TurnRef | session + provider turn ID；用于 steer 前置条件 |
 | ConversationBinding | 某平台的容器地址到一个 SessionRef 的绑定 |
-| PlatformAddress | Telegram `(chat_id, message_thread_id)`；Discord `(guild_id, channel_id)` |
+| PlatformAddress | Telegram `(chat_id, message_thread_id)`；Discord `(guild_id, channel_id)`；Slack `(app_id, team_id, channel_id, root_ts)` |
 | Observation | 服务端状态 + active turn + 连接 epoch + 观察时间 + freshness |
 | TextItem | session + turn + item ID + role/phase + 可见文本 + 完成标记 |
 | Operation | 用户一次操作的持久化 ID、输入地址、执行模式、结果与不确定性 |
@@ -175,7 +177,7 @@ pub trait Integration: Send + Sync {
 }
 ```
 
-Context 提供共享 ConfigFile、Store 和 Connections；Telegram 与 Discord 均实际实现此接口，由 app::runtime 同一条装配路径启动。run 拥有平台收发任务，stop 只退出桥接工作。平台不能把 stop 翻译为 agent 生命周期操作。
+Context 提供共享 ConfigFile、Store 和 Connections；Telegram、Discord 和 Slack 均实际实现此接口，由 app::runtime 同一条装配路径启动。run 拥有平台收发任务，stop 只退出桥接工作。平台不能把 stop 翻译为 agent 生命周期操作。
 
 按钮菜单/topic 和 slash/category/channel 的交互差异保留在平台内部；统一的是启动、退出、状态依赖、会话锁、AgentProvider 与操作结果语义。没有为了统一外观强行设计通用整数地址或按钮 API。未来 Lark 实现同一 Integration，Claude shim 实现 AgentProvider。
 

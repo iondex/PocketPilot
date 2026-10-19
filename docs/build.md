@@ -1,6 +1,6 @@
 # 构建与发布体积
 
-默认发布目标为 Telegram + Codex，不链接可选 Discord runtime：
+所有构建、检查、测试和 Clippy 统一使用 release profile。默认发布目标为 Telegram + Codex，不链接可选 Discord/Slack runtime：
 
 ```sh
 cargo build -p app --release --no-default-features --locked
@@ -25,3 +25,15 @@ release profile 使用 `opt-level=z`、thin LTO、单个 codegen unit 和符号�
 构建依赖只负责生成，不等于运行时成本。删除未用依赖有助于维护，但体积优化应以链接证据为准，不通过移除安全连接、日志、持久化或未知结果保护来压缩。
 
 检查命令见 [开发约定](../CONTRIBUTING.md)，验证范围见 [实现概览](research/implementation-checks.md)。
+
+## 日常构建与清理
+
+```sh
+make check
+make package FEATURES=discord,slack
+make clean
+```
+
+`make package` 构建并将 binary、SHA-256 和构建说明保存到 Git 忽略的 `dist/`；`make clean` 使用 `cargo clean` 清理 `target/`，保留已打包文件。默认 `make` 只构建 release；仓库的 VS Code Rust Analyzer 工作区设置也将构建脚本与编辑器检查指向 release，其他编辑器应使用同样参数。使用 `make release FEATURES=discord,slack` 可顺序完成检查、打包和清理。只需要 Telegram 时省略 FEATURES。
+
+每轮验证和打包完成后清理构建目录，避免长期积累。本任务生成的 `/tmp` 调研副本、临时输出和验证日志在对应任务结束、结果汇总后一起清理。检查与编译期间保持 `target/` 独占，不与清理并行。清理后的下次构建会重新生成依赖和协议；运行中的部署应引用 `dist/pocketpilot`，不要依赖将被清理的 target 路径。其他开发机所需的配置和账本见 [迁移指南](migration.md)。

@@ -11,7 +11,8 @@
 | 状态与持久化 | 私聊配对、不可换绑容器、输入操作账本、投递状态、未知结果保留、配置范围复核 |
 | 动态目录 | 执行实例自动发现、工作区登记和发现、完整分页、活动时间排序及稳定会话分页 |
 | Telegram | 私聊 topics、管理导航、空会话创建、状态 icon、typing、历史与错误、来源去重、Markdown 和附件展示 |
-| 通用平台边界 | integration 接口、共享连接与操作串行；可选 Discord 原型；后续 provider 和平台保留扩展边界 |
+| Slack 原型 | slack-morphism、Socket Mode、持久 ACK、菜单/命名空会话、thread 输入、根卡片、历史导出与恢复草稿；真实 team 待验收 |
+| 通用平台边界 | integration 接口、共享连接与操作串行；可选 Discord/Slack 原型；后续 provider 和平台保留扩展边界 |
 | 运行支持 | 根目录单一配置、tracing、日志轮转、显式语言选择及类型化错误 |
 
 ## 证据分类
@@ -44,6 +45,6 @@
 - 审批、结构化问答、跨客户端竞争、慢网络、磁盘故障和长时间离线的全部组合尚未完成真实验收。
 - 原生未持久化且桥接未收到的临时消息或错误通知无法恢复；不承诺完整的 delta 连续性。
 - Telegram 无法列出任意 topics，删除同步受平台能力限制；消息投递未知时不承诺 exactly-once。
-- Discord 保持原型范围；Claude 与 Lark 是规划，不能作为现有能力宣传。
+- Discord/Slack 保持原型范围；Claude 与 Lark 是规划，不能作为现有能力宣传。
 
 具体条件以 [验收审计](acceptance-audit.md) 和 [接入限制](../design/local-desktop.md) 为准。构建支持与体积评估方法见 [构建说明](../build.md)。

@@ -20,7 +20,9 @@ cargo build -p app --release --no-default-features --locked
 ./target/release/pocketpilot serve
 ```
 
-诊断成功只证明连接可用，不自动授予控制权限。新 provider 默认只读；验证同一 active turn、多客户端输入和断线后继续运行后，再用 CLI 为该实例确认控制权限。诊断输出可能包含本地部署信息，分享前应脱敏。
+`doctor` 默认离线检查根配置和 catalog，并在 `configuration` 中报告平台配置及 Discord 编译功能；`--credentials` 额外检查已配置的凭据，Telegram 检查 token 格式，Discord 的非空 token 与非零 guild ID 由配置加载检查。离线检查不能证明 token 有效或权限足够；`--connect` 才连接 agent，`--telegram` 才探测 Telegram。Discord 暂无专项联网诊断，真实测试见 [Discord 验收](testing-discord.md)。
+
+诊断成功只证明对应探测可用，不自动授予控制权限。新 provider 默认只读；验证同一 active turn、多客户端输入和断线后继续运行后，再用 CLI 为该实例确认控制权限。诊断输出可能包含本地部署信息，分享前应脱敏。
 
 SSH 使用有效 OpenSSH config，支持 ProxyJump、ProxyCommand、agent 和 known_hosts。远端非交互 shell 的 stdout 应保持安静。TOTP 按验证码挑战文案匹配，可兼容通用账号上下文前缀，规则不要硬编码用户名或 IP；未知挑战不回答。配置与认证边界见 [连接与配置](design/connections-and-config.md)。
 
@@ -78,3 +80,5 @@ SSH 使用有效 OpenSSH config，支持 ProxyJump、ProxyCommand、agent 和 kn
 反馈只需说明操作步骤、现象和大致时间；截图、日志和诊断结果先移除账号、地址、主机别名、工作区名称、消息正文和认证信息。不要附带完整私有配置。
 
 菜单编辑验收：连续选择主机、工作区和会话时应编辑同一菜单消息；已删除菜单的明确编辑失败可重新发送，未知编辑结果不补发。/start 始终提供新入口，便于清空本地聊天记录后恢复可见菜单。快速点击旧按钮不得使过时页面覆盖当前页面或重复创建/删除。
+
+Slack 自建 app、manifest、token 与专用频道验收见 [Slack 安装与测试](slack-setup.md)。`doctor --credentials` 检查 xapp/xoxb 前缀；真实 token、权限和 Socket Mode 连接由启动与专用测试确认。

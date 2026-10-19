@@ -1,6 +1,6 @@
 # PocketPilot
 
-Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 topic 管理本地/SSH app-server 会话。提供可选 Discord 原型；Lark 和 Claude shim 保留后续规划。
+Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 topic 管理本地/SSH app-server 会话。提供可选 Discord 和 Slack 原型；Lark 和 Claude shim 保留后续规划。
 
 **当前主要支持 Telegram + Codex，完整部署验收仍需按目标环境执行。** 包括 CLI 配对、工作区与会话菜单、topic 绑定、历史集合、创建/续轮/steer、topic emoji、持久收发与消息合并、OpenSSH/TOTP 和根配置热更新。使用步骤与验证边界见 [测试入口](docs/testing.md) 和 [验证记录](docs/research/implementation-checks.md)。
 
@@ -11,10 +11,10 @@ Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 
 普通设置和凭据都在根目录 pocketpilot.toml；[公开示例](pocketpilot.example.toml) 不含秘密。配置不 include、不读取 .env，没有 Telegram chat/user 允许列表。真实配置、数据库和日志已被 Git 忽略。
 
 ```sh
-cargo build --workspace --locked
-./target/debug/pocketpilot doctor --credentials
-./target/debug/pocketpilot doctor --connect
-./target/debug/pocketpilot serve
+cargo build --release --workspace --locked
+./target/release/pocketpilot doctor --credentials
+./target/release/pocketpilot doctor --connect
+./target/release/pocketpilot serve
 ```
 
 只连接已经运行的 app-server，缺少 endpoint 时明确失败。Desktop、CLI 和 PocketPilot 必须连接同一执行实例；相同历史目录不能证明共享。部署前先读 [测试入口](docs/testing.md)。
@@ -24,10 +24,10 @@ cargo build --workspace --locked
 只接受用户本人的私聊。发送 /start 取得申请码，然后在本机另一个终端批准：
 
 ```sh
-./target/debug/pocketpilot pair approve CODE
-./target/debug/pocketpilot pair pending
-./target/debug/pocketpilot pair list
-./target/debug/pocketpilot pair revoke BOT_ID USER_ID
+./target/release/pocketpilot pair approve CODE
+./target/release/pocketpilot pair pending
+./target/release/pocketpilot pair list
+./target/release/pocketpilot pair revoke BOT_ID USER_ID
 ```
 
 批准后再次 /start，在固定的「管理」topic 中选择主机、工作区和会话。管理界面使用内联按钮导航，在同一条菜单消息中切换页面；主机和工作区按钮紧凑排列，工作区每页 8 项并显示登记总数，提供返回、首页和刷新。/start 重新发送可见首页，菜单消息被删除时会补发。项目来自手工登记和 Codex 活跃、普通及归档会话的工作目录，按完整 provider/cwd 去重。后台定期补齐；在工作区页 /refresh 会重新扫描会话元数据。普通任务文本会被拒绝；只有明确进入新建流程后，下一条文字才作为会话标题。
@@ -40,7 +40,7 @@ cargo build --workspace --locked
 
 共享语言资源与类型化错误见 [i18n 设计](docs/design/i18n.md)。Logo 生成用 [这份 prompt](docs/design/logo-prompt.md)。
 
-会话正文以同行 emoji 区分过程、最终结果和错误。同一原生会话的外部用户输入可见，Telegram 自身输入去重；工具和推理不转发。topic icon 表达状态，运行时持续 typing，不发送额外成功 ACK 或空闲状态卡。入场预览限制长度，完整历史仅按需导出；普通长输出仍可使用单个 Markdown 附件，短时输出持久合并，同一私聊的全部 topics 共享预算。附件只显示正文和文件名，不预览图片。
+会话正文以同行 emoji 区分过程、最终结果和错误。同一原生会话的外部用户输入可见，Telegram 自身输入去重；工具和推理不转发。topic icon 表达状态，运行时持续 typing，不发送额外成功 ACK 或空闲状态卡。重连/重试中的可恢复错误保持静默，只有最终失败或中断才发送错误结果。入场预览限制长度，完整历史仅按需导出；普通长输出仍可使用单个 Markdown 附件，短时输出持久合并，同一私聊的全部 topics 共享预算。附件只显示正文和文件名，不预览图片。
 
 /history errors 单独查看近期错误，避免将旧轮次错误配到新输入。
 
@@ -51,18 +51,24 @@ cargo build --workspace --locked
 - 默认只读。provider 的 control_verified 是针对该共享执行实例的部署确认；doctor --connect 本身只检查连接。
 - SSH 使用系统 OpenSSH 的有效配置、known_hosts、心跳和认证链；TOTP seed 保留在根 TOML，通过受限 askpass responder 回答已配置的挑战。ProxyJump 和 ProxyCommand 都继承原生配置。
 - host/认证/速率由根配置热更新；provider 和 workspace 由 SQLite catalog 动态管理，支持在线新增/移除。Codex binary/socket 自动探测；原容器不能换绑其他 session。
-- crate 名称为 ssh、session、codex、engine、telegram、discord、app；源码直接平铺在各 crate 的 src/ 下，binary 仍叫 pocketpilot。
+- crate 名称为 ssh、session、codex、engine、telegram、discord、slack、app；源码直接平铺在各 crate 的 src/ 下，binary 仍叫 pocketpilot。
 
 [文档目录](docs/README.md) · [实施计划](docs/planning/implementation.md) · [验收清单](docs/planning/acceptance.md) · [协议生成](docs/design/protocol-generation.md)
 
 ## Discord 原型
 
 ```sh
-cargo build -p app --features discord --locked
-./target/debug/pocketpilot serve
+cargo build --release -p app --features discord --locked
+./target/release/pocketpilot serve
 ```
 
 在同一根配置增加 [discord] 的 token 与 guild_id；可以和 Telegram 同进程运行，共享连接/会话锁/写入账本。一个 workspace 一个 category，一个 session 一个 channel，owner 使用 /pp-workspaces、/pp-sessions、/pp-open、/pp-new 和 /pp-ask。完整范围、安装权限与限制见 [Discord 原型](docs/design/discord.md)。真实服务器的权限与客户端交互需单独验收。
+
+## Slack 原型
+
+从 [安装指南](docs/slack-setup.md) 导入 [App Manifest](docs/slack-manifest.json)，准备 xapp / xoxb token 和 app/team/user/channel ID，填写根配置。编译 `cargo build --release -p app --features slack --locked` 后运行同一个 `serve`。一个项目一个频道，一个会话一条根卡片和 thread；`/pp` 选择项目/会话，thread 普通文字续轮或 steer。新建只创建命名空会话，首条任务另发。
+
+使用 slack-morphism 2.31.0 与出站 Socket Mode，无需公网服务。首版只允许本机配置的一个用户操作非共享频道；历史、状态和确认使用卡片按钮。设计及限制见 [Slack](docs/design/slack.md)。真实 workspace 尚需按安装指南验收。
 
 ## 动态目录与日志
 
@@ -77,7 +83,7 @@ provider 是一个现有 agent 执行实例，workspace 是它的项目目录。
 
 新发现的实例保持只读。完成共享生命周期验证后，可用 providers trust PROVIDER_ID 记录部署确认，--revoke 撤销。日常诊断使用 doctor，实例与目录使用 providers/workspaces 管理。
 
-tracing 可同时输出到终端和日志文件，支持 daily/hourly 轮转与 retained_files 数量上限。稳定 0.1 前直接维护 [schema.sql](schema.sql)。开发风格见 [CONTRIBUTING.md](CONTRIBUTING.md)，构建体积分析见 [构建说明](docs/build.md)。
+tracing 可同时输出到终端和日志文件，支持 daily/hourly 轮转与 retained_files 数量上限。稳定 0.1 前直接维护 [schema.sql](schema.sql)。开发风格见 [CONTRIBUTING.md](CONTRIBUTING.md)，构建体积分析见 [构建说明](docs/build.md)；更换开发机见 [迁移指南](docs/migration.md)。
 
 ```sh
 cargo build -p app --release --no-default-features --locked
