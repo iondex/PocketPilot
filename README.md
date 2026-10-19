@@ -12,7 +12,7 @@ Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 
 
 ```sh
 cargo build --workspace --locked
-./target/debug/pocketpilot config-check --credentials
+./target/debug/pocketpilot doctor --credentials
 ./target/debug/pocketpilot doctor --connect
 ./target/debug/pocketpilot serve
 ```

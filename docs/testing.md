@@ -15,7 +15,7 @@
 
 ```sh
 cargo build -p app --release --no-default-features --locked
-./target/release/pocketpilot config-check --credentials
+./target/release/pocketpilot doctor --credentials
 ./target/release/pocketpilot doctor --connect --telegram
 ./target/release/pocketpilot serve
 ```

@@ -60,7 +60,7 @@ schema.sql        原型数据库定义；稳定 0.1 前直接修改
 crates/codex/build.rs  官方 schema/DTO 只生成到 Cargo OUT_DIR
 ```
 
-源码不使用多层文件目录。provider/workspace 从根配置移入 SQLite catalog，bin/socket 自动发现，现有 ID 和绑定继续有效。SSH 单独成库并保持 native OpenSSH 后端；接入更多 provider 不要求复制认证代码。日常 CLI 保留 serve/config-check/doctor/hosts/pair/providers/workspaces，删除测试专用会话探针和重复诊断命令。
+源码不使用多层文件目录。provider/workspace 从根配置移入 SQLite catalog，bin/socket 自动发现，现有 ID 和绑定继续有效。SSH 单独成库并保持 native OpenSSH 后端；接入更多 provider 不要求复制认证代码。日常 CLI 保留 serve/doctor/hosts/pair/providers/workspaces，删除测试专用会话探针和重复诊断命令。
 
 ## 4. 顺序与阶段门禁
 
@@ -248,7 +248,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 
 依赖：W15。归属：app cli、service 模板、CI、运行手册。
 
-- 保留 serve/config-check/doctor/hosts/pair/providers/workspaces 运维入口；默认输出不含正文或秘密，不提供 raw RPC/stop/restart agent。
+- 保留 serve/doctor/hosts/pair/providers/workspaces 运维入口；默认输出不含正文或秘密，不提供 raw RPC/stop/restart agent。
 - Linux x86_64/macOS arm64 build；桥接器服务与 agent daemon 独立，配置路径显式、运行目录不决定 secret 来源。
 - 单写者/poller 锁、日志滚动、队列/状态年龄诊断、SQLite 一致性备份与受控升级说明。
 - 产物：可安装产物、运行步骤、健康/能力分离的诊断。
