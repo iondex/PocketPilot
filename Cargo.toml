@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/i18n", "crates/engine", "crates/ssh", "crates/session", "crates/codex", "crates/telegram", "crates/discord", "crates/slack", "crates/app"]
+members = ["crates/i18n", "crates/network", "crates/engine", "crates/ssh", "crates/session", "crates/codex", "crates/telegram", "crates/discord", "crates/slack", "crates/app"]
 resolver = "3"
 
 [workspace.package]
@@ -10,6 +10,7 @@ publish = false
 
 [workspace.dependencies]
 i18n = { path = "crates/i18n" }
+network = { path = "crates/network" }
 async-trait = "0.1"
 base64 = "0.22"
 prost = "0.14"

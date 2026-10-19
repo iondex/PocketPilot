@@ -221,7 +221,7 @@ async fn run_adapter(
     context: engine::integrations::Context,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<(), Error> {
-    let api = Api::new(crate::credentials::read(settings)?)?;
+    let api = Api::with_proxy(crate::credentials::read(settings)?, &settings.proxy)?;
     let identity = api.identity().await?;
     if identity.webhook_enabled {
         return Err(Error::Webhook);

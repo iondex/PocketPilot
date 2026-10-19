@@ -19,6 +19,9 @@ pub mod runtime;
 mod socket;
 
 #[cfg(feature = "runtime")]
+mod socket_model;
+
+#[cfg(feature = "runtime")]
 pub use runtime::Slack;
 
 #[cfg(feature = "runtime")]

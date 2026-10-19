@@ -1525,7 +1525,8 @@ async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receip
         1,
         7,
         DCommand::Open {
-            workspace: "FX".into(),
+            workspace: "host".into(),
+            project: "FX".into(),
             thread: "thread".into(),
         },
     );
@@ -4496,13 +4497,7 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
             Ok(())
         }
 
-        async fn post(
-            &self,
-            _: &str,
-            _: Option<&str>,
-            _: Option<&str>,
-            _: &Content,
-        ) -> slack::Result<String> {
+        async fn post(&self, _: &str, _: Option<&str>, _: &Content) -> slack::Result<String> {
             Ok("123.000001".into())
         }
 
@@ -4526,11 +4521,11 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
     let core = fixture.service.store.core().clone();
     let settings = slack::config::Config {
         app_token: "xapp-fixture".into(),
+        proxy: Default::default(),
         bot_token: "xoxb-fixture".into(),
         app_id: "A1".into(),
         team_id: "T1".into(),
         owner_user_id: "U1".into(),
-        allowed_channel_ids: vec!["C1".into()],
     };
     let context = engine::integrations::Context {
         config: fixture.service.config.clone(),
@@ -4543,11 +4538,13 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
         context,
         Arc::new(SlackFixture),
         "U2".into(),
+        "D1".into(),
         receiver,
     );
     let open = SRequest {
+        menu_message: None,
         id: "open".into(),
-        channel: "C1".into(),
+        channel: "D1".into(),
         user: "U1".into(),
         root: None,
         binding: None,
@@ -4569,8 +4566,9 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
             .any(|r| matches!(*r, "thread/resume" | "turn/start" | "turn/steer"))
     );
     let store = slack::storage::Store::new(core, "A1", "T1", "U2");
-    let b = store.at("C1", "123.000001").await.unwrap().unwrap();
+    let b = store.at("D1", "123.000001").await.unwrap().unwrap();
     let r = SRequest {
+        menu_message: None,
         id: "ask".into(),
         channel: b.channel.clone(),
         user: "U1".into(),

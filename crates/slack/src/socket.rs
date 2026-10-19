@@ -1,4 +1,7 @@
+use crate::api::Client;
+use crate::socket_model::{Ack, Event};
 use crate::{Error, Result, api::Api, model::*, runtime::Service};
+use futures_util::{SinkExt, StreamExt};
 use slack_morphism::{UserCallbackResult, listener::SlackClientEventsUserState, prelude::*};
 use std::{
     sync::{Arc, atomic::Ordering},
@@ -19,6 +22,7 @@ pub(crate) fn message(
     event: SlackPushEventCallback,
     settings: &crate::config::Config,
     bot: &str,
+    direct_channel: &str,
 ) -> Option<Request> {
     if event.api_app_id.to_string() != settings.app_id
         || event.team_id.to_string() != settings.team_id
@@ -36,35 +40,53 @@ pub(crate) fn message(
     }
     let user = m.sender.user?.to_string();
     let channel = m.origin.channel?.to_string();
-    if user == bot || !settings.permits(&settings.team_id, &user, &channel) {
+    if user == bot
+        || channel != direct_channel
+        || m.origin
+            .channel_type
+            .as_ref()
+            .map(|kind| kind.value().as_str())
+            != Some("im")
+        || !settings.permits(&settings.team_id, &user)
+    {
         return None;
     }
-    let root = m.origin.thread_ts?.to_string();
+    let root = m.origin.thread_ts.map(|root| root.to_string());
     let text = m.content?.text?;
     if text.trim().is_empty() {
         return None;
     }
     let date = m.origin.ts.value().split('.').next()?.parse().ok()?;
     Some(Request {
+        menu_message: None,
         id: format!("message:{channel}:{}", m.origin.ts),
         channel,
         user,
-        root: Some(root),
+        command: if root.is_some() {
+            Command::Input { text }
+        } else {
+            Command::Menu
+        },
+        root,
         binding: None,
         revision: None,
         date,
-        command: Command::Input { text },
     })
 }
 
 async fn push(
     event: SlackPushEventCallback,
-    _client: Arc<SlackHyperClient>,
+    _client: Arc<Client>,
     states: SlackClientEventsUserState,
 ) -> UserCallbackResult<()> {
     let service = state(states).await?;
     let source = format!("event:{}", event.event_id);
-    if let Some(r) = message(event, &service.settings, &service.bot) {
+    if let Some(r) = message(
+        event,
+        &service.settings,
+        &service.bot,
+        &service.direct_channel,
+    ) {
         tokio::time::timeout(Duration::from_secs(2), service.intake(r, &source))
             .await
             .map_err(|_| Error::Request)??;
@@ -72,45 +94,9 @@ async fn push(
     Ok(())
 }
 
-async fn command(
-    event: SlackCommandEvent,
-    _client: Arc<SlackHyperClient>,
-    states: SlackClientEventsUserState,
-) -> UserCallbackResult<SlackCommandEventResponse> {
-    let service = state(states).await?;
-    let allowed = service.settings.permits(
-        event.team_id.as_ref(),
-        event.user_id.as_ref(),
-        event.channel_id.as_ref(),
-    ) && event.command.to_string() == "/pp";
-    let text = if allowed {
-        let id = format!("command:{}", event.trigger_id);
-        let r = Request {
-            id: id.clone(),
-            channel: event.channel_id.to_string(),
-            user: event.user_id.to_string(),
-            root: None,
-            binding: None,
-            revision: None,
-            date: engine::now(),
-            command: Command::Menu,
-        };
-        tokio::time::timeout(Duration::from_secs(2), service.intake(r, &id))
-            .await
-            .map_err(|_| Error::Request)??;
-        i18n::text(&service.locale(), "slack.loading")
-    } else {
-        i18n::text(&service.locale(), "slack.error.scope")
-    };
-    Ok(
-        SlackCommandEventResponse::new(SlackMessageContent::new().with_text(text))
-            .with_response_type(SlackMessageResponseType::Ephemeral),
-    )
-}
-
 async fn interaction(
     event: SlackInteractionEvent,
-    client: Arc<SlackHyperClient>,
+    client: Arc<Client>,
     states: SlackClientEventsUserState,
 ) -> UserCallbackResult<SlackInteractionResponse> {
     let service = state(states).await?;
@@ -123,9 +109,24 @@ async fn interaction(
     .map_err(Into::into)
 }
 
+fn action_nonce(action: &SlackInteractionActionInfo) -> Option<&str> {
+    let id = action.action_id.value();
+    let value = action.value.as_deref().or_else(|| {
+        action
+            .selected_option
+            .as_ref()
+            .map(|option| option.value.as_str())
+    })?;
+    if id == "pp" || id.strip_prefix("pp:") == Some(value) {
+        Some(value)
+    } else {
+        None
+    }
+}
+
 async fn handle_interaction(
     service: &Service,
-    client: &SlackHyperClient,
+    client: &Client,
     event: SlackInteractionEvent,
 ) -> Result<SlackInteractionResponse> {
     match event {
@@ -147,10 +148,7 @@ async fn handle_interaction(
             let Some(action) = actions.first() else {
                 return Ok(SlackInteractionResponse::Empty);
             };
-            if action.action_id.to_string() != "pp" {
-                return Ok(SlackInteractionResponse::Empty);
-            }
-            let Some(nonce) = &action.value else {
+            let Some(nonce) = action_nonce(action) else {
                 return Ok(SlackInteractionResponse::Empty);
             };
             if let Some((r, action)) = service
@@ -159,7 +157,15 @@ async fn handle_interaction(
                     Some(channel.id.value()),
                     user.id.value(),
                     None,
-                    Some(event.trigger_id.value()),
+                    InteractionSource {
+                        id: Some(event.trigger_id.value()),
+                        message: match &event.container {
+                            SlackInteractionActionContainer::Message(container) => {
+                                Some(container.message_ts.value().as_str())
+                            }
+                            _ => None,
+                        },
+                    },
                 )
                 .await?
             {
@@ -239,7 +245,13 @@ async fn handle_interaction(
                 .into());
             }
             if let Some((r, Action::NewSubmit { workspace })) = service
-                .click(&nonce, None, event.user.id.value(), Some(&title), None)
+                .click(
+                    &nonce,
+                    None,
+                    event.user.id.value(),
+                    Some(&title),
+                    InteractionSource::default(),
+                )
                 .await?
             {
                 let _ = (r, workspace);
@@ -250,58 +262,173 @@ async fn handle_interaction(
     Ok(SlackInteractionResponse::Empty)
 }
 
+/// Socket transport uses the same explicit proxy as the API connector. All envelopes
+/// carry SDK payload types; acknowledgements follow durable intake, including duplicates.
 pub async fn run(
     service: Arc<Service>,
     api: Arc<Api>,
     mut stop: watch::Receiver<bool>,
 ) -> Result<()> {
-    let env = Arc::new(
-        SlackClientEventsListenerEnvironment::new(api.client.clone())
+    let states =
+        slack_morphism::listener::SlackClientEventsListenerEnvironment::new(api.client.clone())
             .with_user_state(service.clone())
-            .with_error_handler(|_, _, _| {
-                tracing::warn!("Slack SDK callback failed (payload redacted)");
-                http::StatusCode::SERVICE_UNAVAILABLE
-            }),
-    );
-    let callbacks = SlackSocketModeListenerCallbacks::new()
-        .with_hello_events(|event, _client, states| async move {
-            if let Ok(service) = state(states).await {
-                let verified = event.connection_info.app_id.to_string() == service.settings.app_id;
-                service.verified.store(false, Ordering::SeqCst);
-                let connected = service.connected().await.is_ok();
-                service
-                    .verified
-                    .store(verified && connected, Ordering::SeqCst);
-                if verified && connected {
-                    tracing::info!("Slack Socket Mode connected");
-                } else {
-                    tracing::warn!("Slack identity or recovery initialization failed");
+            .user_state;
+    let token = SlackApiToken::new(service.settings.app_token.clone().into());
+    let mut backoff = 2;
+    loop {
+        if *stop.borrow() {
+            return Ok(());
+        }
+        service.verified.store(false, Ordering::SeqCst);
+        let connection = async {
+            let opened = crate::api::bounded(
+                api.client
+                    .open_session(&token)
+                    .apps_connections_open(&SlackApiAppsConnectionOpenRequest::new()),
+            )
+            .await?;
+            service
+                .settings
+                .proxy
+                .websocket(opened.url.value().as_str())
+                .await
+                .map_err(|_| Error::Request)
+        };
+        let connection = tokio::select! {
+            _ = stop.changed() => return Ok(()),
+            result = connection => result,
+        };
+        if let Ok(mut socket) = connection {
+            let mut hello = false;
+            let mut deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+            let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
+            heartbeat.tick().await;
+            loop {
+                let frame = tokio::select! {
+                    _ = stop.changed() => return Ok(()),
+                    _ = heartbeat.tick(), if hello => {
+                        if tokio::time::timeout(Duration::from_secs(5), socket.send(tokio_tungstenite::tungstenite::Message::Ping(Vec::new().into())))
+                            .await.map_or(true, |r| r.is_err()) { break; }
+                        continue;
+                    }
+                    result = tokio::time::timeout_at(deadline, socket.next()) => result,
+                };
+                let Ok(Some(Ok(frame))) = frame else { break };
+                if hello {
+                    deadline = tokio::time::Instant::now() + Duration::from_secs(90);
+                }
+                match frame {
+                    tokio_tungstenite::tungstenite::Message::Text(text) => {
+                        let result = tokio::select! {
+                            _ = stop.changed() => return Ok(()),
+                            result = tokio::time::timeout(Duration::from_millis(if hello { 2500 } else { 45000 }), dispatch(&service, &api, states.clone(), &text)) => result,
+                        };
+                        match result {
+                            Ok(Ok(SocketReply::Hello)) => {
+                                hello = true;
+                                backoff = 2;
+                                deadline = tokio::time::Instant::now() + Duration::from_secs(90);
+                            }
+                            Ok(Ok(SocketReply::Reconnect)) => break,
+                            Ok(Ok(SocketReply::Ack(ack))) => {
+                                if tokio::time::timeout(
+                                    Duration::from_secs(5),
+                                    socket.send(tokio_tungstenite::tungstenite::Message::Text(
+                                        ack.into(),
+                                    )),
+                                )
+                                .await
+                                .map_or(true, |r| r.is_err())
+                                {
+                                    break;
+                                }
+                            }
+                            Ok(Ok(SocketReply::Ignore)) => {}
+                            _ => {
+                                tracing::warn!(
+                                    "Slack callback failed; envelope not acknowledged (payload redacted)"
+                                );
+                                if !hello {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    tokio_tungstenite::tungstenite::Message::Ping(_) => {
+                        if tokio::time::timeout(Duration::from_secs(5), socket.flush())
+                            .await
+                            .map_or(true, |r| r.is_err())
+                        {
+                            break;
+                        }
+                    }
+                    tokio_tungstenite::tungstenite::Message::Close(_) => break,
+                    _ => {}
                 }
             }
-        })
-        .with_push_events(push)
-        .with_command_events(command)
-        .with_interaction_events(interaction);
-    let listener = SlackClientSocketModeListener::new(
-        &SlackClientSocketModeConfig::new().with_max_connections_count(1),
-        env,
-        callbacks,
-    );
-    let token = SlackApiToken::new(service.settings.app_token.clone().into());
-    crate::api::bounded(listener.listen_for(&token)).await?;
-    listener.start().await;
-    let mut ready_stop = stop.clone();
-    tokio::select! {
-        _=stop.changed()=>{},
-        result=async {
-            let deadline=tokio::time::Instant::now()+Duration::from_secs(45);
-            while !service.verified.load(Ordering::SeqCst) {
-                if tokio::time::Instant::now()>deadline {return Err(Error::Ui("slack.error.identity"));}
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            ready_stop.changed().await.map_err(|_|Error::Request)
-        }=>{if let Err(error)=result {listener.shutdown().await;return Err(error);}},
+        }
+        service.verified.store(false, Ordering::SeqCst);
+        tracing::warn!(
+            retry_seconds = backoff,
+            "Slack socket disconnected; reconnecting (details redacted)"
+        );
+        tokio::select! {
+            _ = stop.changed() => return Ok(()),
+            _ = tokio::time::sleep(Duration::from_secs(backoff)) => {}
+        }
+        backoff = (backoff * 2).min(120);
     }
-    listener.shutdown().await;
-    Ok(())
+}
+
+enum SocketReply {
+    Hello,
+    Reconnect,
+    Ack(String),
+    Ignore,
+}
+
+async fn dispatch(
+    service: &Service,
+    api: &Api,
+    states: SlackClientEventsUserState,
+    text: &str,
+) -> Result<SocketReply> {
+    let event = match serde_json::from_str::<Event>(text) {
+        Ok(event) => event,
+        Err(_) => {
+            return Ok(match Ack::unknown(text) {
+                Ok(ack) => SocketReply::Ack(serde_json::to_string(&ack)?),
+                Err(_) => SocketReply::Ignore,
+            });
+        }
+    };
+    let ack = match event {
+        Event::Hello { connection_info } => {
+            if connection_info.app_id.to_string() != service.settings.app_id {
+                return Err(Error::Ui("slack.error.identity"));
+            }
+            service.connected().await?;
+            service.verified.store(true, Ordering::SeqCst);
+            tracing::info!("Slack Socket Mode connected");
+            return Ok(SocketReply::Hello);
+        }
+        Event::Disconnect => return Ok(SocketReply::Reconnect),
+        Event::EventsApi { envelope, payload } => {
+            push(payload, api.client.clone(), states)
+                .await
+                .map_err(|_| Error::Request)?;
+            serde_json::to_string(&Ack::bare(envelope.envelope_id))?
+        }
+        Event::Interactive {
+            mut envelope,
+            payload,
+        } => {
+            let reply = interaction(payload, api.client.clone(), states)
+                .await
+                .map_err(|_| Error::Request)?;
+            envelope.accepts_response_payload &= !matches!(reply, SlackInteractionResponse::Empty);
+            serde_json::to_string(&Ack::new(envelope, reply))?
+        }
+    };
+    Ok(SocketReply::Ack(ack))
 }

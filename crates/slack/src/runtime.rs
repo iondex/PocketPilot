@@ -22,6 +22,9 @@ use tokio::{sync::watch, task::JoinSet};
 #[path = "commands.rs"]
 mod commands;
 
+#[path = "menus.rs"]
+mod menus;
+
 #[path = "input.rs"]
 mod input;
 
@@ -51,9 +54,6 @@ impl Integration for Slack {
     ) -> std::result::Result<(), IntegrationError> {
         async {
             let (api, bot) = Api::connect(&self.settings).await?;
-            for channel in &self.settings.allowed_channel_ids {
-                api.channel(channel).await?;
-            }
             let store = Store::new(
                 context.store.clone(),
                 &self.settings.app_id,
@@ -66,6 +66,7 @@ impl Integration for Slack {
                 settings: self.settings.clone(),
                 context,
                 store,
+                direct_channel: api.direct_channel.clone(),
                 api: api.clone(),
                 bot,
                 stop: receiver.clone(),
@@ -103,6 +104,7 @@ pub struct Service {
     pub(crate) store: Store,
     pub(crate) api: Arc<dyn Platform>,
     pub(crate) bot: String,
+    pub(crate) direct_channel: String,
     pub(crate) stop: watch::Receiver<bool>,
     pub(crate) cutoff: AtomicI64,
     pub(crate) verified: AtomicBool,
@@ -132,9 +134,8 @@ impl Service {
         if !self.verified.load(Ordering::SeqCst)
             || *self.stop.borrow()
             || snapshot.hash != hash
-            || !self
-                .settings
-                .permits(&self.settings.team_id, &r.user, &r.channel)
+            || !self.settings.permits(&self.settings.team_id, &r.user)
+            || r.channel != self.direct_channel
         {
             return Err(Error::Ui("slack.error.scope"));
         }
@@ -146,12 +147,10 @@ impl Service {
         snapshot: &'a Snapshot,
         id: &str,
     ) -> Result<&'a engine::config::Workspace> {
-        snapshot
-            .config
-            .workspaces
-            .iter()
-            .find(|w| w.id == id)
-            .ok_or(Error::Ui("slack.error.scope"))
+        engine::navigation::Navigator::new(&snapshot.config)
+            .parent(id)
+            .map(|selection| selection.project)
+            .map_err(|_| Error::Ui("error.navigation.selection"))
     }
 
     pub(crate) fn validate<'a>(
@@ -159,9 +158,7 @@ impl Service {
         snapshot: &'a Snapshot,
         b: &Binding,
     ) -> Result<&'a engine::config::Workspace> {
-        if b.owner != self.settings.owner_user_id
-            || !self.settings.allowed_channel_ids.contains(&b.channel)
-        {
+        if b.owner != self.settings.owner_user_id || b.channel != self.direct_channel {
             return Err(Error::Ui("slack.error.scope"));
         }
         let ws = self.workspace(snapshot, &b.workspace)?;
@@ -238,12 +235,12 @@ impl Service {
         channel: Option<&str>,
         user: &str,
         title: Option<&str>,
-        interaction: Option<&str>,
+        source: InteractionSource<'_>,
     ) -> Result<Option<(Request, Action)>> {
         let snapshot = self.context.config.snapshot();
         let result = self
             .store
-            .consume(nonce, channel, user, &snapshot.hash, title, interaction)
+            .consume(nonce, channel, user, &snapshot.hash, title, source)
             .await?;
         if let Some((r, _)) = &result {
             self.fresh(r, &snapshot.hash)?;
@@ -277,9 +274,7 @@ impl Service {
                     if let Err(error) = result {
                         tracing::warn!(request_id=%row.id,"Slack command failed; input is not replayed");
                         let content = crate::render::message(error.localized(&self.locale()));
-                        self.store
-                            .output(&r, &content, &row.config_hash, true)
-                            .await?;
+                        self.store.output(&r, &content, &row.config_hash).await?;
                     }
                     self.store.state(&row.id, "processing", "done").await?;
                 }
@@ -323,9 +318,7 @@ impl Service {
                     &i18n::text(&self.locale(), "slack.confirm"),
                     &nonce,
                 ));
-                self.store
-                    .output(&reply, &content, &snapshot.hash, true)
-                    .await?;
+                self.store.output(&reply, &content, &snapshot.hash).await?;
                 self.store
                     .state(&row.id, "draft", "awaiting_confirmation")
                     .await?;
@@ -337,9 +330,7 @@ impl Service {
                         .await?;
                 }
             } else {
-                self.store
-                    .output(&reply, &content, &snapshot.hash, true)
-                    .await?;
+                self.store.output(&reply, &content, &snapshot.hash).await?;
                 self.store.state(&row.id, &row.state, "done").await?;
             }
         }
@@ -354,6 +345,7 @@ impl Service {
         context: Context,
         api: Arc<dyn Platform>,
         bot: String,
+        direct_channel: String,
         stop: watch::Receiver<bool>,
     ) -> Self {
         let store = Store::new(
@@ -367,6 +359,7 @@ impl Service {
             context,
             api,
             bot,
+            direct_channel,
             store,
             stop,
             cutoff: AtomicI64::new(engine::now() - 1),

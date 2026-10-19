@@ -7,9 +7,34 @@ pub struct Api {
     pub(crate) http: Arc<Http>,
     pub guild: u64,
     pub bot: u64,
+    pub(crate) proxy: network::Proxy,
 }
 
 impl Api {
+    /// Only reads identity and guild metadata; does not register commands or connect Gateway.
+    pub async fn inspect(config: &crate::config::Config) -> Result<crate::Identity, Error> {
+        let http = http(&config.token, &config.proxy)?;
+        let bot = http.get_current_user().await.map_err(|_| Error::Request)?;
+        let application = http
+            .get_current_application_info()
+            .await
+            .map_err(|_| Error::Request)?;
+        let guild = http
+            .get_guild(GuildId::new(config.guild_id))
+            .await
+            .map_err(|_| Error::Request)?;
+        Ok(crate::Identity {
+            bot_id: bot.id.to_string(),
+            application_id: application.id.to_string(),
+            guild_id: guild.id.to_string(),
+            owner_id: guild.owner_id.to_string(),
+            install_url: format!(
+                "https://discord.com/oauth2/authorize?client_id={}&scope=bot%20applications.commands&permissions=101392&guild_id={}&disable_guild_select=true",
+                application.id, guild.id
+            ),
+        })
+    }
+
     #[cfg(feature = "test-support")]
     pub fn local_fixture(endpoint: &str, guild: u64, bot: u64) -> Self {
         Self {
@@ -27,12 +52,17 @@ impl Api {
             ),
             guild,
             bot,
+            proxy: Default::default(),
         }
     }
 
-    pub async fn connect(token: &secrecy::SecretString, guild: u64) -> Result<Self, Error> {
+    pub async fn connect(
+        token: &secrecy::SecretString,
+        guild: u64,
+        proxy: &network::Proxy,
+    ) -> Result<Self, Error> {
         use secrecy::ExposeSecret;
-        let http = Arc::new(http(token.expose_secret())?);
+        let http = Arc::new(http(token.expose_secret(), proxy)?);
         let bot = http
             .get_current_user()
             .await
@@ -47,7 +77,12 @@ impl Api {
             .await
             .map_err(|_| Error::Request)?;
         http.set_application_id(application.id);
-        Ok(Self { http, guild, bot })
+        Ok(Self {
+            http,
+            guild,
+            bot,
+            proxy: proxy.clone(),
+        })
     }
 
     pub async fn authorize(&self, input: &Input) -> Result<(), Error> {
@@ -174,8 +209,10 @@ impl Api {
     }
 }
 
-pub(crate) fn http(token: &str) -> Result<Http, Error> {
-    let client = reqwest::Client::builder()
+pub(crate) fn http(token: &str, proxy: &network::Proxy) -> Result<Http, Error> {
+    let client = proxy
+        .http_builder()
+        .map_err(|_| Error::Request)?
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(60))
         .build()

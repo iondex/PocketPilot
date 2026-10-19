@@ -197,12 +197,22 @@ pub struct Inspector {
 }
 
 impl Inspector {
-    pub fn new(token: SecretString, timeout: Duration) -> Self {
-        // No from_env: ordinary settings and credentials come from explicit config.
-        Self {
-            bot: Bot::new(token.expose_secret()),
+    pub fn new(
+        token: SecretString,
+        timeout: Duration,
+        proxy: &network::Proxy,
+    ) -> Result<Self, Error> {
+        let client = proxy
+            .http_builder()
+            .map_err(|_| Error::Network)?
+            .connect_timeout(timeout)
+            .timeout(timeout)
+            .build()
+            .map_err(|_| Error::Network)?;
+        Ok(Self {
+            bot: Bot::with_client(token.expose_secret(), client),
             timeout,
-        }
+        })
     }
 
     pub async fn check(&self) -> Result<Identity, Error> {

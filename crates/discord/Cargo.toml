@@ -11,6 +11,7 @@ runtime = ["dep:serenity", "dep:engine", "dep:sqlx", "dep:serde_json", "dep:uuid
 test-support = ["runtime"]
 
 [dependencies]
+network.workspace = true
 i18n.workspace = true
 engine = { path = "../engine", optional = true }
 sqlx = { workspace = true, optional = true }

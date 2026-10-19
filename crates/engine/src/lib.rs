@@ -9,6 +9,8 @@ pub mod integrations;
 
 pub mod model;
 
+pub mod navigation;
+
 pub mod operations;
 
 pub mod reload;

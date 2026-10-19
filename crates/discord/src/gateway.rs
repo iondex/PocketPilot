@@ -11,6 +11,14 @@ struct Handler {
 
 #[async_trait]
 impl EventHandler for Handler {
+    async fn ready(&self, _ctx: Context, ready: Ready) {
+        tracing::info!(
+            guild_id = self.api.guild,
+            bot_id = ready.user.id.get(),
+            "Discord Gateway ready"
+        );
+    }
+
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         let Interaction::Command(command) = interaction else {
             return;
@@ -98,14 +106,22 @@ fn localized_command(name: &str, id: &str) -> CreateCommand {
 fn commands() -> Vec<CreateCommand> {
     vec![
         localized_command("pp-workspaces", "discord.cmd.workspaces"),
+        localized_command("pp-projects", "discord.cmd.projects").add_option(string(
+            "workspace",
+            "discord.option.workspace",
+            true,
+        )),
         localized_command("pp-sessions", "discord.cmd.sessions")
             .add_option(string("workspace", "discord.option.workspace", true))
+            .add_option(string("project", "discord.option.project", true))
             .add_option(string("cursor", "discord.option.cursor", false)),
         localized_command("pp-open", "discord.cmd.open")
             .add_option(string("workspace", "discord.option.workspace", true))
+            .add_option(string("project", "discord.option.project", true))
             .add_option(string("thread", "discord.option.thread", true)),
         localized_command("pp-new", "discord.cmd.new")
             .add_option(string("workspace", "discord.option.workspace", true))
+            .add_option(string("project", "discord.option.project", true))
             .add_option(string("text", "discord.option.first_input", true))
             .add_option(
                 CreateCommandOption::new(
@@ -154,13 +170,24 @@ pub async fn run(
             .await
             .map_err(|_| Error::Request)?;
     }
+    let proxy = api.proxy.clone();
     let mut client = serenity::client::ClientBuilder::new_with_http(
-        crate::api::http(token.expose_secret())?,
+        crate::api::http(token.expose_secret(), &api.proxy)?,
         GatewayIntents::GUILDS,
     )
     .event_handler(Handler { backend, api })
     .await
     .map_err(|_| Error::Request)?;
+    let _relay = if proxy.enabled() {
+        let upstream = client.ws_url.lock().await.clone();
+        let relay = network::Relay::start(proxy, upstream)
+            .await
+            .map_err(|_| Error::Request)?;
+        *client.ws_url.lock().await = relay.endpoint.clone();
+        Some(relay)
+    } else {
+        None
+    };
     tracing::info!(
         guild_id = guild,
         bot_id = bot,

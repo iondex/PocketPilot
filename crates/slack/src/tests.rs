@@ -1,11 +1,11 @@
-struct NoNetwork;
+pub(crate) struct NoNetwork;
 #[async_trait::async_trait]
 impl crate::api::Platform for NoNetwork {
     async fn channel(&self, _: &str) -> Result<()> {
         panic!("callback performed a network lookup")
     }
 
-    async fn post(&self, _: &str, _: Option<&str>, _: Option<&str>, _: &Content) -> Result<String> {
+    async fn post(&self, _: &str, _: Option<&str>, _: &Content) -> Result<String> {
         panic!("callback posted a message")
     }
 
@@ -31,18 +31,19 @@ use crate::{model::*, storage::*, *};
 fn settings() -> config::Config {
     config::Config {
         app_token: "xapp-fixture".into(),
+        proxy: Default::default(),
         bot_token: "xoxb-fixture".into(),
         app_id: "A1".into(),
         team_id: "T1".into(),
         owner_user_id: "U1".into(),
-        allowed_channel_ids: vec!["C1".into()],
     }
 }
 
 fn request(id: &str) -> Request {
     Request {
+        menu_message: None,
         id: id.into(),
-        channel: "C1".into(),
+        channel: "D1".into(),
         user: "U1".into(),
         root: Some("123.000001".into()),
         binding: Some("binding".into()),
@@ -60,7 +61,7 @@ fn binding() -> Binding {
         app: "A1".into(),
         team: "T1".into(),
         bot: "U2".into(),
-        channel: "C1".into(),
+        channel: "D1".into(),
         root: "123.000001".into(),
         owner: "U1".into(),
         workspace: "project".into(),
@@ -81,12 +82,225 @@ fn credentials_and_mentions_are_not_exposed() {
     let config = settings();
     assert!(config.valid() && config.credentials_valid());
     assert!(!format!("{config:?}").contains("xoxb-fixture"));
-    assert!(!config.permits("T1", "U3", "C1"));
+    assert!(!config.permits("T1", "U3"));
     let output = render::message("<@U3> <!channel> & <https://example.com>".into());
     let wire = serde_json::to_string(&crate::api::Api::content(&output)).unwrap();
     assert!(wire.contains("plain_text"));
     assert!(wire.contains("&lt;!channel&gt;"));
     assert!(render::message("界".repeat(2801)).document);
+}
+
+#[tokio::test]
+async fn modal_navigation_source_survives_persistence_and_does_not_retarget_session_controls() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(
+        engine::storage::Store::open(dir.path()).await.unwrap(),
+        "A1",
+        "T1",
+        "U2",
+    );
+    let mut menu = request("menu-modal");
+    menu.binding = None;
+    menu.revision = None;
+    menu.root = None;
+    let nonce = store
+        .action(
+            &menu,
+            Action::NewModal {
+                workspace: "project".into(),
+            },
+            "scope",
+        )
+        .await
+        .unwrap();
+    let (modal, _) = store
+        .consume(
+            &nonce,
+            Some("D1"),
+            "U1",
+            "scope",
+            None,
+            InteractionSource {
+                id: Some("modal"),
+                message: Some("200.000001"),
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let nonce = store
+        .action(
+            &modal,
+            Action::NewSubmit {
+                workspace: "project".into(),
+            },
+            "scope",
+        )
+        .await
+        .unwrap();
+    let (submitted, _) = store
+        .consume(
+            &nonce,
+            None,
+            "U1",
+            "scope",
+            Some("Session title"),
+            InteractionSource::default(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(submitted.menu_message.as_deref(), Some("200.000001"));
+    assert!(matches!(submitted.command, Command::New { .. }));
+    let bound = request("bound-status");
+    let nonce = store
+        .action(&bound, Action::Run(Command::Status), "scope")
+        .await
+        .unwrap();
+    let (status, _) = store
+        .consume(
+            &nonce,
+            Some("D1"),
+            "U1",
+            "scope",
+            None,
+            InteractionSource {
+                id: Some("status"),
+                message: Some("200.000001"),
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.menu_message.is_none());
+    assert_eq!(status.root, bound.root);
+}
+
+#[tokio::test]
+async fn one_owner_dm_can_bind_sessions_from_different_projects() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(
+        engine::storage::Store::open(dir.path()).await.unwrap(),
+        "A1",
+        "T1",
+        "U2",
+    );
+    let first = binding();
+    store.reserve(&first).await.unwrap();
+    store.bind(&first).await.unwrap();
+    let mut second = first.clone();
+    second.id = "another-binding".into();
+    second.workspace = "another-project".into();
+    second.instance = "another-instance".into();
+    second.thread = "another-session".into();
+    second.root = "124.000001".into();
+    store.reserve(&second).await.unwrap();
+    store.bind(&second).await.unwrap();
+    assert_eq!(
+        store
+            .at("D1", &first.root)
+            .await
+            .unwrap()
+            .unwrap()
+            .workspace,
+        "project"
+    );
+    assert_eq!(
+        store
+            .at("D1", &second.root)
+            .await
+            .unwrap()
+            .unwrap()
+            .workspace,
+        "another-project"
+    );
+    let mut channel = second;
+    channel.channel = "C1".into();
+    assert!(store.reserve(&channel).await.is_err());
+}
+
+fn fixture_api(endpoint: &str) -> crate::api::Api {
+    use slack_morphism::prelude::*;
+    let connector = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .unwrap()
+        .https_or_http()
+        .enable_http1()
+        .wrap_connector(network::Connector::default());
+    crate::api::Api {
+        client: std::sync::Arc::new(SlackClient::new(
+            SlackClientHyperConnector::with_connector(connector)
+                .with_slack_api_url(&format!("{endpoint}/api")),
+        )),
+        token: SlackApiToken::new("xoxb-fixture".into()).with_team_id("T1".into()),
+        direct_channel: "D1".into(),
+    }
+}
+
+#[tokio::test]
+async fn owner_dm_resolution_and_output_never_use_channel_or_ephemeral_apis() {
+    use crate::api::Platform;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{body_json, body_partial_json, method, path},
+    };
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/conversations.open"))
+        .and(body_json(serde_json::json!({"users":["U1"]})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"ok":true,"channel":{"id":"D1"}})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat.postMessage"))
+        .and(body_partial_json(
+            serde_json::json!({"channel":"D1","thread_ts":"123.000001"}),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"ok":true,"channel":"D1","ts":"123.000002","message":{"ts":"123.000002","text":"reply"}})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let api = fixture_api(&server.uri());
+    assert_eq!(
+        crate::api::Api::owner_conversation(&api.client, &api.token, "U1")
+            .await
+            .unwrap(),
+        "D1"
+    );
+    let content = render::message("reply".into());
+    assert!(api.post("C1", None, &content).await.is_err());
+    assert!(api.post("D2", None, &content).await.is_err());
+    assert_eq!(
+        api.post("D1", Some("123.000001"), &content).await.unwrap(),
+        "123.000002"
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn owner_resolution_rejects_a_non_dm_response() {
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path};
+    let server = MockServer::start().await;
+    Mock::given(path("/api/conversations.open"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"ok":true,"channel":{"id":"C1"}})),
+        )
+        .mount(&server)
+        .await;
+    let api = fixture_api(&server.uri());
+    assert!(
+        crate::api::Api::owner_conversation(&api.client, &api.token, "U1")
+            .await
+            .is_err()
+    );
 }
 
 #[test]
@@ -98,20 +312,29 @@ fn typed_socket_events_only_route_new_authorized_thread_text() {
         } else {
             ""
         };
-        serde_json::from_str::<SlackPushEventCallback>(&format!(r#"{{"team_id":"T1","api_app_id":"A1","event_id":"Ev1","event_time":123,"event":{{"type":"message","ts":"123.000002","channel":"C1","user":"{user}","text":"hello"{root}{extra}}}}}"#)).unwrap()
+        serde_json::from_str::<SlackPushEventCallback>(&format!(r#"{{"team_id":"T1","api_app_id":"A1","event_id":"Ev1","event_time":123,"event":{{"type":"message","ts":"123.000002","channel":"D1","channel_type":"im","user":"{user}","text":"hello"{root}{extra}}}}}"#)).unwrap()
     };
-    assert!(socket::message(make("", "U1", true), &settings(), "U2").is_some());
+    assert!(socket::message(make("", "U1", true), &settings(), "U2", "D1").is_some());
     for event in [
         make("", "U3", true),
-        make("", "U1", false),
         make(r#", "subtype":"message_changed""#, "U1", true),
         make(r#", "bot_id":"B1""#, "U1", true),
         make(r#", "hidden":true"#, "U1", true),
     ] {
-        assert!(socket::message(event, &settings(), "U2").is_none());
+        assert!(socket::message(event, &settings(), "U2", "D1").is_none());
     }
+    let menu = socket::message(make("", "U1", false), &settings(), "U2", "D1").unwrap();
+    assert!(matches!(menu.command, Command::Menu));
+    assert!(menu.root.is_none());
+    assert!(socket::message(make("", "U1", true), &settings(), "U2", "D2").is_none());
+    let channel_event = make("", "U1", true);
+    let wire = serde_json::to_string(&channel_event)
+        .unwrap()
+        .replace("\"im\"", "\"channel\"");
+    let channel_event = serde_json::from_str(&wire).unwrap();
+    assert!(socket::message(channel_event, &settings(), "U2", "D1").is_none());
     let event = make(r#", "subtype":"file_share""#, "U1", true);
-    assert!(socket::message(event, &settings(), "U2").is_some());
+    assert!(socket::message(event, &settings(), "U2", "D1").is_some());
 }
 
 #[tokio::test]
@@ -122,7 +345,7 @@ async fn durable_intake_actions_and_unknown_delivery_survive_recovery_without_re
     let r = request("message-1");
     assert!(
         store
-            .enqueue("C1:123.000002", &r, "scope", false)
+            .enqueue("D1:123.000002", &r, "scope", false)
             .await
             .unwrap()
     );
@@ -130,7 +353,7 @@ async fn durable_intake_actions_and_unknown_delivery_survive_recovery_without_re
     duplicate.id = "another-event-id".into();
     assert!(
         !store
-            .enqueue("C1:123.000002", &duplicate, "scope", false)
+            .enqueue("D1:123.000002", &duplicate, "scope", false)
             .await
             .unwrap()
     );
@@ -144,28 +367,56 @@ async fn durable_intake_actions_and_unknown_delivery_survive_recovery_without_re
         .unwrap();
     assert!(
         store
-            .consume(&nonce, Some("C1"), "U3", "scope", None, None)
+            .consume(
+                &nonce,
+                Some("D1"),
+                "U3",
+                "scope",
+                None,
+                InteractionSource::default()
+            )
             .await
             .unwrap()
             .is_none()
     );
     assert!(
         store
-            .consume(&nonce, Some("C2"), "U1", "scope", None, None)
+            .consume(
+                &nonce,
+                Some("D2"),
+                "U1",
+                "scope",
+                None,
+                InteractionSource::default()
+            )
             .await
             .unwrap()
             .is_none()
     );
     assert!(
         store
-            .consume(&nonce, Some("C1"), "U1", "scope", None, None)
+            .consume(
+                &nonce,
+                Some("D1"),
+                "U1",
+                "scope",
+                None,
+                InteractionSource::default()
+            )
             .await
             .unwrap()
             .is_some()
     );
     assert!(
         store
-            .consume(&nonce, Some("C1"), "U1", "scope", None, None)
+            .consume(
+                &nonce,
+                Some("D1"),
+                "U1",
+                "scope",
+                None,
+                InteractionSource::default()
+            )
             .await
             .unwrap()
             .is_none()
@@ -178,12 +429,7 @@ async fn durable_intake_actions_and_unknown_delivery_survive_recovery_without_re
             .is_some()
     );
     store
-        .output(
-            &r,
-            &render::message("synthetic output".into()),
-            "scope",
-            false,
-        )
+        .output(&r, &render::message("synthetic output".into()), "scope")
         .await
         .unwrap();
     let outgoing = store.outgoing().await.unwrap();
@@ -246,12 +492,7 @@ async fn observation_cursor_and_outbox_commit_together_and_channel_threads_share
     r.root = Some("124.000001".into());
     r.binding = None;
     store
-        .output(
-            &r,
-            &render::message("another thread".into()),
-            "scope",
-            false,
-        )
+        .output(&r, &render::message("another thread".into()), "scope")
         .await
         .unwrap();
     let first = store.outgoing().await.unwrap();
@@ -268,6 +509,15 @@ async fn observation_cursor_and_outbox_commit_together_and_channel_threads_share
 
 #[tokio::test]
 async fn sdk_socket_ack_follows_durable_intake_and_replayed_envelopes_do_not_duplicate_jobs() {
+    socket_ack_fixture(false).await;
+}
+
+#[tokio::test]
+async fn api_and_socket_both_use_the_configured_connect_proxy() {
+    socket_ack_fixture(true).await;
+}
+
+async fn socket_ack_fixture(proxied: bool) {
     use futures_util::{SinkExt, StreamExt};
     use slack_morphism::prelude::*;
     use std::sync::{
@@ -302,12 +552,47 @@ async fn sdk_socket_ack_follows_durable_intake_and_replayed_envelopes_do_not_dup
         connections: Arc::new(engine::connections::Connections::new(core.clone())),
     };
     let (stop, receiver) = tokio::sync::watch::channel(false);
+    let proxy_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = if proxied {
+        network::Proxy::try_from(format!("http://{}", proxy_listener.local_addr().unwrap()))
+            .unwrap()
+    } else {
+        network::Proxy::default()
+    };
+    let proxy_hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = proxy_hits.clone();
+    let proxy_task = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..2 {
+            let (mut client, _) = proxy_listener.accept().await.unwrap();
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            tasks.spawn(async move {
+                let mut header = Vec::new();
+                while !header.ends_with(b"\r\n\r\n") {
+                    header.push(client.read_u8().await.unwrap());
+                }
+                let header = String::from_utf8(header).unwrap();
+                let target = header.split_whitespace().nth(1).unwrap();
+                assert!(header.starts_with("CONNECT 127.0.0.1:"));
+                let mut remote = tokio::net::TcpStream::connect(target).await.unwrap();
+                client.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
+                let _ = tokio::io::copy_bidirectional(&mut client, &mut remote).await;
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+    });
+    let mut settings = settings();
+    settings.proxy = proxy.clone();
     let service = Arc::new(runtime::Service {
-        settings: settings(),
+        settings,
         context,
         store: Store::new(core, "A1", "T1", "U2"),
         api: Arc::new(NoNetwork),
         bot: "U2".into(),
+        direct_channel: "D1".into(),
         stop: receiver.clone(),
         cutoff: AtomicI64::new(engine::now()),
         verified: AtomicBool::new(false),
@@ -326,7 +611,7 @@ async fn sdk_socket_ack_follows_durable_intake_and_replayed_envelopes_do_not_dup
         .unwrap()
         .https_or_http()
         .enable_http1()
-        .build();
+        .wrap_connector(network::Connector(proxy));
     let client = Arc::new(SlackClient::new(
         SlackClientHyperConnector::with_connector(connector)
             .with_slack_api_url(&format!("{}/api", http.uri())),
@@ -334,6 +619,7 @@ async fn sdk_socket_ack_follows_durable_intake_and_replayed_envelopes_do_not_dup
     let api = Arc::new(crate::api::Api {
         client,
         token: SlackApiToken::new("xoxb-fixture".into()).with_team_id("T1".into()),
+        direct_channel: "D1".into(),
     });
     let task = tokio::spawn(socket::run(service.clone(), api, receiver));
     let (stream, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
@@ -344,7 +630,7 @@ async fn sdk_socket_ack_follows_durable_intake_and_replayed_envelopes_do_not_dup
     socket.send(tokio_tungstenite::tungstenite::Message::Text(r#"{"type":"hello","connection_info":{"app_id":"A1"},"num_connections":1,"debug_info":{"host":"fixture"}}"#.into())).await.unwrap();
     for envelope in ["envelope-1", "envelope-2"] {
         let frame = format!(
-            r#"{{"type":"slash_commands","envelope_id":"{envelope}","accepts_response_payload":true,"payload":{{"team_id":"T1","channel_id":"C1","user_id":"U1","command":"/pp","response_url":"https://example.invalid/response","trigger_id":"trigger-one"}}}}"#
+            r#"{{"type":"events_api","envelope_id":"{envelope}","accepts_response_payload":false,"payload":{{"team_id":"T1","api_app_id":"A1","event_id":"Ev1","event_time":123,"event":{{"type":"message","ts":"123.000002","channel":"D1","channel_type":"im","user":"U1","text":"menu"}}}}}}"#
         );
         socket
             .send(tokio_tungstenite::tungstenite::Message::Text(frame.into()))
@@ -367,12 +653,18 @@ async fn sdk_socket_ack_follows_durable_intake_and_replayed_envelopes_do_not_dup
             "ACK was emitted before durable intake or duplicate source was accepted twice"
         );
     }
+    assert_eq!(
+        proxy_hits.load(std::sync::atomic::Ordering::SeqCst),
+        if proxied { 2 } else { 0 }
+    );
     stop.send(true).unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(5), task)
         .await
         .unwrap()
         .unwrap()
         .unwrap();
+    proxy_task.abort();
+    let _ = proxy_task.await;
 }
 
 #[tokio::test]
@@ -392,7 +684,17 @@ async fn read_controls_are_reusable_while_replayed_clicks_and_rate_limits_remain
     for click in ["click-one", "click-one", "click-two"] {
         assert!(
             store
-                .consume(&nonce, Some("C1"), "U1", "scope", None, Some(click))
+                .consume(
+                    &nonce,
+                    Some("D1"),
+                    "U1",
+                    "scope",
+                    None,
+                    InteractionSource {
+                        id: Some(click),
+                        message: None
+                    }
+                )
                 .await
                 .unwrap()
                 .is_some()
@@ -408,13 +710,13 @@ async fn read_controls_are_reusable_while_replayed_clicks_and_rate_limits_remain
     first.binding = None;
     let mut second = first.clone();
     second.id = "second".into();
-    second.channel = "C2".into();
+    second.channel = "D2".into();
     store
-        .output(&first, &render::message("one".into()), "scope", false)
+        .output(&first, &render::message("one".into()), "scope")
         .await
         .unwrap();
     store
-        .output(&second, &render::message("two".into()), "scope", false)
+        .output(&second, &render::message("two".into()), "scope")
         .await
         .unwrap();
     let cached = store.outgoing().await.unwrap();
@@ -461,6 +763,7 @@ async fn recovery_waits_for_socket_readiness_and_rearms_confirmation_after_recon
         store: Store::new(core, "A1", "T1", "U2"),
         api: Arc::new(NoNetwork),
         bot: "U2".into(),
+        direct_channel: "D1".into(),
         stop: receiver,
         cutoff: AtomicI64::new(engine::now()),
         verified: AtomicBool::new(false),

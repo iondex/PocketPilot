@@ -43,7 +43,6 @@ pub struct Outbox {
     pub id: String,
     pub channel: String,
     pub root: Option<String>,
-    pub recipient: Option<String>,
     pub binding: Option<String>,
     pub revision: Option<i64>,
     pub content: String,
@@ -52,6 +51,8 @@ pub struct Outbox {
 
 #[derive(Serialize, Deserialize)]
 struct SavedAction {
+    #[serde(default)]
+    menu_message: Option<String>,
     #[serde(flatten)]
     action: Action,
 }
@@ -146,7 +147,7 @@ impl Store {
         let nonce = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO slack_actions(nonce,namespace,channel,owner,root,binding,revision,action,config_hash,expires) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(&nonce).bind(&self.namespace).bind(&request.channel).bind(&request.user).bind(&request.root)
-            .bind(&request.binding).bind(request.revision).bind(serde_json::to_string(&SavedAction { action })?)
+            .bind(&request.binding).bind(request.revision).bind(serde_json::to_string(&SavedAction { action, menu_message: request.menu_message.clone() })?)
             .bind(hash).bind(engine::now()+ttl).execute(self.core.pool()).await?;
         Ok(nonce)
     }
@@ -158,7 +159,7 @@ impl Store {
         user: &str,
         hash: &str,
         title: Option<&str>,
-        interaction: Option<&str>,
+        source: InteractionSource<'_>,
     ) -> Result<Option<(Request, Action)>> {
         let mut tx = self.core.pool().begin().await?;
         let row = sqlx::query("SELECT * FROM slack_actions WHERE nonce=? AND namespace=? AND owner=? AND consumed=0 AND expires>=? AND config_hash=?")
@@ -179,8 +180,9 @@ impl Store {
                 .await?;
         }
         let mut request = Request {
+            menu_message: None,
             id: if reusable {
-                format!("action:{nonce}:{}", interaction.unwrap_or("read"))
+                format!("action:{nonce}:{}", source.id.unwrap_or("read"))
             } else {
                 format!("action:{nonce}")
             },
@@ -192,6 +194,9 @@ impl Store {
             date: engine::now(),
             command: Command::Menu,
         };
+        if request.binding.is_none() {
+            request.menu_message = source.message.map(str::to_owned).or(action.menu_message);
+        }
         let command = match &action.action {
             Action::Run(command) => Some(command.clone()),
             Action::NewSubmit { workspace } => title.map(|title| Command::New {
@@ -250,19 +255,8 @@ impl Store {
 
     pub async fn reserve(&self, b: &Binding) -> Result<()> {
         let mut tx = self.core.pool().begin().await?;
-        sqlx::query("INSERT INTO slack_channels(app,team,bot,channel,workspace) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING")
-            .bind(&b.app).bind(&b.team).bind(&b.bot).bind(&b.channel).bind(&b.workspace).execute(&mut *tx).await?;
-        let workspace: String = sqlx::query_scalar(
-            "SELECT workspace FROM slack_channels WHERE app=? AND team=? AND bot=? AND channel=?",
-        )
-        .bind(&b.app)
-        .bind(&b.team)
-        .bind(&b.bot)
-        .bind(&b.channel)
-        .fetch_one(&mut *tx)
-        .await?;
-        if workspace != b.workspace {
-            return Err(Error::Ui("slack.error.channel_project"));
+        if !b.channel.starts_with('D') {
+            return Err(Error::Ui("slack.error.scope"));
         }
         let n = sqlx::query("INSERT INTO slack_provisions(app,team,bot,channel,instance,thread,state) VALUES(?,?,?,?,?,?,'dispatching') ON CONFLICT DO NOTHING")
             .bind(&b.app).bind(&b.team).bind(&b.bot).bind(&b.channel).bind(&b.instance).bind(&b.thread).execute(&mut *tx).await?.rows_affected();
@@ -308,6 +302,7 @@ impl Store {
             .bind(observed).bind(&b.id).bind(b.revision).bind(&b.observed).execute(&mut *tx).await?.rows_affected();
         if n == 1 && !content.text.is_empty() {
             let r = Request {
+                menu_message: None,
                 id: format!("observe:{}:{}", b.id, engine::digest(observed)),
                 channel: b.channel.clone(),
                 user: b.owner.clone(),
@@ -317,29 +312,15 @@ impl Store {
                 date: engine::now(),
                 command: Command::Status,
             };
-            Self::insert_output(&mut tx, &self.namespace, &r, content, hash, None).await?;
+            Self::insert_output(&mut tx, &self.namespace, &r, content, hash).await?;
         }
         tx.commit().await?;
         Ok(())
     }
 
-    pub async fn output(
-        &self,
-        r: &Request,
-        content: &Content,
-        hash: &str,
-        private: bool,
-    ) -> Result<()> {
+    pub async fn output(&self, r: &Request, content: &Content, hash: &str) -> Result<()> {
         let mut tx = self.core.pool().begin().await?;
-        Self::insert_output(
-            &mut tx,
-            &self.namespace,
-            r,
-            content,
-            hash,
-            private.then_some(r.user.as_str()),
-        )
-        .await?;
+        Self::insert_output(&mut tx, &self.namespace, r, content, hash).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -350,7 +331,6 @@ impl Store {
         r: &Request,
         c: &Content,
         hash: &str,
-        recipient: Option<&str>,
     ) -> Result<()> {
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM slack_outbox WHERE namespace=? AND state IN ('pending','dispatching')")
             .bind(ns).fetch_one(&mut **tx).await?;
@@ -360,14 +340,14 @@ impl Store {
         if c.text.len() > 8 * 1024 * 1024 {
             return Err(Error::Ui("slack.error.history"));
         }
-        sqlx::query("INSERT INTO slack_outbox(id,namespace,channel,root,recipient,binding,revision,source,content,config_hash) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING")
-            .bind(uuid::Uuid::now_v7().to_string()).bind(ns).bind(&r.channel).bind(&r.root).bind(recipient).bind(&r.binding).bind(r.revision)
+        sqlx::query("INSERT INTO slack_outbox(id,namespace,channel,root,binding,revision,source,content,config_hash) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING")
+            .bind(uuid::Uuid::now_v7().to_string()).bind(ns).bind(&r.channel).bind(&r.root).bind(&r.binding).bind(r.revision)
             .bind(&r.id).bind(serde_json::to_string(c)?).bind(hash).execute(&mut **tx).await?;
         Ok(())
     }
 
     pub async fn outgoing(&self) -> Result<Vec<Outbox>> {
-        Ok(sqlx::query_as("SELECT id,channel,root,recipient,binding,revision,content,config_hash FROM slack_outbox o WHERE namespace=? AND state='pending' AND not_before<=? AND NOT EXISTS(SELECT 1 FROM slack_outbox p WHERE p.namespace=o.namespace AND p.channel=o.channel AND p.state IN ('pending','dispatching') AND p.rowid<o.rowid) ORDER BY rowid LIMIT 32")
+        Ok(sqlx::query_as("SELECT id,channel,root,binding,revision,content,config_hash FROM slack_outbox o WHERE namespace=? AND state='pending' AND not_before<=? AND NOT EXISTS(SELECT 1 FROM slack_outbox p WHERE p.namespace=o.namespace AND p.channel=o.channel AND p.state IN ('pending','dispatching') AND p.rowid<o.rowid) ORDER BY rowid LIMIT 32")
             .bind(&self.namespace).bind(engine::now()).fetch_all(self.core.pool()).await?)
     }
 

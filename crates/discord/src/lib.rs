@@ -1,6 +1,15 @@
 //! Guild-owner-only slash-command prototype. No Message Content intent is needed.
 pub mod config;
 
+#[derive(serde::Serialize)]
+pub struct Identity {
+    pub bot_id: String,
+    pub application_id: String,
+    pub guild_id: String,
+    pub owner_id: String,
+    pub install_url: String,
+}
+
 #[cfg(feature = "runtime")]
 pub mod runtime;
 
@@ -54,16 +63,22 @@ impl ::i18n::LocalizedError for Error {
 #[derive(Clone, Debug)]
 pub enum Command {
     Workspaces,
+    Projects {
+        workspace: String,
+    },
     Sessions {
         workspace: String,
+        project: String,
         cursor: Option<String>,
     },
     Open {
         workspace: String,
+        project: String,
         thread: String,
     },
     New {
         workspace: String,
+        project: String,
         text: String,
         confirmed: bool,
     },
@@ -137,16 +152,22 @@ pub(crate) fn parse(
     };
     Ok(match name {
         "pp-workspaces" => Command::Workspaces,
+        "pp-projects" => Command::Projects {
+            workspace: field("workspace")?,
+        },
         "pp-sessions" => Command::Sessions {
             workspace: field("workspace")?,
+            project: field("project")?,
             cursor: text.get("cursor").cloned(),
         },
         "pp-open" => Command::Open {
             workspace: field("workspace")?,
+            project: field("project")?,
             thread: field("thread")?,
         },
         "pp-new" => Command::New {
             workspace: field("workspace")?,
+            project: field("project")?,
             text: field("text")?,
             confirmed,
         },
@@ -183,5 +204,20 @@ mod tests {
         assert!(!name.contains('@'));
         assert!(name.ends_with("-abcdef12"));
         assert!(channel_name(&"好".repeat(500), "thread").chars().count() < 100);
+    }
+
+    #[test]
+    fn project_and_session_commands_require_the_selected_workspace() {
+        let mut fields = BTreeMap::from([("workspace".into(), "host-a".into())]);
+        assert!(
+            matches!(parse("pp-projects", &fields, false).unwrap(), Command::Projects { workspace } if workspace == "host-a")
+        );
+        assert!(parse("pp-sessions", &fields, false).is_err());
+        fields.insert("project".into(), "project-a".into());
+        assert!(
+            matches!(parse("pp-sessions", &fields, false).unwrap(), Command::Sessions { workspace, project, .. } if workspace == "host-a" && project == "project-a")
+        );
+        fields.remove("workspace");
+        assert!(parse("pp-sessions", &fields, false).is_err());
     }
 }

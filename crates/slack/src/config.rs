@@ -3,12 +3,13 @@ use serde::Deserialize;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub proxy: network::Proxy,
     pub app_token: String,
     pub bot_token: String,
     pub app_id: String,
     pub team_id: String,
     pub owner_user_id: String,
-    pub allowed_channel_ids: Vec<String>,
 }
 
 impl Config {
@@ -18,28 +19,14 @@ impl Config {
             && identifier(&self.app_id, 'A')
             && identifier(&self.team_id, 'T')
             && (identifier(&self.owner_user_id, 'U') || identifier(&self.owner_user_id, 'W'))
-            && !self.allowed_channel_ids.is_empty()
-            && self.allowed_channel_ids.len() <= 32
-            && self
-                .allowed_channel_ids
-                .iter()
-                .all(|id| identifier(id, 'C') || identifier(id, 'G'))
-            && self
-                .allowed_channel_ids
-                .iter()
-                .collect::<std::collections::BTreeSet<_>>()
-                .len()
-                == self.allowed_channel_ids.len()
     }
 
     pub fn credentials_valid(&self) -> bool {
         self.app_token.starts_with("xapp-") && self.bot_token.starts_with("xoxb-")
     }
 
-    pub fn permits(&self, team: &str, user: &str, channel: &str) -> bool {
-        self.team_id == team
-            && self.owner_user_id == user
-            && self.allowed_channel_ids.iter().any(|id| id == channel)
+    pub fn permits(&self, team: &str, user: &str) -> bool {
+        self.team_id == team && self.owner_user_id == user
     }
 }
 
@@ -58,7 +45,6 @@ impl std::fmt::Debug for Config {
             .field("app_id", &self.app_id)
             .field("team_id", &self.team_id)
             .field("owner_user_id", &self.owner_user_id)
-            .field("allowed_channel_ids", &self.allowed_channel_ids)
             .field("tokens", &"[REDACTED]")
             .finish()
     }

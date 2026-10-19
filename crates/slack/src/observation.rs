@@ -72,6 +72,7 @@ impl Service {
             return Err(Error::Ui("slack.error.history"));
         }
         let r = Request {
+            menu_message: None,
             id: format!("observe:{}", b.id),
             channel: b.channel.clone(),
             user: b.owner.clone(),
@@ -138,6 +139,7 @@ impl Service {
             let mut content = self.root_card(b, text, hash).await?;
             content.edit = true;
             let r = Request {
+                menu_message: None,
                 id: format!("card:{}:{}", b.id, uuid::Uuid::new_v4()),
                 channel: b.channel.clone(),
                 user: b.owner.clone(),
@@ -149,7 +151,7 @@ impl Service {
             };
             self.fresh(&r, hash)?;
             self.bound(&r).await?;
-            self.store.output(&r, &content, hash, false).await?;
+            self.store.output(&r, &content, hash).await?;
             self.store.card(b, text).await?;
         }
         Ok(())
@@ -164,6 +166,7 @@ impl Service {
             }
             for o in self.store.outgoing().await? {
                 let r = Request {
+                    menu_message: None,
                     id: o.id.clone(),
                     channel: o.channel.clone(),
                     user: self.settings.owner_user_id.clone(),
@@ -217,12 +220,7 @@ impl Service {
                     self.document(&o, &content, &scope_hash).await
                 } else {
                     self.api
-                        .post(
-                            &o.channel,
-                            o.root.as_deref(),
-                            o.recipient.as_deref(),
-                            &content,
-                        )
+                        .post(&o.channel, o.root.as_deref(), &content)
                         .await
                         .map(|_| ())
                 };
@@ -256,6 +254,7 @@ impl Service {
             .upload_file(&upload, c.text.as_bytes().to_vec())
             .await?;
         let r = Request {
+            menu_message: None,
             id: o.id.clone(),
             channel: o.channel.clone(),
             user: self.settings.owner_user_id.clone(),

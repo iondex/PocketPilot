@@ -44,6 +44,9 @@ enum Command {
         connect: bool,
         #[arg(long)]
         telegram: bool,
+        /// Read Discord bot/application/guild identity without registering commands.
+        #[arg(long)]
+        discord: bool,
     },
     /// List configured hosts or discover candidate SSH aliases without logging in.
     Hosts {
@@ -133,6 +136,8 @@ pub enum Error {
     #[error(transparent)]
     Telegram(#[from] telegram::Error),
     #[error(transparent)]
+    Discord(#[from] discord::Error),
+    #[error(transparent)]
     Store(#[from] engine::storage::StoreError),
     #[error(transparent)]
     Pairing(#[from] telegram::pairing::Error),
@@ -160,6 +165,7 @@ impl ::i18n::LocalizedError for Error {
             Self::Rpc(error) => ::i18n::LocalizedError::message(error),
             Self::Provider(error) => ::i18n::LocalizedError::message(error),
             Self::Telegram(error) => ::i18n::LocalizedError::message(error),
+            Self::Discord(error) => ::i18n::LocalizedError::message(error),
             Self::Store(error) => ::i18n::LocalizedError::message(error),
             Self::Pairing(error) => ::i18n::LocalizedError::message(error),
         }
@@ -277,7 +283,8 @@ async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Re
             credentials,
             connect,
             telegram,
-        } => doctor(&config, credentials, connect, telegram).await?,
+            discord,
+        } => doctor(&config, credentials, connect, telegram, discord).await?,
         Command::Pair { command } => {
             let store = telegram::pairing::Registry::open(&config.service.data_dir).await?;
             let now = std::time::SystemTime::now()
@@ -418,12 +425,20 @@ async fn connect(host: &Host, config: &Config) -> Result<usize, Error> {
 async fn check_telegram(config: &Config) -> Result<telegram::Identity, Error> {
     let tg = config.telegram.as_ref().ok_or(Error::Selection)?;
     let token = credentials::read(tg)?;
-    Ok(telegram::Inspector::new(token, Duration::from_secs(30))
-        .check()
-        .await?)
+    Ok(
+        telegram::Inspector::new(token, Duration::from_secs(30), &tg.proxy)?
+            .check()
+            .await?,
+    )
 }
 
-async fn doctor(config: &Config, check: bool, probe: bool, telegram: bool) -> Result<(), Error> {
+async fn doctor(
+    config: &Config,
+    check: bool,
+    probe: bool,
+    telegram: bool,
+    discord: bool,
+) -> Result<(), Error> {
     #[derive(Serialize)]
     struct HostCheck {
         id: String,
@@ -441,6 +456,7 @@ async fn doctor(config: &Config, check: bool, probe: bool, telegram: bool) -> Re
         configuration: ConfigurationSummary,
         hosts: Vec<HostCheck>,
         telegram: Option<telegram::Identity>,
+        discord: Option<discord::Identity>,
         control_enabled: bool,
         note: String,
     }
@@ -486,10 +502,28 @@ async fn doctor(config: &Config, check: bool, probe: bool, telegram: bool) -> Re
     } else {
         None
     };
+    let discord = if discord {
+        #[cfg(feature = "discord")]
+        {
+            let settings = config.discord.as_ref().ok_or(Error::Selection)?;
+            Some(
+                tokio::time::timeout(Duration::from_secs(30), discord::Api::inspect(settings))
+                    .await
+                    .map_err(|_| discord::Error::Request)??,
+            )
+        }
+        #[cfg(not(feature = "discord"))]
+        {
+            return Err(app::runtime::Error::Feature.into());
+        }
+    } else {
+        None
+    };
     print(&Report {
         configuration,
         hosts,
         telegram,
+        discord,
         control_enabled: config.providers.iter().any(|p| p.control_verified),
         note: i18n::text(&config.language, "cli.doctor_note"),
     })
@@ -507,6 +541,7 @@ mod tests {
             "--credentials",
             "--connect",
             "--telegram",
+            "--discord",
         ])
         .unwrap();
         assert!(matches!(
@@ -515,6 +550,7 @@ mod tests {
                 credentials: true,
                 connect: true,
                 telegram: true,
+                discord: true,
             }
         ));
         let args = Arguments::try_parse_from(["pocketpilot", "doctor"]).unwrap();
@@ -524,6 +560,7 @@ mod tests {
                 credentials: false,
                 connect: false,
                 telegram: false,
+                discord: false,
             }
         ));
         assert!(Arguments::try_parse_from(["pocketpilot", "config-check"]).is_err());

@@ -165,7 +165,11 @@ impl Api {
     }
 
     pub fn new(token: SecretString) -> Result<Self, Error> {
-        Self::with_builder(token, reqwest::Client::builder())
+        Self::with_proxy(token, &network::Proxy::default())
+    }
+
+    pub fn with_proxy(token: SecretString, proxy: &network::Proxy) -> Result<Self, Error> {
+        Self::with_builder(token, proxy.http_builder().map_err(|_| Error::Network)?)
     }
 
     fn with_builder(token: SecretString, builder: reqwest::ClientBuilder) -> Result<Self, Error> {

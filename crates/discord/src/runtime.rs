@@ -90,7 +90,7 @@ pub async fn run(
 ) -> std::result::Result<(), crate::Error> {
     let store = Store::new(store);
     let token = secrecy::SecretString::from(settings.token.clone());
-    let api = Api::connect(&token, settings.guild_id).await?;
+    let api = Api::connect(&token, settings.guild_id, &settings.proxy).await?;
     store
         .discord_recover()
         .await

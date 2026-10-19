@@ -16,15 +16,46 @@ impl Service {
     ) -> Result<String> {
         let locale = self.locale(input);
         match &input.command {
-            Command::Workspaces => Ok(snapshot
-                .config
-                .workspaces
-                .iter()
-                .map(|w| format!("{} · {}", w.short_name, w.name))
-                .collect::<Vec<_>>()
-                .join("\n")),
-            Command::Sessions { workspace, cursor } => {
-                let ws = self.workspace(&snapshot.config, workspace)?;
+            Command::Workspaces => {
+                let mut rows = engine::navigation::Navigator::new(&snapshot.config)
+                    .workspaces()
+                    .iter()
+                    .map(|view| format!("{} · {}", view.host.name, view.host.id))
+                    .collect::<Vec<_>>();
+                rows.push(i18n::text(&locale, "discord.workspaces.next"));
+                Ok(rows.join("\n"))
+            }
+            Command::Projects { workspace } => {
+                let view = engine::navigation::Navigator::new(&snapshot.config)
+                    .workspace(workspace)
+                    .map_err(error)?;
+                let host = view.host;
+                let projects = view.projects;
+                let mut rows = vec![host.name.clone()];
+                rows.extend(
+                    projects
+                        .iter()
+                        .map(|ws| format!("{} · {}\n{}", ws.short_name, ws.name, ws.cwd)),
+                );
+                if projects.is_empty() {
+                    rows.push(i18n::text(&locale, "discord.projects.empty"));
+                }
+                rows.push(
+                    i18n::t!(
+                        "discord.projects.next",
+                        locale = &locale,
+                        workspace = &host.id
+                    )
+                    .to_string(),
+                );
+                Ok(rows.join("\n\n"))
+            }
+            Command::Sessions {
+                workspace,
+                project,
+                cursor,
+            } => {
+                let ws = self.project(&snapshot.config, workspace, project)?;
                 let provider = self
                     .connections
                     .get(&snapshot.config, ws)
@@ -50,7 +81,8 @@ impl Service {
                 text.push_str(&i18n::t!(
                     "discord.sessions.open",
                     locale = &locale,
-                    workspace = &ws.short_name
+                    workspace = workspace,
+                    project = &ws.short_name
                 ));
                 if let Some(cursor) = page.next_cursor {
                     text.push_str(&i18n::t!(
@@ -61,18 +93,24 @@ impl Service {
                 }
                 Ok(text)
             }
-            Command::Open { workspace, thread } => {
-                self.open(api, input, snapshot, workspace, thread).await
+            Command::Open {
+                workspace,
+                project,
+                thread,
+            } => {
+                let ws = self.project(&snapshot.config, workspace, project)?;
+                self.open(api, input, snapshot, &ws.id, thread).await
             }
             Command::New {
                 workspace,
+                project,
                 text,
                 confirmed,
             } => {
                 if !confirmed || text.trim().is_empty() {
                     return Err("discord.error.create_confirmation".into());
                 }
-                let ws = self.workspace(&snapshot.config, workspace)?;
+                let ws = self.project(&snapshot.config, workspace, project)?;
                 let actor = self.connections.actor(&ws.provider_id, "__create").await;
                 let _guard = actor.lock().await;
                 let receipt = self
@@ -115,7 +153,7 @@ impl Service {
                     )
                     .await?;
                 }
-                self.open(api, input, snapshot, workspace, &receipt.thread)
+                self.open(api, input, snapshot, &ws.id, &receipt.thread)
                     .await
             }
             Command::Ask { text } => {

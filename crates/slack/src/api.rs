@@ -11,13 +11,7 @@ pub struct Upload {
 pub trait Platform: Send + Sync {
     async fn channel(&self, channel: &str) -> Result<()>;
 
-    async fn post(
-        &self,
-        channel: &str,
-        root: Option<&str>,
-        recipient: Option<&str>,
-        content: &Content,
-    ) -> Result<String>;
+    async fn post(&self, channel: &str, root: Option<&str>, content: &Content) -> Result<String>;
 
     async fn update(&self, channel: &str, root: &str, content: &Content) -> Result<()>;
 
@@ -29,9 +23,13 @@ pub trait Platform: Send + Sync {
     -> Result<()>;
 }
 
+pub type Client =
+    SlackClient<SlackClientHyperConnector<hyper_rustls::HttpsConnector<network::Connector>>>;
+
 pub struct Api {
-    pub client: Arc<SlackHyperClient>,
+    pub client: Arc<Client>,
     pub token: SlackApiToken,
+    pub direct_channel: String,
 }
 
 pub fn map_error(error: SlackClientError) -> Error {
@@ -79,23 +77,52 @@ pub async fn bounded<T>(
 
 impl Api {
     pub async fn connect(config: &Config) -> Result<(Arc<Self>, String)> {
-        let connector = SlackClientHyperConnector::new()
+        let https = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_native_roots()
             .map_err(|_| Error::Request)?
-            .with_rate_control(
-                SlackApiRateControlConfig::new()
-                    .with_max_retries(0)
-                    .with_max_delay_timeout(Duration::from_secs(2)),
-            );
-        let api = Arc::new(Self {
-            client: Arc::new(SlackClient::new(connector)),
-            token: SlackApiToken::new(config.bot_token.clone().into())
-                .with_team_id(config.team_id.clone().into()),
-        });
-        let response = bounded(api.client.open_session(&api.token).auth_test()).await?;
-        if response.team_id.value() != &config.team_id || response.bot_id.is_none() {
+            .https_or_http()
+            .enable_http1()
+            .enable_http2()
+            .wrap_connector(network::Connector(config.proxy.clone()));
+        let connector = SlackClientHyperConnector::with_connector(https).with_rate_control(
+            SlackApiRateControlConfig::new()
+                .with_max_retries(0)
+                .with_max_delay_timeout(Duration::from_secs(2)),
+        );
+        let client = Arc::new(SlackClient::new(connector));
+        let token = SlackApiToken::new(config.bot_token.clone().into())
+            .with_team_id(config.team_id.clone().into());
+        let response = bounded(client.open_session(&token).auth_test()).await?;
+        if response.team_id.value() != &config.team_id
+            || response.bot_id.is_none()
+            || response.user_id.value() == &config.owner_user_id
+        {
             return Err(Error::Ui("slack.error.identity"));
         }
-        Ok((api, response.user_id.to_string()))
+        let direct_channel =
+            Self::owner_conversation(&client, &token, &config.owner_user_id).await?;
+        Ok((
+            Arc::new(Self {
+                client,
+                token,
+                direct_channel,
+            }),
+            response.user_id.to_string(),
+        ))
+    }
+
+    pub(crate) async fn owner_conversation(
+        client: &Client,
+        token: &SlackApiToken,
+        owner: &str,
+    ) -> Result<String> {
+        let request = SlackApiConversationsOpenRequest::new().with_users(vec![owner.into()]);
+        let opened = bounded(client.open_session(token).conversations_open(&request)).await?;
+        let channel = opened.channel.id.to_string();
+        if !channel.starts_with('D') {
+            return Err(Error::Ui("slack.error.identity"));
+        }
+        Ok(channel)
     }
 
     pub fn content(content: &Content) -> SlackMessageContent {
@@ -110,43 +137,15 @@ impl Api {
 #[async_trait::async_trait]
 impl Platform for Api {
     async fn channel(&self, channel: &str) -> Result<()> {
-        let response = bounded(
-            self.client
-                .open_session(&self.token)
-                .conversations_info(&SlackApiConversationsInfoRequest::new(channel.into())),
-        )
-        .await?;
-        let flags = response.channel.flags;
-        if flags.is_member != Some(true)
-            || flags.is_archived == Some(true)
-            || flags.is_shared != Some(false)
-            || flags.is_org_shared == Some(true)
-            || flags.is_im == Some(true)
-            || flags.is_mpim == Some(true)
-        {
-            return Err(Error::Ui("slack.error.channel"));
+        if channel != self.direct_channel {
+            return Err(Error::Ui("slack.error.scope"));
         }
         Ok(())
     }
 
-    async fn post(
-        &self,
-        channel: &str,
-        root: Option<&str>,
-        recipient: Option<&str>,
-        content: &Content,
-    ) -> Result<String> {
+    async fn post(&self, channel: &str, root: Option<&str>, content: &Content) -> Result<String> {
+        self.channel(channel).await?;
         let session = self.client.open_session(&self.token);
-        if let Some(user) = recipient {
-            let request = SlackApiChatPostEphemeralRequest::new(
-                channel.into(),
-                user.into(),
-                Self::content(content),
-            )
-            .opt_thread_ts(root.map(Into::into));
-            bounded(session.chat_post_ephemeral(&request)).await?;
-            return Ok(String::new());
-        }
         let request = SlackApiChatPostMessageRequest::new(channel.into(), Self::content(content))
             .opt_thread_ts(root.map(Into::into))
             .with_reply_broadcast(false)
@@ -160,6 +159,7 @@ impl Platform for Api {
     }
 
     async fn update(&self, channel: &str, root: &str, content: &Content) -> Result<()> {
+        self.channel(channel).await?;
         let request =
             SlackApiChatUpdateRequest::new(channel.into(), Self::content(content), root.into());
         bounded(self.client.open_session(&self.token).chat_update(&request)).await?;
@@ -200,6 +200,7 @@ impl Platform for Api {
         channel: &str,
         root: Option<&str>,
     ) -> Result<()> {
+        self.channel(channel).await?;
         let request = SlackApiFilesCompleteUploadExternalRequest::new(vec![
             SlackApiFilesComplete::new(upload.id.clone().into()).with_title("session.md".into()),
         ])

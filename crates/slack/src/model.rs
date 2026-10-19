@@ -4,7 +4,12 @@ use slack_morphism::prelude::SlackBlock;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Command {
     Menu,
+    Workspaces {
+        offset: usize,
+    },
     Projects {
+        #[serde(default)]
+        host: String,
         offset: usize,
     },
     UnbindConfirm,
@@ -48,6 +53,8 @@ pub struct Request {
     pub channel: String,
     pub user: String,
     pub root: Option<String>,
+    #[serde(default)]
+    pub menu_message: Option<String>,
     pub binding: Option<String>,
     pub revision: Option<i64>,
     pub date: i64,
@@ -79,4 +86,10 @@ pub enum Action {
     Run(Command),
     NewModal { workspace: String },
     NewSubmit { workspace: String },
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct InteractionSource<'a> {
+    pub id: Option<&'a str>,
+    pub message: Option<&'a str>,
 }

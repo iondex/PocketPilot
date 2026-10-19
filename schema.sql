@@ -281,11 +281,6 @@ CREATE TABLE IF NOT EXISTS topic_removals (
     PRIMARY KEY (bot_id,chat_id,topic_id)
 );
 
-CREATE TABLE IF NOT EXISTS slack_channels (
-    app TEXT NOT NULL, team TEXT NOT NULL, bot TEXT NOT NULL, channel TEXT NOT NULL,
-    workspace TEXT NOT NULL,
-    PRIMARY KEY(app,team,bot,channel)
-);
 CREATE TABLE IF NOT EXISTS slack_bindings (
     id TEXT PRIMARY KEY, app TEXT NOT NULL, team TEXT NOT NULL, bot TEXT NOT NULL,
     channel TEXT NOT NULL, root TEXT NOT NULL, owner TEXT NOT NULL,
@@ -316,7 +311,7 @@ CREATE TABLE IF NOT EXISTS slack_actions (
 );
 CREATE TABLE IF NOT EXISTS slack_outbox (
     id TEXT PRIMARY KEY, namespace TEXT NOT NULL, channel TEXT NOT NULL,
-    root TEXT, recipient TEXT, binding TEXT, revision INTEGER,
+    root TEXT, binding TEXT, revision INTEGER,
     source TEXT NOT NULL, content TEXT NOT NULL, config_hash TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'pending', not_before INTEGER NOT NULL DEFAULT 0,
     file_id TEXT, UNIQUE(namespace,source)

@@ -19,109 +19,16 @@ impl Service {
         self.api.channel(&r.channel).await?;
         self.fresh(r, hash)?;
         match &r.command {
-            Command::Menu | Command::Projects { .. } => {
-                let offset = match r.command {
-                    Command::Projects { offset } => offset,
-                    _ => 0,
-                };
-                let mut c = render::message(i18n::text(&self.locale(), "slack.projects"));
-                for ws in snapshot.config.workspaces.iter().skip(offset).take(12) {
-                    let nonce = self
-                        .store
-                        .action(
-                            r,
-                            Action::Run(Command::Sessions {
-                                workspace: ws.id.clone(),
-                                cursor: None,
-                            }),
-                            hash,
-                        )
-                        .await?;
-                    c.blocks.push(render::button(
-                        &session::delivery::short_title(&ws.name, 60),
-                        &nonce,
-                    ));
-                }
-                if snapshot.config.workspaces.len() > offset + 12 {
-                    c.blocks.push(
-                        self.action_button(
-                            r,
-                            hash,
-                            "slack.next",
-                            Action::Run(Command::Projects {
-                                offset: offset + 12,
-                            }),
-                        )
-                        .await?,
-                    );
-                }
-                self.store.output(r, &c, hash, true).await?;
+            Command::Menu => self.workspace_menu(r, hash, &snapshot, 0).await?,
+            Command::Workspaces { offset } => {
+                self.workspace_menu(r, hash, &snapshot, *offset).await?
+            }
+            Command::Projects { host, offset } => {
+                self.project_menu(r, hash, &snapshot, host, *offset).await?
             }
             Command::Sessions { workspace, cursor } => {
-                let ws = self.workspace(&snapshot, workspace)?;
-                let provider = self.context.connections.get(&snapshot.config, ws).await?;
-                let page = engine::connections::list_picker(
-                    &self.store.core,
-                    provider.as_ref(),
-                    ws,
-                    cursor.clone(),
-                    8,
-                )
-                .await?;
-                self.fresh(r, hash)?;
-                let mut c = render::message(ws.name.clone());
-                c.blocks.push(
-                    self.action_button(
-                        r,
-                        hash,
-                        "slack.new",
-                        Action::NewModal {
-                            workspace: workspace.clone(),
-                        },
-                    )
-                    .await?,
-                );
-                for session in page.data {
-                    let nonce = self
-                        .store
-                        .action(
-                            r,
-                            Action::Run(Command::Open {
-                                workspace: workspace.clone(),
-                                thread: session.reference.thread.clone(),
-                            }),
-                            hash,
-                        )
-                        .await?;
-                    c.blocks.push(render::plain(&format!(
-                        "{} · {}",
-                        session.status.label_in(&self.locale()),
-                        session::delivery::short_title(&session.title, 65)
-                    )));
-                    c.blocks.push(render::button(
-                        &i18n::text(&self.locale(), "slack.open"),
-                        &nonce,
-                    ));
-                }
-                if let Some(cursor) = page.next_cursor {
-                    c.blocks.push(
-                        self.action_button(
-                            r,
-                            hash,
-                            "slack.next",
-                            Action::Run(Command::Sessions {
-                                workspace: workspace.clone(),
-                                cursor: Some(cursor),
-                            }),
-                        )
-                        .await?,
-                    );
-                }
-                c.blocks.push(
-                    self.action_button(r, hash, "slack.projects", Action::Run(Command::Menu))
-                        .await?,
-                );
-                self.store.output(r, &c, hash, true).await?;
+                self.session_menu(r, hash, &snapshot, workspace, cursor.clone())
+                    .await?
             }
             Command::Open { workspace, thread } => {
                 self.open(r, hash, workspace, thread).await?;
@@ -131,7 +38,6 @@ impl Service {
                     return Err(Error::Ui("slack.error.title"));
                 }
                 let ws = self.workspace(&snapshot, workspace)?;
-                self.require_channel_project(&r.channel, &ws.id).await?;
                 let actor = self
                     .context
                     .connections
@@ -238,7 +144,7 @@ impl Service {
                 if matches!(r.command, Command::History { export: true }) {
                     c.document = true;
                 }
-                self.store.output(r, &c, hash, !c.document).await?;
+                self.store.output(r, &c, hash).await?;
             }
             Command::UnbindConfirm => {
                 self.bound(r).await?;
@@ -247,7 +153,7 @@ impl Service {
                     self.action_button(r, hash, "slack.confirm", Action::Run(Command::Unbind))
                         .await?,
                 );
-                self.store.output(r, &c, hash, true).await?;
+                self.store.output(r, &c, hash).await?;
             }
             Command::Unbind => {
                 if !(0..=300).contains(&engine::now().saturating_sub(r.date)) {
@@ -264,7 +170,6 @@ impl Service {
                         &reply,
                         &render::message(i18n::text(&self.locale(), "slack.unbound")),
                         hash,
-                        true,
                     )
                     .await?;
             }
@@ -272,22 +177,9 @@ impl Service {
         Ok(())
     }
 
-    async fn require_channel_project(&self, channel: &str, workspace: &str) -> Result<()> {
-        let saved: Option<String> = sqlx::query_scalar(
-            "SELECT workspace FROM slack_channels WHERE app||':'||team||':'||bot=? AND channel=?",
-        )
-        .bind(&self.store.namespace)
-        .bind(channel)
-        .fetch_optional(self.store.core.pool())
-        .await?;
-        if saved.is_some_and(|w| w != workspace) {
-            return Err(Error::Ui("slack.error.channel_project"));
-        }
-        Ok(())
-    }
-
     pub(super) async fn root_card(&self, b: &Binding, text: &str, hash: &str) -> Result<Content> {
         let r = Request {
+            menu_message: None,
             id: format!("card:{}:{}", b.id, engine::digest(text)),
             channel: b.channel.clone(),
             user: b.owner.clone(),
@@ -310,13 +202,13 @@ impl Service {
                     .await?,
             );
         }
+        render::compact_actions(&mut c);
         Ok(c)
     }
 
     async fn open(&self, r: &Request, hash: &str, workspace: &str, thread: &str) -> Result<()> {
         let snapshot = self.fresh(r, hash)?;
         let ws = self.workspace(&snapshot, workspace)?;
-        self.require_channel_project(&r.channel, &ws.id).await?;
         let actor = self
             .context
             .connections
@@ -394,7 +286,7 @@ impl Service {
             );
             b.root = self
                 .api
-                .post(&r.channel, None, None, &render::message(text))
+                .post(&r.channel, None, &render::message(text))
                 .await?;
             // Persist the exact created root even if scope changed while the
             // request was in flight; later delivery rechecks authorization.
@@ -434,7 +326,41 @@ impl Service {
                 ))
                 .into(),
         ];
-        self.store.output(r, &reply, hash, true).await?;
+        reply.blocks.insert(
+            0,
+            render::header(&i18n::text(&self.locale(), "slack.session.opened")),
+        );
+        reply.blocks.insert(1, render::context(&ws.name));
+        reply.blocks.push(
+            self.action_button(
+                r,
+                hash,
+                "slack.sessions.back",
+                Action::Run(Command::Sessions {
+                    workspace: workspace.into(),
+                    cursor: None,
+                }),
+            )
+            .await?,
+        );
+        let host = snapshot
+            .config
+            .providers
+            .iter()
+            .find(|p| p.id == ws.provider_id)
+            .ok_or(Error::Ui("slack.error.scope"))?
+            .host_id
+            .clone();
+        reply.blocks.push(
+            self.action_button(
+                r,
+                hash,
+                "slack.menu.back",
+                Action::Run(Command::Projects { host, offset: 0 }),
+            )
+            .await?,
+        );
+        self.menu_output(r, reply, hash).await?;
         Ok(())
     }
 }

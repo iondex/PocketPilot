@@ -3,6 +3,8 @@ use serde::Deserialize;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub proxy: network::Proxy,
     pub token: String,
     pub guild_id: u64,
 }

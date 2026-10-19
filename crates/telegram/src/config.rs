@@ -3,6 +3,8 @@ use serde::Deserialize;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub proxy: network::Proxy,
     pub token: String,
     #[serde(default = "default_locale")]
     pub default_locale: String,

@@ -782,6 +782,7 @@ dependencies = [
  "async-trait",
  "engine",
  "i18n",
+ "network",
  "reqwest",
  "secrecy 0.10.3",
  "serde",
@@ -1863,6 +1864,22 @@ name = "multiversion_no_op"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
+
+[[package]]
+name = "network"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "http",
+ "hyper-util",
+ "reqwest",
+ "serde",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "toml 0.9.12+spec-1.1.0",
+ "tower-service",
+ "url",
+]
 
 [[package]]
 name = "nix"
@@ -3153,6 +3170,7 @@ dependencies = [
  "http",
  "hyper-rustls",
  "i18n",
+ "network",
  "serde",
  "serde_json",
  "session",
@@ -3475,6 +3493,7 @@ dependencies = [
  "engine",
  "futures-util",
  "i18n",
+ "network",
  "pulldown-cmark",
  "reqwest",
  "secrecy 0.10.3",

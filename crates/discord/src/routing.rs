@@ -9,12 +9,23 @@ use engine::now;
 use engine::reload::Snapshot;
 
 impl Service {
+    pub(super) fn project<'a>(
+        &self,
+        config: &'a Config,
+        environment: &str,
+        project: &str,
+    ) -> Result<&'a Workspace> {
+        engine::navigation::Navigator::new(config)
+            .project(environment, project)
+            .map(|selection| selection.project)
+            .map_err(error)
+    }
+
     pub(super) fn workspace<'a>(&self, config: &'a Config, id: &str) -> Result<&'a Workspace> {
-        config
-            .workspaces
-            .iter()
-            .find(|w| w.id == id || w.short_name == id)
-            .ok_or_else(|| "discord.error.workspace_missing".into())
+        engine::navigation::Navigator::new(config)
+            .parent(id)
+            .map(|selection| selection.project)
+            .map_err(error)
     }
 
     pub(super) async fn fresh(
