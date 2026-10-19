@@ -24,9 +24,9 @@ cargo clean
 ./dist/pocketpilot serve
 ```
 
-`doctor` 默认不联网；`--credentials` 不是 Discord token 有效性探测。查看 `configuration.discord_configured` 和 `discord_runtime_enabled`；`--connect` 检查 Codex 入口。`doctor --discord` 经配置代理只读查询 bot、application、guild 和 owner，输出安装链接；不注册命令、不连接 Gateway。Discord 在 `serve` 启动时再注册十个 `pp-*` guild commands 并连接 Gateway。
+`doctor` 默认不联网；`--credentials` 不是 Discord token 有效性探测。查看 `configuration.discord_configured` 和 `discord_runtime_enabled`；`--connect` 检查 Codex 入口。`doctor --discord` 经配置代理只读查询 bot、application、guild 和 owner，输出安装链接；不注册命令、不连接 Gateway。Discord 在 `serve` 启动时再注册`/pp` 与十个 `pp-*` guild commands 并连接 Gateway。
 
-`Discord slash-command prototype ready` 表示 REST 初始化、命令注册及客户端构造已完成；它在 `client.start()` 之前输出，**不代表已收到 Gateway Ready**。`Discord Gateway ready` 才表示收到实际 Ready 事件；最终仍以服务器 owner 执行 `/pp-workspaces` 获得回执为交互接通证据。
+`Discord slash-command prototype ready` 表示 REST 初始化、命令注册及客户端构造已完成；它在 `client.start()` 之前输出，**不代表已收到 Gateway Ready**。`Discord Gateway ready` 才表示收到实际 Ready 事件；最终仍以服务器 owner 执行 `/pp` 并点击菜单获得回执为交互接通证据。
 
 只配置 Discord 时移除未使用的 `[telegram]`，避免占位 token 导致另一 integration 启动失败。与 Telegram 共用时，使用启用 Discord feature 的同一个 `serve` 进程；同一 data_dir 不能另起第二个服务。
 
@@ -34,35 +34,26 @@ cargo clean
 
 ## 第一轮：工作空间 → 项目 → session（只读与映射）
 
-在测试服务器的普通文字频道执行，参数由 Discord 的 slash 表单填写：
+在测试服务器的普通文字频道输入 `/pp`，后续通过下拉框和按钮完成：
 
-```text
-/pp-workspaces
-/pp-projects workspace:执行环境的名称或ID
-/pp-sessions workspace:执行环境的名称或ID project:该环境内的项目短名或ID
-/pp-open workspace:执行环境的名称或ID project:项目短名或ID thread:会话完整ID
-```
+1. 选择工作空间（执行环境/主机），例如本机或云端。
+2. 选择该环境中的项目目录。项目每页最多 20 项，使用“下一页 / 上一页”，不复制 UUID。菜单只显示面包屑、当前范围和下拉框；目录过长时看末尾即可。
+3. 选择会话。会话每页 8 项，标题为主，emoji、状态文字与更新时间帮助区分；分页 cursor 不出现在回复里。
+4. 点击“进入会话”跳转到对应 session channel。也可“返回会话列表”，继续在原菜单选择。打开不 resume、不启动 turn。
+5. 核对工作空间 → 项目 → session 归属。再次打开相同会话复用原 channel，重复点击已消费的打开控件提示重新打开菜单，不重复创建资源。
 
-这里 workspace 指执行环境/主机，project 指该环境下的项目目录，thread 指项目内的原生 session。两端共用 engine::navigation 的目录归属、排序、选择校验；不能把另一个 workspace 的项目传给已选环境。
+`/pp-workspaces` 与 `/pp-open` 也可作为菜单入口。`/pp-projects workspace:环境名称`、`/pp-sessions workspace:环境名称 project:项目短名` 保留为直达入口；参数不完整时先补齐上层选择，不要求手填 thread ID 或 cursor。所有菜单仅调用者可见，翻页、返回和刷新更新原消息，不在频道追加长列表。
 
-预期出现一个 `PP · 项目` category 和一个 session channel。打开同一会话应复用原 channel，不重复创建。命令回执只有调用者可见，历史和后续输出发到 session channel。
+在 session channel 执行 `/pp-status`、`/pp-recent`，或用 `/pp-rename title:测试名称` 修改频道显示名。状态与回执显示标题、项目、状态文字，使用 emoji 辅助，不出现原始 thread/turn ID。核对原端没有因浏览、打开或查询新增 turn 或自动 resume。
 
-进入新 channel 执行：
-
-```text
-/pp-status
-/pp-recent
-/pp-rename title:discord-smoke
-```
-
-核对原生 thread ID 与 cwd；确认原端没有新增 turn，也没有因 `/pp-open` 或查询自动 resume。入场与 `/pp-recent` 只显示最近用户输入和对应 final。渲染后超限的结果分段发送为普通消息，不生成 `session.md`，不支持完整历史导出。
+入场与 `/pp-recent` 只显示最近用户输入和对应 final。渲染后超限的结果分段发送为普通消息，不生成 `session.md`，不支持完整历史导出。尚未载入的会话只有明确发送输入时才会 resume。
 
 ## 第二轮：创建、续轮和 steer
 
 先按 [共享执行验证](design/local-desktop.md#部署验证) 确认 provider 对应同一执行实例，停止桥接后用 `providers verify PROVIDER_ID --project PROJECT_ID` 验证专用会话并记录控制确认，再恢复桥接。`doctor --connect` 不会自动授予控制；已有通过验证的 provider 无需再次 trust。
 
 ```text
-/pp-new workspace:执行环境ID project:测试项目短名 text:只回复 DISCORD_SMOKE_OK，不运行工具，不修改文件 confirm:true
+/pp-new workspace:执行环境名称 project:测试项目短名 text:只回复 DISCORD_SMOKE_OK，不运行工具，不修改文件 confirm:true
 ```
 
 **Discord 的 `text` 是首轮任务，不是标题。** 此命令会创建原生会话、立即发送首轮，再建立 channel；与 Telegram 的 `/new` 不同。核对只创建一个 session、一轮输入和一个 channel。若收到未知结果提示，先在原端核对，不能反复执行 `/pp-new`。
@@ -83,6 +74,8 @@ NotLoaded 会话仅在明确 `/pp-ask` 时 resume。等待审批/用户输入的
 | --- | --- |
 | Markdown | 短合成样本包含标题、粗斜体、引用、列表、代码和链接；表格显示为列名与值，任务显示勾选框；HTML 与剧透标记保持字面含义 |
 | 动态标题 | 项目/session 名包含 `* _ ~ < > &` 与 emoji；菜单和状态卡保持文字，不产生额外格式 |
+| 菜单与移动端 | 下拉框选择执行环境 → 项目 → session，返回/分页刷新同一条消息；超长标题和 emoji 不超出 native option 限制，不显示 UUID 或 cursor |
+| 旧菜单 | 配置或范围变化后旧控件拒绝；过期时提示 /pp；读取失败保留上次菜单并给调用者错误提示 |
 | 长输出 | 专用测试会话产生超过 1,800 个 UTF-16 单元的合成文本，收到多条普通消息；中文、代码块内容完整，不出现自动生成的历史文件 |
 | 文件上传 | 在已绑定 channel 执行 `/pp-ask file:附件 text:查看此文件`；也可只填 file。Codex 收到执行主机上的文件路径，图片使用原生图片输入；无历史导出命令 |
 | mentions | 合成输出包含 `@everyone`、`<@123>` 和 `<@&123>`，不触发用户、角色或全体通知 |
@@ -101,7 +94,7 @@ NotLoaded 会话仅在明确 `/pp-ask` 时 resume。等待审批/用户输入的
 
 | 现象 | 优先检查 |
 | --- | --- |
-| 完全没有 `pp-*` 命令 | guild ID、Guild Install、`applications.commands`、初始化报错；命令是 guild 级，不是等待全局传播 |
+| 完全没有 `/pp` 或 `pp-*` 命令 | guild ID、Guild Install、`applications.commands`、初始化报错；命令是 guild 级，不是等待全局传播；更新后可重开 Discord 客户端 |
 | ready 日志出现，但命令显示应用未响应 | Gateway 网络、Interactions Endpoint 是否非空、进程是否退出；不能只看初始化日志 |
 | 只能看到 workspace，无法 ask/new | provider 是否已完成控制确认；命令是否在正确 session channel；是否是 owner |
 | 命令有回执但 channel/附件失败 | bot 的 Manage Channels / View Channels / Send Messages / Attach Files，以及 category 覆盖权限 |

@@ -332,7 +332,7 @@ Telegram 的 presentation/markdown/presence/i18n 是独立平铺模块。Appeara
 
 ## 公共导航
 
-聊天界面的 workspace 表示执行环境/主机（Host），project 表示该环境内的项目目录（持久化 Workspace），session 位于项目内。engine::navigation 是 Slack/Discord 的公共目录选择模块，集中处理归属校验、排序、歧义拒绝与分页；平台模块只生成原生控件或命令。session 查询、操作账本、会话 actor 和 provider 连接仍由现有 engine/session 模块共享。
+聊天界面的 workspace 表示执行环境/主机（Host），project 表示该环境内的项目目录（持久化 Workspace），session 位于项目内。engine::navigation 是 Slack/Discord 的公共目录选择模块，集中处理归属校验、排序、歧义拒绝与分页；平台模块只生成原生控件或命令。Discord /pp 使用私有的原生 select/buttons，逐层更新同一菜单；持久动作句柄验证 owner、服务器、channel、配置和有效期，UI 不展示内部 ID。session 查询、操作账本、会话 actor 和 provider 连接仍由现有 engine/session 模块共享。
 
 
 ## 公共正文与平台显示

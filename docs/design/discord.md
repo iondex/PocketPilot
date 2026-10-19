@@ -17,32 +17,34 @@ cargo clean
 
 可以只配 Discord，也可以与 Telegram 同进程启动。未启用编译 feature 却填写 Discord 配置会明确报错；没有两个并行服务争用同一个账本的部署方式。host/workspace 沿用同一根配置，平台 token/guild 和 data_dir 改动需要重启桥接。
 
-启动只 upsert 自己的 pp-* guild commands，不批量删除其他命令。应用 ID 由 Discord 官方账号接口取得。服务器 owner 在请求执行前重新校验；默认命令权限是 Administrator，但其他管理员不能通过原型的 owner 校验。群外、私信、其他 guild 和非 owner 都不能进入控制流程。
+启动只 upsert 自己的 /pp 与 pp-* guild commands，不批量删除其他命令。应用 ID 由 Discord 官方账号接口取得。服务器 owner 在请求执行前重新校验；默认命令权限是 Administrator，但其他管理员不能通过原型的 owner 校验。群外、私信、其他 guild 和非 owner 都不能进入控制流程。
 
 ## 交互
 
 | 命令 | 行为 |
 | --- | --- |
-| /pp-workspaces | 选择工作空间（本机/AWS 等执行环境） |
-| /pp-projects workspace:环境名称或ID | 查看该环境内的项目目录和短名 |
-| /pp-sessions workspace:环境 project:项目短名 | 分页列出状态、短标题和 thread ID；下一页传返回的 cursor |
-| /pp-open workspace:环境 project:项目短名 thread:ID | 为已有会话建立 category/channel 映射；不 resume 或发送输入 |
+| /pp | 打开私有原生菜单，依次选择工作空间、项目和会话 |
+| /pp-workspaces、/pp-open | 同样打开选择菜单，不需要 thread ID |
+| /pp-projects workspace:环境名称 | 直接进入项目下拉框；不填环境时先选工作空间 |
+| /pp-sessions workspace:环境 project:项目短名 | 直接进入会话下拉框；缺少选择时返回相应上层 |
 | /pp-new workspace:环境 project:项目短名 text:内容 confirm:true | 明确创建新会话并发首轮，每步单独持久回执 |
 | /pp-ask text:内容 | 在绑定 channel 内续轮；NotLoaded 显式 resume，active 使用 expectedTurnId steer |
 | /pp-status | 只读刷新状态 |
-| /pp-recent | 一个消息/附件查看全部可读 user/agent 文本 |
+| /pp-recent | 在绑定会话中显示最近用户输入及对应 final，长结果分段显示 |
 | /pp-rename title:显示名 | 只修改 Discord channel 名 |
 | /pp-unbind | 只解除映射，原生会话继续运行 |
 
 命令先收到 ephemeral ACK，再处理慢 SSH。操作回执仅发送给调用者，实际会话历史与输出进入其 session channel。新 category 对 @everyone 隐藏，owner 和 bot 有显式访问权限；已有服务器管理员仍遵循 Discord 自身权限规则。
 
-用户先选 workspace（执行环境/主机），再选项目目录，最后选 session。目录选择、归属校验与排序复用 engine::navigation；平台只负责命令呈现。
+用户先选 workspace（执行环境/主机），再选项目目录，最后选 session。目录选择、归属校验与排序复用 engine::navigation；平台只负责原生 select/buttons 呈现。菜单默认对调用者私有，使用传统消息组件，不启用 Components V2。工作空间和项目每页最多 20 项，会话每页 8 项。选择、返回、分页与刷新更新同一条菜单消息，不追加长列表。项目目录在 option description 中显示，过长保留末尾；会话标题是 option label，状态与相对更新时间是说明，emoji 只辅助状态文字；当前页存在重名标题时增加可读序号。UUID、turn ID、分页 cursor 不作为可见信息。
 
-一个项目一个 PP category，一个 session 一个短名 channel；短名尾部保留 thread 标识。channel 内固定状态卡展示状态、短标题和 thread ID。进入会话显示最后用户输入与对应 final；正文通过公共 Markdown 解析输出 Discord 支持的子集，菜单和动态标题按字面转义。渲染后超过 1,800 个 UTF-16 单元时按结构分段；不能保真的语法保留为文字，不生成 `session.md`，也不提供完整历史导出。分段结果和已确认段号持久保存。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
+一个项目一个 PP category，一个 session 一个短名 channel；短名只使用标题，不附加 thread ID。Discord 允许同名 channel，实际绑定仍由唯一 ID 和账本区分。channel 内状态卡展示标题、状态与项目，操作回执不显示原始 turn ID。进入会话显示最后用户输入与对应 final；正文通过公共 Markdown 解析输出 Discord 支持的子集，菜单和动态标题按字面转义。渲染后超过 1,800 个 UTF-16 单元时按结构分段；不能保真的语法保留为文字，不生成 `session.md`，也不提供完整历史导出。分段结果和已确认段号持久保存。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
 
 ## 持久化与生命周期
 
 平台 ID 按字符串保存，避免 Discord snowflake 的有符号整数边界。discord_categories、discord_provisions 保存资源创建前的 dispatching 和返回 ID；未知结果不再自动创建，避免重复 category/channel。原型尚无资源核对 CLI：未知创建需管理员先检查 Discord 和本地账本，不能直接反复执行命令。
+
+discord_ui_actions 保存菜单动作及 bot/guild/owner/channel/config hash/过期边界。控件只携带随机句柄，select 的数字 value 是该动作保存的选项下标，不能当作任意项目或 thread ID。每次点击重新验证 owner 和当前配置；打开会话的动作原子消费，重复点击不能重复创建资源，未知结果不重发。菜单通常有效 24 小时，过期或配置变化时提示 /pp 重新打开，后台不创建/恢复原生任务。
 
 discord_bindings 保存 bot/guild/channel、owner、workspace/instance/thread、cwd 和 endpoint 指纹；数据库禁止改绑身份。解绑保留记录，同会话恢复到原 channel；更换会话必须创建另一个 channel。workspace 范围或 endpoint 改变时冻结旧映射。删除 category/channel 后的自动替换暂未实现，需人工核对。
 
@@ -56,9 +58,9 @@ agent 输入使用与 Telegram 相同的 operations 状态机：Received → Pre
 
 ## 验证与下一阶段
 
-当前 mock HTTP + 类型化 WebSocket fixture 覆盖 category/channel 创建、最近交互过滤、只读进入、steer、同 interaction 去重、丢回执不重发、owner 拒绝、解绑不停止任务；另有持久资源/输出恢复与容器不可改绑测试。
+当前 mock HTTP + 类型化 WebSocket fixture 覆盖原生菜单 owner/配置隔离、分页与回退、component ACK 后更新原消息、打开动作单次消费，以及 category/channel 创建、最近交互过滤、只读进入、steer、同 interaction 去重、丢回执不重发、owner 拒绝、解绑不停止任务；另有持久资源/输出恢复与容器不可改绑测试。
 
-真实 gateway、权限、上传和断网行为需要在目标服务器单独验收。下一阶段再增加 select/button 菜单、普通 channel 文本输入、完整离线 inbox、资源核对 CLI、删除 channel 后替换与可配置合并预算。当前用 slash 明确发消息，避免把普通聊天误当 agent 输入。
+真实 gateway、权限、上传和断网行为需要在目标服务器单独验收。下一阶段再评估普通 channel 文本输入、完整离线 inbox、资源核对 CLI、删除 channel 后替换与可配置合并预算。当前用 slash 明确发消息，避免把普通聊天误当 agent 输入。
 
 只读接入诊断使用 `doctor --discord`；Gateway 的实际 Ready 事件会记录 `Discord Gateway ready`，与 REST 初始化日志区分。
 

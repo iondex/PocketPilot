@@ -99,3 +99,5 @@ cargo build -p app --release --no-default-features --locked
 中英文 UI 使用 rust-i18n，偏好按 bot/user 独立持久化。/language zh-CN 切换中文，/language en 切换英文；默认中文，telegram.default_locale 可选 zh-CN、en 或 auto。语言资源编译进 binary，运行时仍只读取根 TOML。
 
 三端支持用户上传文件给 Codex：Telegram 在绑定话题、Slack 在绑定 thread、Discord 使用 `/pp-ask file:…`。文件与文字分别处理，见 [附件说明](docs/attachments.md)。
+
+Discord 使用 `/pp` 打开原生下拉菜单：工作空间 → 项目 → 会话。返回、分页、刷新均更新原消息，点击“进入会话”跳转，无需复制 ID。
