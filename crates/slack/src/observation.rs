@@ -118,17 +118,14 @@ impl Service {
                 .join("\n\n────────\n\n")
         } else {
             session::delivery::latest_interaction_in(&history, &self.locale())
-                .chars()
-                .take(1200)
-                .collect()
         };
         self.store
-            .publish(b, &render::message(text), &observed, &snapshot.hash)
+            .publish(b, &render::markdown(text), &observed, &snapshot.hash)
             .await?;
         let text = format!(
             "{}\n{}\n{}",
             session::delivery::short_title(&current.title, 80),
-            current.status.label_in(&self.locale()),
+            current.status.text_in(&self.locale()),
             b.thread
         );
         self.publish_card(b, &text, &snapshot.hash).await

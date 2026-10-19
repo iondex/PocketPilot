@@ -13,6 +13,9 @@ pub mod storage;
 mod render;
 
 #[cfg(feature = "runtime")]
+mod markdown;
+
+#[cfg(feature = "runtime")]
 pub mod runtime;
 
 #[cfg(feature = "runtime")]

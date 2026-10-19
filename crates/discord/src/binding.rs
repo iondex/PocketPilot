@@ -139,7 +139,7 @@ impl Service {
             "discord.session.added",
             locale = &locale,
             channel = channel,
-            state = current.status.label_in(&locale)
+            state = current.status.text_in(&locale)
         ))
     }
 }

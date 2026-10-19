@@ -90,6 +90,90 @@ fn credentials_and_mentions_are_not_exposed() {
     assert!(render::message("界".repeat(2801)).document);
 }
 
+#[test]
+fn markdown_uses_typed_rich_text_and_old_outboxes_remain_literal() {
+    let source = "# 标题\n\n前文**中文。**后文 _italic_ ~~old~~ `a < b`\n\n> note\n\n3. first\n4. second\n\n```rust\nlet s = \"<&>\";\n```\n\n<@U3> <!channel> :custom: 👩‍💻 [docs](https://example.com)";
+    let content = render::markdown(source.into());
+    assert!(!content.document);
+    assert_eq!(content.text, source);
+    let wire = serde_json::to_value(crate::api::Api::content(&content)).unwrap();
+    assert_eq!(wire["blocks"][0]["type"], "rich_text");
+    let elements = wire["blocks"][0]["elements"].as_array().unwrap();
+    assert!(
+        elements
+            .iter()
+            .any(|e| e["type"] == "rich_text_preformatted")
+    );
+    assert!(elements.iter().any(|e| e["type"] == "rich_text_quote"));
+    assert!(
+        elements
+            .iter()
+            .any(|e| e["type"] == "rich_text_list" && e["offset"] == 2)
+    );
+    let serialized = serde_json::to_string(&wire["blocks"]).unwrap();
+    assert!(serialized.contains("\"bold\":true"));
+    assert!(serialized.contains("\"italic\":true"));
+    assert!(serialized.contains("\"strike\":true"));
+    assert!(serialized.contains("\"code\":true"));
+    assert!(serialized.contains("\"type\":\"link\""));
+    assert!(!serialized.contains("\"type\":\"user\""));
+    assert!(!serialized.contains("\"type\":\"broadcast\""));
+    assert!(serialized.contains("<@U3>"));
+    assert!(serialized.contains(":custom: 👩‍💻"));
+    assert!(wire["text"].as_str().unwrap().contains("&lt;!channel&gt;"));
+    let old: Content = serde_json::from_str(r#"{"text":"**literal** <@U3>"}"#).unwrap();
+    assert_eq!(old.format, session::markdown::Format::Plain);
+}
+
+#[test]
+fn markdown_tables_and_limits_fall_back_without_losing_the_source() {
+    let table = render::markdown("| Name | Value |\n|---|---|\n| Alpha | **bold** |".into());
+    assert!(!table.document);
+    let text = crate::api::Api::content(&table).text.unwrap();
+    assert!(text.contains("Name: Alpha"));
+    assert!(text.contains("Value: bold"));
+    let source = "x\n\n".repeat(51);
+    let content = render::markdown(source.clone());
+    assert!(content.document);
+    assert_eq!(content.text, source);
+    assert!(render::markdown("😀".repeat(1401)).document);
+}
+
+#[tokio::test]
+async fn markdown_post_and_update_keep_fallback_literal_and_unfurls_disabled() {
+    use crate::api::Platform;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{body_partial_json, method, path},
+    };
+    let server = MockServer::start().await;
+    for endpoint in ["chat.postMessage", "chat.update"] {
+        Mock::given(method("POST"))
+            .and(path(format!("/api/{endpoint}")))
+            .and(body_partial_json(serde_json::json!({
+                "channel":"D1", "mrkdwn":false, "link_names":false,
+                "text":"Bold &lt;@U3&gt;"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok":true, "channel":"D1", "ts":"123.000001",
+                "message":{"ts":"123.000001", "text":"Bold <@U3>"}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let api = fixture_api(&server.uri());
+    let content = render::markdown("**Bold** <@U3>".into());
+    api.post("D1", None, &content).await.unwrap();
+    api.update("D1", "123.000001", &content).await.unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let post: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(post["unfurl_links"], false);
+    assert_eq!(post["unfurl_media"], false);
+    assert_eq!(post["parse"], "none");
+    assert_eq!(post["blocks"][0]["type"], "rich_text");
+}
+
 #[tokio::test]
 async fn modal_navigation_source_survives_persistence_and_does_not_retarget_session_controls() {
     let dir = tempfile::tempdir().unwrap();

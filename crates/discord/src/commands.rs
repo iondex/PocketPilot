@@ -71,7 +71,7 @@ impl Service {
                     .map(|s| {
                         format!(
                             "{} · {}\n{}",
-                            s.status.label_in(&locale),
+                            s.status.text_in(&locale),
                             session::delivery::short_title(&s.title, 45),
                             s.reference.thread
                         )
@@ -266,7 +266,7 @@ impl Service {
                         "discord.session.details",
                         locale = &locale,
                         title = current.title,
-                        state = current.status.label_in(&locale),
+                        state = current.status.text_in(&locale),
                         workspace = &ws.name,
                         thread = &b.thread
                     ))

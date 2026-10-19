@@ -23,6 +23,9 @@ pub use runtime::Discord;
 pub mod api;
 
 #[cfg(feature = "runtime")]
+mod render;
+
+#[cfg(feature = "runtime")]
 pub mod gateway;
 
 #[cfg(feature = "runtime")]

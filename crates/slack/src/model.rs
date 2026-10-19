@@ -65,6 +65,8 @@ pub struct Request {
 pub struct Content {
     pub text: String,
     #[serde(default)]
+    pub format: session::markdown::Format,
+    #[serde(default)]
     pub blocks: Vec<SlackBlock>,
     #[serde(default)]
     pub document: bool,

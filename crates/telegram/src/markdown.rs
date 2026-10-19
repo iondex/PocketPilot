@@ -2,8 +2,7 @@
 use pulldown_cmark::{Event, Tag, TagEnd};
 use unicode_width::UnicodeWidthStr;
 
-#[path = "markdown_input.rs"]
-mod input;
+use session::markdown::input;
 
 #[derive(Default)]
 pub struct Rendered {

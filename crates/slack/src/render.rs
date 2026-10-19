@@ -72,23 +72,7 @@ pub fn compact_actions(content: &mut Content) {
 }
 
 pub fn state(status: &session::RuntimeStatus, locale: &str) -> String {
-    use session::RuntimeStatus;
-    let id = match status {
-        RuntimeStatus::NotLoaded => "state.not_loaded",
-        RuntimeStatus::Idle => "state.idle",
-        RuntimeStatus::Active {
-            waiting_on_approval: true,
-            ..
-        } => "state.waiting_approval",
-        RuntimeStatus::Active {
-            waiting_on_user_input: true,
-            ..
-        } => "state.waiting_input",
-        RuntimeStatus::Active { .. } => "state.active",
-        RuntimeStatus::SystemError => "state.error",
-        RuntimeStatus::Unknown => "state.unknown",
-    };
-    i18n::text(locale, id)
+    status.text_in(locale)
 }
 
 pub fn button(label: &str, nonce: &str) -> SlackBlock {
@@ -102,7 +86,7 @@ pub fn button(label: &str, nonce: &str) -> SlackBlock {
 }
 
 pub fn message(text: String) -> Content {
-    let document = text.chars().count() > 2800;
+    let document = !session::markdown::fits(&text, 2800);
     Content {
         blocks: if document || text.is_empty() {
             vec![]
@@ -110,7 +94,26 @@ pub fn message(text: String) -> Content {
             vec![plain(&text)]
         },
         text,
+        format: session::markdown::Format::Plain,
         document,
         edit: false,
     }
+}
+
+pub fn markdown(text: String) -> Content {
+    let mut content = message(text);
+    content.format = session::markdown::Format::Markdown;
+    content.document = !session::markdown::fits(&content.text, 2800);
+    if !content.document {
+        content.blocks = session::markdown::Document::parse(&content.text)
+            .ok()
+            .and_then(|doc| crate::markdown::blocks(&doc))
+            .unwrap_or_else(|| {
+                content.document = true;
+                Vec::new()
+            });
+    } else {
+        content.blocks.clear();
+    }
+    content
 }

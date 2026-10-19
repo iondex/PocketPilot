@@ -134,13 +134,17 @@ impl Service {
                     format!(
                         "{}\n{}\n{}",
                         current.title,
-                        current.status.label_in(&self.locale()),
+                        current.status.text_in(&self.locale()),
                         b.thread
                     )
                 };
                 self.fresh(r, hash)?;
                 self.bound(r).await?;
-                let mut c = render::message(text);
+                let mut c = if matches!(r.command, Command::History { .. }) {
+                    render::markdown(text)
+                } else {
+                    render::message(text)
+                };
                 if matches!(r.command, Command::History { export: true }) {
                     c.document = true;
                 }
@@ -281,7 +285,7 @@ impl Service {
             let text = format!(
                 "{}\n{}\n{}",
                 session::delivery::short_title(&current.title, 80),
-                current.status.label_in(&self.locale()),
+                current.status.text_in(&self.locale()),
                 thread
             );
             b.root = self
@@ -296,11 +300,11 @@ impl Service {
         self.fresh(r, hash)?;
         if !b.history_ready {
             let preview = session::delivery::latest_interaction_in(&history, &self.locale());
-            let text = preview.chars().take(1200).collect::<String>();
+            let text = preview;
             self.store
                 .publish(
                     &b,
-                    &render::message(text),
+                    &render::markdown(text),
                     &super::observation::hashes(&history)?,
                     hash,
                 )

@@ -3039,9 +3039,11 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "i18n",
+ "pulldown-cmark",
  "serde",
  "thiserror 2.0.21",
  "unicode-segmentation",
+ "url",
 ]
 
 [[package]]

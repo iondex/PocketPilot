@@ -1623,6 +1623,44 @@ async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receip
 }
 
 #[tokio::test]
+async fn discord_formats_output_preserves_attachment_bytes_and_disables_mentions_on_edits() {
+    let http = MockServer::start().await;
+    let response = serde_json::json!({
+        "id":"12", "channel_id":"11",
+        "author":{"id":"1", "username":"fixture", "discriminator":"0000", "avatar":null},
+        "content":"fixture", "timestamp":"2026-01-01T00:00:00Z", "edited_timestamp":null,
+        "tts":false, "mention_everyone":false, "mentions":[], "mention_roles":[],
+        "attachments":[], "embeds":[], "pinned":false, "type":0
+    });
+    Mock::given(path_regex(".*/channels/11/messages(/12)?$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .expect(3)
+        .mount(&http)
+        .await;
+    let api = discord::Api::local_fixture(&http.uri(), 2, 1);
+    api.send_in(11, "**Bold** @everyone <@123>", "en")
+        .await
+        .unwrap();
+    api.card(11, 12, "**title** <#123>").await.unwrap();
+    let source = "````text\nORIGINAL_三反引号_👩‍💻```\n````";
+    api.send_in(11, source, "en").await.unwrap();
+    let requests = http.received_requests().await.unwrap();
+    let sent: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let edited: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(sent["content"], "**Bold** @everyone \\<@123\\>");
+    assert_eq!(edited["content"], "\\*\\*title\\*\\* \\<\\#123\\>");
+    for request in [sent, edited] {
+        assert_eq!(request["allowed_mentions"]["parse"], serde_json::json!([]));
+        assert_eq!(request["allowed_mentions"]["replied_user"], false);
+    }
+    let upload = std::str::from_utf8(&requests[2].body).unwrap();
+    assert!(upload.contains("session.md"));
+    assert!(upload.contains(source));
+    assert!(upload.contains("allowed_mentions"));
+    assert!(upload.contains("\"parse\":[]"));
+}
+
+#[tokio::test]
 async fn private_pairing_topic_history_and_steer_form_a_durable_workflow() {
     let fixture = Fixture::new().await;
     fixture

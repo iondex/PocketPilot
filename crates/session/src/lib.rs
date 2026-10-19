@@ -2,6 +2,8 @@ pub mod delivery;
 
 pub mod content;
 
+pub mod markdown;
+
 pub mod model;
 
 pub mod operation;

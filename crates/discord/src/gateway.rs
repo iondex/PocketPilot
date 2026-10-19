@@ -46,8 +46,15 @@ impl EventHandler for Handler {
             }
         }
         let parsed = crate::parse(&command.data.name, &fields, confirmed);
+        let mut markdown = false;
+        let mut channel_link = false;
         let text = match parsed {
             Ok(action) => {
+                let history = matches!(action, crate::Command::History);
+                let opened = matches!(
+                    action,
+                    crate::Command::Open { .. } | crate::Command::New { .. }
+                );
                 let input = Input {
                     locale: Some(command.locale.clone()),
                     id: command.id.get(),
@@ -61,23 +68,40 @@ impl EventHandler for Handler {
                 if self.api.authorize(&input).await.is_err() {
                     i18n::text(&command.locale, "discord.owner_only")
                 } else {
-                    self.backend
-                        .handle(&self.api, input)
-                        .await
-                        .unwrap_or_else(|e| e.render(&command.locale))
+                    match self.backend.handle(&self.api, input).await {
+                        Ok(text) => {
+                            markdown = history;
+                            // Open/New return only localized static text, a numeric channel ID,
+                            // and a localized state. Preserve that generated navigation link.
+                            channel_link = opened;
+                            text
+                        }
+                        Err(error) => error.render(&command.locale),
+                    }
                 }
             }
             Err(error) => i18n::LocalizedError::localized(&error, &command.locale),
         };
         let mut reply = EditInteractionResponse::new().allowed_mentions(crate::api::mentions());
-        if text.len() > 8 * 1024 * 1024 {
-            reply = reply.content(i18n::text(&command.locale, "discord.history.too_large"));
-        } else if text.chars().count() > 1800 {
-            reply = reply
-                .content(i18n::text(&command.locale, "discord.history.attachment"))
-                .new_attachment(CreateAttachment::bytes(text.into_bytes(), "session.md"));
-        } else {
+        if channel_link {
             reply = reply.content(text);
+        } else {
+            let format = if markdown {
+                session::markdown::Format::Markdown
+            } else {
+                session::markdown::Format::Plain
+            };
+            match crate::render::content(&text, format) {
+                Err(_) => {
+                    reply = reply.content(i18n::text(&command.locale, "discord.history.too_large"));
+                }
+                Ok(content) if content.attachment => {
+                    reply = reply
+                        .content(i18n::text(&command.locale, "discord.history.attachment"))
+                        .new_attachment(CreateAttachment::bytes(text.into_bytes(), "session.md"));
+                }
+                Ok(content) => reply = reply.content(content.text),
+            }
         }
         if command.edit_response(&ctx.http, reply).await.is_err() {
             tracing::warn!("Discord interaction response unavailable; not resent");

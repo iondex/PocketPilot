@@ -173,11 +173,30 @@ impl Api {
     }
 
     pub async fn send_in(&self, channel: u64, text: &str, locale: &str) -> Result<u64, Error> {
-        if text.len() > 8 * 1024 * 1024 {
-            return Err(Error::TooLarge);
-        }
+        self.send_formatted(channel, text, locale, session::markdown::Format::Markdown)
+            .await
+    }
+
+    pub(crate) async fn send_plain_in(
+        &self,
+        channel: u64,
+        text: &str,
+        locale: &str,
+    ) -> Result<u64, Error> {
+        self.send_formatted(channel, text, locale, session::markdown::Format::Plain)
+            .await
+    }
+
+    async fn send_formatted(
+        &self,
+        channel: u64,
+        text: &str,
+        locale: &str,
+        format: session::markdown::Format,
+    ) -> Result<u64, Error> {
+        let content = crate::render::content(text, format).map_err(|_| Error::TooLarge)?;
         let mut message = CreateMessage::new().allowed_mentions(mentions());
-        if text.chars().count() > 1800 {
+        if content.attachment {
             message = message
                 .content(i18n::text(locale, "discord.history.attachment"))
                 .add_file(CreateAttachment::bytes(
@@ -185,7 +204,7 @@ impl Api {
                     "session.md",
                 ));
         } else {
-            message = message.content(text);
+            message = message.content(content.text);
         }
         ChannelId::new(channel)
             .send_message(&self.http, message)
@@ -200,7 +219,7 @@ impl Api {
                 &self.http,
                 MessageId::new(message),
                 EditMessage::new()
-                    .content(text)
+                    .content(crate::render::literal(text))
                     .allowed_mentions(mentions()),
             )
             .await

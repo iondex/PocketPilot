@@ -89,7 +89,7 @@ impl Service {
         }
         let card = format!(
             "{} · {}\nthread：{}",
-            current.status.label_in(locale),
+            current.status.text_in(locale),
             session::delivery::short_title(&current.title, 80),
             b.thread
         );
@@ -128,7 +128,7 @@ impl Service {
                 .await
                 .map_err(error)?;
             let id = api
-                .send_in(channel, text, &self.config.snapshot().config.language)
+                .send_plain_in(channel, text, &self.config.snapshot().config.language)
                 .await
                 .map_err(error)?;
             self.store

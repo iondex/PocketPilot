@@ -26,7 +26,16 @@ impl RuntimeStatus {
     }
 
     pub fn label_in(&self, locale: &str) -> String {
-        let (emoji, id) = match self {
+        let (emoji, _) = self.presentation();
+        format!("{emoji} {}", self.text_in(locale))
+    }
+
+    pub fn text_in(&self, locale: &str) -> String {
+        i18n::text(locale, self.presentation().1)
+    }
+
+    fn presentation(&self) -> (&'static str, &'static str) {
+        match self {
             Self::NotLoaded => ("⚪", "state.not_loaded"),
             Self::Idle => ("🟢", "state.idle"),
             Self::Active {
@@ -40,8 +49,7 @@ impl RuntimeStatus {
             Self::Active { .. } => ("🔵", "state.active"),
             Self::SystemError => ("🔴", "state.error"),
             Self::Unknown => ("⚫", "state.unknown"),
-        };
-        format!("{emoji} {}", i18n::text(locale, id))
+        }
     }
 }
 

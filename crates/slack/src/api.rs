@@ -32,6 +32,16 @@ pub struct Api {
     pub direct_channel: String,
 }
 
+// The SDK has no mrkdwn field on these requests. Keep its DTOs and add the
+// documented top-level flag so notifications stay literal beside rich_text blocks.
+#[derive(serde::Serialize)]
+struct LiteralFallback<T> {
+    #[serde(flatten)]
+    request: T,
+    mrkdwn: bool,
+    link_names: bool,
+}
+
 pub fn map_error(error: SlackClientError) -> Error {
     match error {
         SlackClientError::RateLimitError(e) => Error::RateLimit(
@@ -126,7 +136,14 @@ impl Api {
     }
 
     pub fn content(content: &Content) -> SlackMessageContent {
-        let mut result = SlackMessageContent::new().with_text(crate::render::escape(&content.text));
+        let fallback = if content.format == session::markdown::Format::Markdown {
+            session::markdown::Document::parse(&content.text)
+                .map(|doc| doc.plain())
+                .unwrap_or_else(|_| content.text.clone())
+        } else {
+            content.text.clone()
+        };
+        let mut result = SlackMessageContent::new().with_text(crate::render::escape(&fallback));
         if !content.blocks.is_empty() {
             result = result.with_blocks(content.blocks.clone());
         }
@@ -152,17 +169,36 @@ impl Platform for Api {
             .with_unfurl_links(false)
             .with_unfurl_media(false)
             .with_parse("none".into());
-        Ok(bounded(session.chat_post_message(&request))
-            .await?
-            .ts
-            .to_string())
+        let request = LiteralFallback {
+            request,
+            mrkdwn: false,
+            link_names: false,
+        };
+        let response: SlackApiChatPostMessageResponse = bounded(
+            session
+                .http_session_api
+                .http_post("chat.postMessage", &request, None),
+        )
+        .await?;
+        Ok(response.ts.to_string())
     }
 
     async fn update(&self, channel: &str, root: &str, content: &Content) -> Result<()> {
         self.channel(channel).await?;
         let request =
             SlackApiChatUpdateRequest::new(channel.into(), Self::content(content), root.into());
-        bounded(self.client.open_session(&self.token).chat_update(&request)).await?;
+        let request = LiteralFallback {
+            request,
+            mrkdwn: false,
+            link_names: false,
+        };
+        let _: SlackApiChatUpdateResponse = bounded(
+            self.client
+                .open_session(&self.token)
+                .http_session_api
+                .http_post("chat.update", &request, None),
+        )
+        .await?;
         Ok(())
     }
 
