@@ -201,7 +201,6 @@ pub struct Delivery {
     pub history_active: String,
     pub history_preview_chars: usize,
     pub history_idle: String,
-    pub overflow: String,
 }
 
 impl Default for Delivery {
@@ -215,7 +214,6 @@ impl Default for Delivery {
             history_active: "recent_preview".into(),
             history_preview_chars: 1200,
             history_idle: "last_user_and_final".into(),
-            overflow: "single_document".into(),
         }
     }
 }
@@ -382,7 +380,6 @@ impl Config {
             || d.history_active != "recent_preview"
             || !(256..=2800).contains(&d.history_preview_chars)
             || d.history_idle != "last_user_and_final"
-            || d.overflow != "single_document"
             || self.config_reload.periodic_rescan_seconds == 0
             || !matches!(self.logging.format.as_str(), "json" | "text")
             || !matches!(self.logging.rotation.as_str(), "daily" | "hourly")

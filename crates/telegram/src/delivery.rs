@@ -79,6 +79,41 @@ impl Service {
                 {
                     continue;
                 }
+                let parts = if let Some(saved) = &row.rendered_parts {
+                    match serde_json::from_str::<Vec<Outbound>>(saved) {
+                        Ok(parts) => parts,
+                        Err(_) => break,
+                    }
+                } else {
+                    match body.parts() {
+                        Ok(parts) => {
+                            if parts.len() > 1
+                                && !self
+                                    .store
+                                    .prepare_parts(&row, &parts)
+                                    .await
+                                    .unwrap_or(false)
+                            {
+                                continue;
+                            }
+                            parts
+                        }
+                        Err(_) => {
+                            let _ = self
+                                .store
+                                .delivery_state(&row.id, "pending", "rejected", None, 0)
+                                .await;
+                            continue;
+                        }
+                    }
+                };
+                let Some(part) = usize::try_from(row.next_part)
+                    .ok()
+                    .and_then(|i| parts.get(i))
+                else {
+                    break;
+                };
+                body = part.clone();
                 if self
                     .store
                     .delivery_state(&row.id, "pending", "dispatching", None, 0)
@@ -192,7 +227,11 @@ impl Service {
                         }
                         let _ = self
                             .store
-                            .delivery_state(&row.id, "dispatching", "delivered", message, 0)
+                            .acknowledge_part(
+                                &row,
+                                message,
+                                row.next_part as usize + 1 < parts.len(),
+                            )
                             .await;
                         if let Some(message) = message
                             && row.source_key.starts_with("status:")

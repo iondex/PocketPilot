@@ -6,12 +6,12 @@ use teloxide::{
     Bot,
     payloads::{
         CreateForumTopicSetters, EditForumTopicSetters, EditMessageTextSetters, GetUpdatesSetters,
-        SendChatActionSetters, SendDocumentSetters, SendMessageSetters,
+        SendChatActionSetters, SendMessageSetters,
     },
     prelude::Requester,
     requests::Request,
     types::{
-        AllowedUpdate, ChatAction, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile,
+        AllowedUpdate, ChatAction, ChatId, InlineKeyboardButton, InlineKeyboardMarkup,
         LinkPreviewOptions, MessageId, ParseMode, ThreadId, Update, UpdateKind,
     },
 };
@@ -26,6 +26,8 @@ mod command_menu;
 /// Small persisted inputs; unsupported/media/group updates never become user actions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Input {
+    #[serde(default)]
+    pub uploads: Vec<session::files::Incoming>,
     pub update_id: u32,
     #[serde(default)]
     pub locale: Option<String>,
@@ -88,6 +90,29 @@ pub fn input(update: &Update) -> Option<Input> {
         return None;
     }
     Some(Input {
+        uploads: if callback.is_none() {
+            let mut files = Vec::new();
+            if let Some(file) = message.document() {
+                files.push(session::files::Incoming {
+                    name: file.file_name.clone().unwrap_or_else(|| "file".into()),
+                    location: file.file.id.to_string(),
+                    image: file
+                        .mime_type
+                        .as_ref()
+                        .is_some_and(|m| session::files::image_mime(m.essence_str())),
+                });
+            }
+            if let Some(file) = message.photo().and_then(|p| p.last()) {
+                files.push(session::files::Incoming {
+                    name: "image.jpg".into(),
+                    location: file.file.id.to_string(),
+                    image: true,
+                });
+            }
+            files
+        } else {
+            Vec::new()
+        },
         update_id: update.id.0,
         locale: user.language_code.clone(),
         event_key: if callback.is_some() {
@@ -136,6 +161,7 @@ pub struct Button {
 
 #[derive(Clone)]
 pub struct Api {
+    proxy: network::Proxy,
     bot: Bot,
     timeout: Duration,
     icons: Arc<Mutex<topic_icons::Cache>>,
@@ -158,6 +184,7 @@ impl Api {
             .build()
             .map_err(|_| Error::Network)?;
         Ok(Self {
+            proxy: Default::default(),
             bot: Bot::with_client(token.expose_secret(), client).set_api_url(url),
             timeout: Duration::from_secs(2),
             icons: Arc::default(),
@@ -169,7 +196,9 @@ impl Api {
     }
 
     pub fn with_proxy(token: SecretString, proxy: &network::Proxy) -> Result<Self, Error> {
-        Self::with_builder(token, proxy.http_builder().map_err(|_| Error::Network)?)
+        let mut api = Self::with_builder(token, proxy.http_builder().map_err(|_| Error::Network)?)?;
+        api.proxy = proxy.clone();
+        Ok(api)
     }
 
     fn with_builder(token: SecretString, builder: reqwest::ClientBuilder) -> Result<Self, Error> {
@@ -180,6 +209,7 @@ impl Api {
             .build()
             .map_err(|_| Error::Network)?;
         Ok(Self {
+            proxy: Default::default(),
             bot: Bot::with_client(token.expose_secret(), client),
             timeout: Duration::from_secs(50),
             icons: Arc::default(),
@@ -195,6 +225,40 @@ impl Api {
             webhook_enabled: webhook.url.is_some(),
             topics_enabled: me.has_topics_enabled,
             user_topic_creation_enabled: me.allows_users_to_create_topics,
+        })
+    }
+
+    pub async fn download(
+        &self,
+        file: &session::files::Incoming,
+    ) -> Result<session::files::Downloaded, Error> {
+        let info = self
+            .call(
+                self.bot
+                    .get_file(teloxide::types::FileId(file.location.clone())),
+            )
+            .await?;
+        if info
+            .path
+            .split('/')
+            .any(|s| s.is_empty() || s == "." || s == "..")
+            || info.path.chars().any(char::is_control)
+        {
+            return Err(Error::Protocol);
+        }
+        let url = format!(
+            "{}/file/bot{}/{}",
+            self.bot.api_url().as_str().trim_end_matches('/'),
+            self.bot.token(),
+            info.path
+        );
+        let bytes = network::download::bytes(&self.proxy, &url, None, session::files::MAX_BYTES)
+            .await
+            .map_err(|_| Error::Network)?;
+        Ok(session::files::Downloaded {
+            name: file.name.clone(),
+            image: file.image,
+            bytes,
         })
     }
 
@@ -250,8 +314,7 @@ impl Api {
         body: &crate::ledger::Outbound,
     ) -> Result<i32, Error> {
         if body.document {
-            self.send_document(chat, topic, &body.text, body.buttons.clone())
-                .await
+            Err(Error::Rejected)
         } else if body.agent_markdown {
             self.send_agent(chat, topic, &body.text, body.buttons.clone())
                 .await
@@ -272,11 +335,11 @@ impl Api {
             return Err(Error::TooLarge);
         }
         if text.encode_utf16().count() > 3800 {
-            return self.send_document(chat, topic, text, buttons).await;
+            return Err(Error::TooLarge);
         }
         let rendered = crate::markdown::render(text);
         if rendered.plain.encode_utf16().count() > 3800 || text.encode_utf16().count() > 3800 {
-            return self.send_document(chat, topic, text, buttons).await;
+            return Err(Error::TooLarge);
         }
         match self
             .send_mode(
@@ -296,33 +359,6 @@ impl Api {
         }
     }
 
-    async fn send_document(
-        &self,
-        chat: i64,
-        topic: i32,
-        text: &str,
-        buttons: Vec<Vec<Button>>,
-    ) -> Result<i32, Error> {
-        if text.len() > 45 * 1024 * 1024 {
-            return Err(Error::TooLarge);
-        }
-        let markup = InlineKeyboardMarkup::new(buttons.into_iter().map(|r| {
-            r.into_iter()
-                .map(|b| InlineKeyboardButton::callback(b.label, b.data))
-        }));
-        let mut request = self
-            .bot
-            .send_document(
-                ChatId(chat),
-                InputFile::memory(text.as_bytes().to_vec()).file_name("session.md"),
-            )
-            .reply_markup(markup);
-        if topic > 0 {
-            request = request.message_thread_id(ThreadId(MessageId(topic)));
-        }
-        Ok(self.call(request).await?.id.0)
-    }
-
     async fn send_mode(
         &self,
         chat: i64,
@@ -339,17 +375,7 @@ impl Api {
                 .map(|b| InlineKeyboardButton::callback(b.label, b.data))
         }));
         if !matches!(mode, Some(ParseMode::Html)) && text.encode_utf16().count() > 3800 {
-            let mut request = self
-                .bot
-                .send_document(
-                    ChatId(chat),
-                    InputFile::memory(text.as_bytes().to_vec()).file_name("session.md"),
-                )
-                .reply_markup(markup);
-            if topic > 0 {
-                request = request.message_thread_id(ThreadId(MessageId(topic)));
-            }
-            return Ok(self.call(request).await?.id.0);
+            return Err(Error::TooLarge);
         }
         let mut request = self
             .bot
@@ -805,17 +831,15 @@ mod tests {
     }
 
     #[test]
-    fn media_captions_are_text_and_images_never_become_urls_or_downloads() {
+    fn media_inputs_keep_caption_and_durable_file_references_without_network() {
         let update = r#"{"update_id":1,"message":{"message_id":7,"message_thread_id":11,"date":100,"from":{"id":10,"is_bot":false,"first_name":"User"},"chat":{"id":10,"type":"private","first_name":"User"},"photo":[{"file_id":"private-file","file_unique_id":"unique","width":640,"height":480}],"caption":"read this caption"}}"#;
         let event = input(&serde_json::from_str(update).unwrap()).unwrap();
         assert_eq!(event.text, "read this caption");
         assert_eq!(event.topic, 11);
         assert_eq!(event.attachments[0].name, "image");
-        assert!(
-            !serde_json::to_string(&event)
-                .unwrap()
-                .contains("private-file")
-        );
+        assert_eq!(event.uploads[0].location, "private-file");
+        assert!(event.uploads[0].image);
+        assert!(!format!("{event:?}").contains("private-file"));
         let photo_only = update.replace(",\"caption\":\"read this caption\"", "");
         assert!(
             input(&serde_json::from_str(&photo_only).unwrap())

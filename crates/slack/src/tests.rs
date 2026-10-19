@@ -12,18 +12,6 @@ impl crate::api::Platform for NoNetwork {
     async fn update(&self, _: &str, _: &str, _: &Content) -> Result<()> {
         panic!("callback edited a message")
     }
-
-    async fn prepare_file(&self, _: usize) -> Result<crate::api::Upload> {
-        panic!("callback uploaded a file")
-    }
-
-    async fn upload_file(&self, _: &crate::api::Upload, _: Vec<u8>) -> Result<()> {
-        panic!("callback uploaded a file")
-    }
-
-    async fn complete_file(&self, _: &crate::api::Upload, _: &str, _: Option<&str>) -> Result<()> {
-        panic!("callback uploaded a file")
-    }
 }
 
 use crate::{model::*, storage::*, *};
@@ -41,6 +29,7 @@ fn settings() -> config::Config {
 
 fn request(id: &str) -> Request {
     Request {
+        uploads: Vec::new(),
         menu_message: None,
         id: id.into(),
         channel: "D1".into(),
@@ -87,7 +76,12 @@ fn credentials_and_mentions_are_not_exposed() {
     let wire = serde_json::to_string(&crate::api::Api::content(&output)).unwrap();
     assert!(wire.contains("plain_text"));
     assert!(wire.contains("&lt;!channel&gt;"));
-    assert!(render::message("界".repeat(2801)).document);
+    assert_eq!(
+        render::parts(&render::message("界".repeat(2801)))
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -134,9 +128,53 @@ fn markdown_tables_and_limits_fall_back_without_losing_the_source() {
     assert!(text.contains("Value: bold"));
     let source = "x\n\n".repeat(51);
     let content = render::markdown(source.clone());
-    assert!(content.document);
+    assert!(!content.document);
+    assert!(render::parts(&content).unwrap().len() > 1);
     assert_eq!(content.text, source);
-    assert!(render::markdown("😀".repeat(1401)).document);
+    assert!(
+        render::parts(&render::markdown("😀".repeat(1401)))
+            .unwrap()
+            .len()
+            > 1
+    );
+}
+
+#[tokio::test]
+async fn acknowledged_message_parts_survive_restart_without_replaying_the_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = engine::storage::Store::open(dir.path()).await.unwrap();
+    let store = Store::new(core, "A1", "T1", "U2");
+    let r = request("long-output");
+    let content = render::markdown("**text** 👩‍💻\n\n".repeat(500));
+    let parts = render::parts(&content).unwrap();
+    assert!(parts.len() > 2);
+    assert!(
+        parts
+            .iter()
+            .all(|p| !p.document && session::markdown::fits(&p.text, 2800))
+    );
+    store.output(&r, &content, "scope").await.unwrap();
+    let first = store.outgoing().await.unwrap().remove(0);
+    store.prepare_parts(&first, &parts).await.unwrap();
+    assert!(store.claim_output(&first).await.unwrap());
+    store.acknowledge_part(&first, true).await.unwrap();
+    store.recover().await.unwrap();
+    sqlx::query("UPDATE slack_outbox SET not_before=0")
+        .execute(store.core.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE slack_channel_budget SET next_send=0")
+        .execute(store.core.pool())
+        .await
+        .unwrap();
+    let second = store.outgoing().await.unwrap().remove(0);
+    assert_eq!(second.next_part, 1);
+    let saved: Vec<Content> =
+        serde_json::from_str(second.rendered_parts.as_ref().unwrap()).unwrap();
+    assert_eq!(saved[1].text, parts[1].text);
+    assert!(store.claim_output(&second).await.unwrap());
+    store.recover().await.unwrap();
+    assert!(store.outgoing().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -312,6 +350,7 @@ fn fixture_api(endpoint: &str) -> crate::api::Api {
         .enable_http1()
         .wrap_connector(network::Connector::default());
     crate::api::Api {
+        proxy: Default::default(),
         client: std::sync::Arc::new(SlackClient::new(
             SlackClientHyperConnector::with_connector(connector)
                 .with_slack_api_url(&format!("{endpoint}/api")),
@@ -419,6 +458,16 @@ fn typed_socket_events_only_route_new_authorized_thread_text() {
     assert!(socket::message(channel_event, &settings(), "U2", "D1").is_none());
     let event = make(r#", "subtype":"file_share""#, "U1", true);
     assert!(socket::message(event, &settings(), "U2", "D1").is_some());
+    let file = make(
+        r#", "subtype":"file_share", "files":[{"id":"F1","name":"notes.txt","mimetype":"text/plain"}]"#,
+        "U1",
+        true,
+    );
+    let file = socket::message(file, &settings(), "U2", "D1").unwrap();
+    assert_eq!(file.uploads[0].location, "F1");
+    assert_eq!(file.uploads[0].name, "notes.txt");
+    let untrusted = make(r#", "files":[{"id":"F1","name":"notes.txt"}]"#, "U3", true);
+    assert!(socket::message(untrusted, &settings(), "U2", "D1").is_none());
 }
 
 #[tokio::test]
@@ -701,6 +750,7 @@ async fn socket_ack_fixture(proxied: bool) {
             .with_slack_api_url(&format!("{}/api", http.uri())),
     ));
     let api = Arc::new(crate::api::Api {
+        proxy: Default::default(),
         client,
         token: SlackApiToken::new("xoxb-fixture".into()).with_team_id("T1".into()),
         direct_channel: "D1".into(),

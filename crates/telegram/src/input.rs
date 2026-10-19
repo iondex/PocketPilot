@@ -35,6 +35,7 @@ impl Service {
                 snapshot,
                 "tg.draft.confirm",
                 Action::SubmitDraft {
+                    uploads: input.uploads.clone(),
                     text: text.into(),
                     steer_only,
                     instance: binding.instance_id,
@@ -235,6 +236,39 @@ impl Service {
             }
             _ => return self.draft(input, snapshot, text, steer_only).await,
         };
+        if input.uploads.len() > session::files::MAX_FILES {
+            return Err(Error::Telegram(crate::Error::TooLarge));
+        }
+        if !provider.capabilities().control_verified {
+            return Err(Error::ReadOnly);
+        }
+        let mut downloaded = Vec::new();
+        for file in &input.uploads {
+            downloaded.push(self.api.download(file).await?);
+        }
+        let instance = snapshot
+            .config
+            .providers
+            .iter()
+            .find(|p| p.id == binding.instance_id)
+            .ok_or(Error::Expired)?;
+        let (uploads, files) = engine::uploads::prepare(
+            instance,
+            &format!("telegram:{}:{}", self.bot, input.event_key),
+            &binding.thread_id,
+            downloaded,
+        )?;
+        for (index, mutation) in uploads.into_iter().enumerate() {
+            self.mutate(
+                input,
+                snapshot,
+                workspace,
+                &format!("upload:{index}"),
+                &binding.thread_id,
+                mutation,
+            )
+            .await?;
+        }
         let result = self
             .mutate(
                 input,
@@ -242,7 +276,7 @@ impl Service {
                 workspace,
                 "input",
                 &binding.thread_id,
-                mutation,
+                engine::uploads::attach(mutation, files),
             )
             .await;
         let receipt = match result {

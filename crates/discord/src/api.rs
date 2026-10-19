@@ -11,6 +11,31 @@ pub struct Api {
 }
 
 impl Api {
+    pub async fn download(
+        &self,
+        file: &session::files::Incoming,
+    ) -> Result<session::files::Downloaded, Error> {
+        let url = reqwest::Url::parse(&file.location).map_err(|_| Error::Request)?;
+        if url.scheme() != "https"
+            || !matches!(
+                url.host_str(),
+                Some("cdn.discordapp.com" | "media.discordapp.net")
+            )
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err(Error::Request);
+        }
+        let bytes =
+            network::download::bytes(&self.proxy, url.as_str(), None, session::files::MAX_BYTES)
+                .await
+                .map_err(|_| Error::Request)?;
+        Ok(session::files::Downloaded {
+            name: file.name.clone(),
+            image: file.image,
+            bytes,
+        })
+    }
     /// Only reads identity and guild metadata; does not register commands or connect Gateway.
     pub async fn inspect(config: &crate::config::Config) -> Result<crate::Identity, Error> {
         let http = http(&config.token, &config.proxy)?;
@@ -149,7 +174,7 @@ impl Api {
                 CreateChannel::new(crate::channel_name(title, thread))
                     .category(ChannelId::new(category))
                     .topic(format!(
-                        "PocketPilot · {thread} · /pp-status /pp-ask /pp-history"
+                        "PocketPilot · {thread} · /pp-status /pp-ask /pp-recent"
                     )),
             )
             .await
@@ -191,21 +216,20 @@ impl Api {
         &self,
         channel: u64,
         text: &str,
-        locale: &str,
+        _locale: &str,
         format: session::markdown::Format,
     ) -> Result<u64, Error> {
-        let content = crate::render::content(text, format).map_err(|_| Error::TooLarge)?;
-        let mut message = CreateMessage::new().allowed_mentions(mentions());
-        if content.attachment {
-            message = message
-                .content(i18n::text(locale, "discord.history.attachment"))
-                .add_file(CreateAttachment::bytes(
-                    text.as_bytes().to_vec(),
-                    "session.md",
-                ));
-        } else {
-            message = message.content(content.text);
+        let parts = crate::render::messages(text, format).map_err(|_| Error::TooLarge)?;
+        if parts.len() != 1 {
+            return Err(Error::TooLarge);
         }
+        self.send_rendered(channel, &parts[0]).await
+    }
+
+    pub(crate) async fn send_rendered(&self, channel: u64, text: &str) -> Result<u64, Error> {
+        let message = CreateMessage::new()
+            .allowed_mentions(mentions())
+            .content(text);
         ChannelId::new(channel)
             .send_message(&self.http, message)
             .await

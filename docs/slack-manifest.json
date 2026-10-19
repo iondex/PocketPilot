@@ -20,7 +20,7 @@
         "chat:write",
         "im:history",
         "im:write",
-        "files:write"
+        "files:read"
       ]
     }
   },

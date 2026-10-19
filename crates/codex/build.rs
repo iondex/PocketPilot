@@ -11,6 +11,10 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const ROOTS: &[&str] = &[
+    "FsWriteFileParams",
+    "FsWriteFileResponse",
+    "FsCreateDirectoryParams",
+    "FsCreateDirectoryResponse",
     "ErrorNotification",
     "RequestId",
     "InitializeParams",

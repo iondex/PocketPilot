@@ -18,39 +18,6 @@ pub fn short_title(title: &str, max_graphemes: usize) -> String {
     }
 }
 
-pub fn full_history(history: &History) -> String {
-    full_history_in(history, "zh-CN")
-}
-
-pub fn full_history_in(history: &History, locale: &str) -> String {
-    let mut result = format!("{}\n\n", i18n::text(locale, "common.history.heading"));
-    for item in history
-        .items
-        .iter()
-        .filter(|item| !item.is_transient_error())
-    {
-        let role = match item.role {
-            Role::User => "common.role.user",
-            Role::Agent => "common.role.agent",
-        };
-        let role = i18n::text(locale, role);
-        result.push_str(&format!(
-            "{role}{}\n{}\n\n",
-            if item.complete {
-                String::new()
-            } else {
-                i18n::text(locale, "common.history.incomplete_item")
-            },
-            item.text
-        ));
-    }
-    if !history.all_pages_read {
-        result.push_str(&i18n::text(locale, "common.history.incomplete"));
-        result.push('\n');
-    }
-    result
-}
-
 pub struct Interaction<'a> {
     pub user: &'a TextItem,
     pub answers: Vec<&'a TextItem>,
@@ -112,7 +79,7 @@ pub fn latest_interaction_in(history: &History, locale: &str) -> String {
     i18n::t!(
         "common.history.latest",
         locale = locale,
-        user = &interaction.user.text,
+        user = &crate::content::display(interaction.user),
         answer = answer
     )
 }
@@ -210,11 +177,7 @@ mod tests {
                 item("t", Role::Agent, Some("final_answer"), "done"),
             ],
         };
-        for text in [
-            full_history(&history),
-            agent_history(&history),
-            latest_interaction(&history),
-        ] {
+        for text in [agent_history(&history), latest_interaction(&history)] {
             assert!(!text.contains("Reconnecting"));
             assert!(text.contains("done"));
         }
@@ -222,7 +185,7 @@ mod tests {
             .items
             .push(item("t", Role::Agent, Some("error"), "terminal failure"));
         assert_eq!(last_interaction(&history).unwrap().errors.len(), 1);
-        assert!(full_history(&history).contains("terminal failure"));
+        assert!(agent_history(&history).contains("terminal failure"));
         assert_eq!(history.without_transient_errors().items.len(), 4);
     }
 

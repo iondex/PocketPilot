@@ -49,6 +49,8 @@ impl Command {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Request {
+    #[serde(default)]
+    pub uploads: Vec<session::files::Incoming>,
     pub id: String,
     pub channel: String,
     pub user: String,
@@ -68,7 +70,8 @@ pub struct Content {
     pub format: session::markdown::Format,
     #[serde(default)]
     pub blocks: Vec<SlackBlock>,
-    #[serde(default)]
+    /// Legacy file deliveries are rejected, never uploaded.
+    #[serde(default, skip_serializing)]
     pub document: bool,
     #[serde(default)]
     pub edit: bool,

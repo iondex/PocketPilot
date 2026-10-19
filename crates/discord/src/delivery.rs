@@ -21,6 +21,7 @@ impl Service {
                 .map_err(|_| crate::Error::Backend)?;
             for row in rows.into_iter().take(1) {
                 let mut input = Input {
+                    uploads: Vec::new(),
                     locale: None,
                     id: 0,
                     bot: api.bot,
@@ -86,22 +87,44 @@ impl Service {
                         .map_err(|_| crate::Error::Backend)?;
                     continue;
                 }
+                let parts: Vec<String> = if let Some(saved) = &row.rendered_parts {
+                    serde_json::from_str(saved).map_err(|_| crate::Error::Backend)?
+                } else {
+                    let parts =
+                        crate::render::messages(&row.payload, session::markdown::Format::Markdown)
+                            .map_err(|_| crate::Error::TooLarge)?;
+                    self.store
+                        .prepare_parts(&row, &parts)
+                        .await
+                        .map_err(|_| crate::Error::Backend)?;
+                    parts
+                };
                 self.store
                     .discord_delivery_state(&row.id, "pending", "dispatching")
                     .await
                     .map_err(|_| crate::Error::Backend)?;
-                let sent = api
-                    .send_in(input.channel, &row.payload, &snapshot.config.language)
-                    .await
-                    .is_ok();
-                self.store
-                    .discord_delivery_state(
-                        &row.id,
-                        "dispatching",
-                        if sent { "delivered" } else { "outcome_unknown" },
-                    )
-                    .await
-                    .map_err(|_| crate::Error::Backend)?;
+                let Some(part) = usize::try_from(row.next_part)
+                    .ok()
+                    .and_then(|i| parts.get(i))
+                else {
+                    self.store
+                        .discord_delivery_state(&row.id, "dispatching", "outcome_unknown")
+                        .await
+                        .map_err(|_| crate::Error::Backend)?;
+                    continue;
+                };
+                match api.send_rendered(input.channel, part).await {
+                    Ok(_) => self
+                        .store
+                        .acknowledge_part(&row, row.next_part as usize + 1 < parts.len())
+                        .await
+                        .map_err(|_| crate::Error::Backend)?,
+                    Err(_) => self
+                        .store
+                        .discord_delivery_state(&row.id, "dispatching", "outcome_unknown")
+                        .await
+                        .map_err(|_| crate::Error::Backend)?,
+                }
             }
             tokio::select! {_=stop.changed()=>break,_=tokio::time::sleep(Duration::from_secs(4))=>{}}
         }

@@ -505,7 +505,71 @@ impl AgentProvider for Codex {
         if !self.control {
             return Err(ProviderError::Unsupported);
         }
+        let (mutation, files) = match mutation {
+            Mutation::StartWithFiles {
+                thread,
+                text,
+                client_id,
+                files,
+            } => (
+                Mutation::Start {
+                    thread,
+                    text: session::files::envelope(&text, &files),
+                    client_id,
+                },
+                files,
+            ),
+            Mutation::SteerWithFiles {
+                thread,
+                expected_turn,
+                text,
+                client_id,
+                files,
+            } => (
+                Mutation::Steer {
+                    thread,
+                    expected_turn,
+                    text: session::files::envelope(&text, &files),
+                    client_id,
+                },
+                files,
+            ),
+            mutation => (mutation, Vec::new()),
+        };
         match mutation {
+            Mutation::Upload {
+                thread,
+                path,
+                bytes,
+            } => {
+                use base64::Engine;
+                if bytes.len() > session::files::MAX_BYTES
+                    || !std::path::Path::new(&path).is_absolute()
+                {
+                    return Err(ProviderError::Conflict);
+                }
+                let directory = std::path::Path::new(&path)
+                    .parent()
+                    .ok_or(ProviderError::Conflict)?
+                    .to_string_lossy()
+                    .into_owned();
+                self.client
+                    .write(&p::FsCreateDirectoryParams {
+                        path: p::AbsolutePathBuf(directory),
+                        recursive: Some(true),
+                    })
+                    .await?;
+                self.client
+                    .write(&p::FsWriteFileParams {
+                        path: p::AbsolutePathBuf(path),
+                        data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+                    })
+                    .await?;
+                Ok(Receipt { thread, turn: None })
+            }
+            Mutation::StartWithFiles { .. } | Mutation::SteerWithFiles { .. } => {
+                Err(ProviderError::Incompatible)
+            }
             Mutation::SetTitleIfMissing { thread, title } => {
                 if title.trim().is_empty() {
                     return Err(ProviderError::Conflict);
@@ -567,7 +631,7 @@ impl AgentProvider for Codex {
                 }
                 let params: p::TurnStartParams = p::TurnStartParams::builder()
                     .thread_id(thread.clone())
-                    .input(text_input(text)?)
+                    .input(file_input(text, &files)?)
                     .client_user_message_id(Some(client_id))
                     .try_into()
                     .map_err(|_| ProviderError::Incompatible)?;
@@ -599,6 +663,21 @@ impl AgentProvider for Codex {
     }
 }
 
+fn file_input(
+    text: String,
+    files: &[session::files::Uploaded],
+) -> Result<Vec<p::UserInput>, ProviderError> {
+    let mut input = text_input(text)?;
+    for file in files.iter().filter(|f| f.image) {
+        input.push(p::UserInput::LocalImageUserInput {
+            detail: None,
+            path: file.path.clone(),
+            type_: p::LocalImageUserInputType::LocalImage,
+        });
+    }
+    Ok(input)
+}
+
 fn text_input(text: String) -> Result<Vec<p::UserInput>, ProviderError> {
     if text.trim().is_empty() || text.len() > 1024 * 1024 {
         return Err(ProviderError::Conflict);
@@ -613,6 +692,26 @@ fn text_input(text: String) -> Result<Vec<p::UserInput>, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uploaded_images_use_native_image_input_and_documents_keep_their_paths_in_context() {
+        let files = vec![session::files::Uploaded {
+            name: "image.png".into(),
+            path: "/private/uploads/image.png".into(),
+            image: true,
+        }];
+        let input = file_input(
+            session::files::envelope("Describe the file", &files),
+            &files,
+        )
+        .unwrap();
+        assert!(
+            matches!(&input[0], p::UserInput::TextUserInput { text, .. } if text.contains("## image.png: /private/uploads/image.png") && text.contains("Describe the file"))
+        );
+        assert!(
+            matches!(&input[1], p::UserInput::LocalImageUserInput { path, .. } if path == "/private/uploads/image.png")
+        );
+    }
 
     #[test]
     fn only_terminal_turn_states_expose_native_errors() {

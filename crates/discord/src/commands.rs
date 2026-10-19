@@ -211,6 +211,44 @@ impl Service {
                     },
                     _ => return Err("discord.error.state".into()),
                 };
+                if !provider.capabilities().control_verified {
+                    return Err("discord.error.read_only".into());
+                }
+                if input.uploads.len() > session::files::MAX_FILES {
+                    return Err("common.file.failed".into());
+                }
+                let mut downloaded = Vec::new();
+                for file in &input.uploads {
+                    downloaded.push(api.download(file).await.map_err(error)?);
+                }
+                let instance = snapshot
+                    .config
+                    .providers
+                    .iter()
+                    .find(|p| p.id == b.instance)
+                    .ok_or("discord.error.provider_removed")?;
+                let (uploads, files) = engine::uploads::prepare(
+                    instance,
+                    &format!("discord:{}:{}", input.bot, input.id),
+                    &b.thread,
+                    downloaded,
+                )
+                .map_err(error)?;
+                for (index, mutation) in uploads.into_iter().enumerate() {
+                    self.mutate(
+                        api,
+                        input,
+                        snapshot,
+                        &format!("upload:{index}"),
+                        Target {
+                            workspace: ws,
+                            thread: &b.thread,
+                            binding: Some(&b),
+                        },
+                        mutation,
+                    )
+                    .await?;
+                }
                 let receipt = self
                     .mutate(
                         api,
@@ -222,7 +260,7 @@ impl Service {
                             thread: &b.thread,
                             binding: Some(&b),
                         },
-                        mutation,
+                        engine::uploads::attach(mutation, files),
                     )
                     .await?;
                 Ok(i18n::t!(
@@ -246,7 +284,7 @@ impl Service {
                     .map_err(error)?;
                 Ok(i18n::text(&locale, "discord.renamed"))
             }
-            Command::Status | Command::History => {
+            Command::Status | Command::Recent => {
                 let b = self.bound(input).await?;
                 let ws = self.validate_binding(&snapshot.config, &b)?;
                 let provider = self
@@ -256,11 +294,19 @@ impl Service {
                     .map_err(error)?;
                 let current = provider.read(&b.thread).await.map_err(error)?;
                 connections::require_workspace(&current.cwd, ws).map_err(error)?;
-                if matches!(input.command, Command::History) {
-                    Ok(session::delivery::full_history_in(
-                        &self.history(provider.as_ref(), ws, &b.thread).await?,
-                        &locale,
-                    ))
+                if matches!(input.command, Command::Recent) {
+                    let history = self.history(provider.as_ref(), ws, &b.thread).await?;
+                    let text = session::delivery::latest_interaction_in(&history, &locale);
+                    self.store
+                        .discord_publish(
+                            &b,
+                            &format!("recent:{}", input.id),
+                            &text,
+                            &super::hashes(&history),
+                        )
+                        .await
+                        .map_err(error)?;
+                    Ok(i18n::text(&locale, "discord.recent.sent"))
                 } else {
                     Ok(i18n::t!(
                         "discord.session.details",

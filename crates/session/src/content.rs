@@ -49,6 +49,22 @@ pub fn user_content(raw: &str, attachments: &[Attachment]) -> UserContent {
     result
 }
 
+/// Present attachment names without echoing private staging paths into chat.
+pub fn display(item: &crate::TextItem) -> String {
+    if item.role != crate::Role::User {
+        return item.text.clone();
+    }
+    let content = user_content(&item.text, &item.attachments);
+    let mut text = content.text;
+    for file in content.attachments {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&format!("📎 {}", file.name));
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -70,6 +70,12 @@ write_request!(ThreadStartParams, ThreadStartResponse, "thread/start");
 write_request!(ThreadResumeParams, ThreadResumeResponse, "thread/resume");
 write_request!(TurnStartParams, TurnStartResponse, "turn/start");
 write_request!(TurnSteerParams, TurnSteerResponse, "turn/steer");
+write_request!(FsWriteFileParams, FsWriteFileResponse, "fs/writeFile");
+write_request!(
+    FsCreateDirectoryParams,
+    FsCreateDirectoryResponse,
+    "fs/createDirectory"
+);
 write_request!(
     ThreadSetNameParams,
     ThreadSetNameResponse,

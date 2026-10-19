@@ -113,8 +113,41 @@ impl Service {
             },
             _ => return Err(Error::Ui("slack.error.state")),
         };
-        self.mutate(r, hash, ws, &b.thread, "input", mutation)
-            .await?;
+        if !provider.capabilities().control_verified {
+            return Err(Error::Ui("slack.error.read_only"));
+        }
+        if r.uploads.len() > session::files::MAX_FILES {
+            return Err(Error::Ui("common.file.failed"));
+        }
+        let mut downloaded = Vec::new();
+        for file in &r.uploads {
+            downloaded.push(self.api.download(file).await?);
+        }
+        let instance = snapshot
+            .config
+            .providers
+            .iter()
+            .find(|p| p.id == b.instance)
+            .ok_or(Error::Ui("slack.error.scope"))?;
+        let (uploads, files) = engine::uploads::prepare(
+            instance,
+            &format!("slack:{}:{}", self.store.namespace, r.id),
+            &b.thread,
+            downloaded,
+        )?;
+        for (index, mutation) in uploads.into_iter().enumerate() {
+            self.mutate(r, hash, ws, &b.thread, &format!("upload:{index}"), mutation)
+                .await?;
+        }
+        self.mutate(
+            r,
+            hash,
+            ws,
+            &b.thread,
+            "input",
+            engine::uploads::attach(mutation, files),
+        )
+        .await?;
         Ok(())
     }
 }

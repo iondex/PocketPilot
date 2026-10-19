@@ -193,3 +193,38 @@ async fn connect_rejection_never_falls_back_to_direct() {
     assert!(proxy.tcp("unreachable.invalid", 443).await.is_err());
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn attachment_download_is_bounded_and_never_forwards_credentials_on_redirects() {
+    for (response, accepted) in [
+        ("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndata", true),
+        ("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nlarge", false),
+        (
+            "HTTP/1.1 302 Found\r\nLocation: http://unreachable.invalid/private\r\nContent-Length: 0\r\n\r\n",
+            false,
+        ),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/file", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut header = Vec::new();
+            while !header.ends_with(b"\r\n\r\n") {
+                header.push(stream.read_u8().await.unwrap());
+            }
+            assert!(
+                String::from_utf8_lossy(&header)
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer fixture-token")
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        let result =
+            super::download::bytes(&Proxy::default(), &url, Some("fixture-token"), 4).await;
+        assert_eq!(result.is_ok(), accepted);
+        if accepted {
+            assert_eq!(result.unwrap(), b"data");
+        }
+        server.await.unwrap();
+    }
+}

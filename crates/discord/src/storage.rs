@@ -56,6 +56,8 @@ pub struct Delivery {
     pub channel: String,
     pub revision: i64,
     pub payload: String,
+    pub next_part: i64,
+    pub rendered_parts: Option<String>,
 }
 
 impl Store {
@@ -210,7 +212,7 @@ impl Store {
         guild: u64,
         now: i64,
     ) -> Result<Vec<Delivery>, Error> {
-        sqlx::query_as("SELECT id,channel,revision,payload FROM discord_deliveries d WHERE bot=? AND guild=? AND state='pending' AND not_before<=? AND NOT EXISTS(SELECT 1 FROM discord_deliveries old WHERE old.bot=d.bot AND old.guild=d.guild AND old.channel=d.channel AND old.state IN ('pending','dispatching') AND old.rowid<d.rowid) ORDER BY rowid LIMIT 32")
+        sqlx::query_as("SELECT id,channel,revision,payload,next_part,rendered_parts FROM discord_deliveries d WHERE bot=? AND guild=? AND state='pending' AND not_before<=? AND NOT EXISTS(SELECT 1 FROM discord_deliveries old WHERE old.bot=d.bot AND old.guild=d.guild AND old.channel=d.channel AND old.state IN ('pending','dispatching') AND old.rowid<d.rowid) ORDER BY rowid LIMIT 32")
             .bind(bot.to_string()).bind(guild.to_string()).bind(now).fetch_all(&self.pool).await.map_err(|_|Error::Database)
     }
 
@@ -250,6 +252,24 @@ impl Store {
         sqlx::query("UPDATE discord_bindings SET card_message=?,card_text=? WHERE bot=? AND guild=? AND channel=? AND revision=?")
             .bind(message.map(|id|id.to_string())).bind(text).bind(&b.bot).bind(&b.guild).bind(&b.channel).bind(b.revision)
             .execute(&self.pool).await.map_err(|_|Error::Database)?;
+        Ok(())
+    }
+
+    pub async fn acknowledge_part(&self, row: &Delivery, more: bool) -> Result<(), Error> {
+        let changed = sqlx::query("UPDATE discord_deliveries SET next_part=next_part+1,state=?,not_before=?,payload=CASE WHEN ? THEN payload ELSE '' END,rendered_parts=CASE WHEN ? THEN rendered_parts ELSE NULL END WHERE id=? AND state='dispatching' AND next_part=?")
+            .bind(if more { "pending" } else { "delivered" })
+            .bind(engine::now()+4).bind(more).bind(more).bind(&row.id).bind(row.next_part)
+            .execute(&self.pool).await.map_err(|_| Error::Database)?.rows_affected();
+        if changed != 1 {
+            return Err(Error::Transition);
+        }
+        Ok(())
+    }
+
+    pub async fn prepare_parts(&self, row: &Delivery, parts: &[String]) -> Result<(), Error> {
+        sqlx::query("UPDATE discord_deliveries SET rendered_parts=? WHERE id=? AND state='pending' AND next_part=0 AND rendered_parts IS NULL")
+            .bind(serde_json::to_string(parts).map_err(|_| Error::Database)?).bind(&row.id)
+            .execute(&self.pool).await.map_err(|_| Error::Database)?;
         Ok(())
     }
 }
@@ -302,6 +322,29 @@ mod tests {
         assert_eq!(out.len(), 1);
         store
             .discord_delivery_state(&out[0].id, "pending", "dispatching")
+            .await
+            .unwrap();
+        let parts = vec!["first".to_string(), "second".to_string()];
+        // Freeze the exact layout before a send; completed prefixes survive recovery.
+        sqlx::query("UPDATE discord_deliveries SET rendered_parts=? WHERE id=?")
+            .bind(serde_json::to_string(&parts).unwrap())
+            .bind(&out[0].id)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        store.acknowledge_part(&out[0], true).await.unwrap();
+        store.discord_recover().await.unwrap();
+        let remaining = store
+            .discord_pending(1, 2, engine::now() + 10)
+            .await
+            .unwrap();
+        assert_eq!(remaining[0].next_part, 1);
+        assert_eq!(
+            remaining[0].rendered_parts.as_deref(),
+            Some(serde_json::to_string(&parts).unwrap().as_str())
+        );
+        store
+            .discord_delivery_state(&remaining[0].id, "pending", "dispatching")
             .await
             .unwrap();
         store.discord_recover().await.unwrap();

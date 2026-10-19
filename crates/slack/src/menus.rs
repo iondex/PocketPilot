@@ -51,10 +51,15 @@ impl Service {
                     hash,
                 )
                 .await?;
-            c.blocks.push(render::section_action(
-                &host.name,
-                &i18n::t!("slack.menu.count", locale = &locale, count = count),
-                &i18n::text(&locale, "slack.choose"),
+            c.blocks.push(render::button(
+                &session::markdown::preview(
+                    &format!(
+                        "{} · {}",
+                        host.name,
+                        i18n::t!("slack.menu.count", locale = &locale, count = count)
+                    ),
+                    75,
+                ),
                 &nonce,
             ));
         }
@@ -381,6 +386,7 @@ mod tests {
             channel: "D1".into(),
             user: "U1".into(),
             root: None,
+            uploads: Vec::new(),
             menu_message: None,
             binding: None,
             revision: None,
@@ -398,13 +404,13 @@ mod tests {
         let workspace_menu: Content = serde_json::from_str(row.get("content")).unwrap();
         assert_eq!(
             workspace_menu.blocks.len(),
-            4,
-            "one header, one hint and two workspace rows"
+            3,
+            "one header, one hint and compact workspace buttons"
         );
         assert!(
             workspace_menu.blocks[2..]
                 .iter()
-                .all(|b| matches!(b, SlackBlock::Section(s) if s.accessory.is_some()))
+                .all(|b| matches!(b, SlackBlock::Actions(a) if a.elements.len() == 2))
         );
         r.id = "projects".into();
         r.menu_message = Some("100.000001".into());

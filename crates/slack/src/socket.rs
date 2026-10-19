@@ -52,12 +52,30 @@ pub(crate) fn message(
         return None;
     }
     let root = m.origin.thread_ts.map(|root| root.to_string());
-    let text = m.content?.text?;
-    if text.trim().is_empty() {
+    let content = m.content?;
+    let uploads = content
+        .files
+        .unwrap_or_default()
+        .into_iter()
+        .map(|file| session::files::Incoming {
+            name: file.name.unwrap_or_else(|| "file".into()),
+            location: file.id.to_string(),
+            image: file
+                .mimetype
+                .as_ref()
+                .is_some_and(|m| session::files::image_mime(m.value())),
+        })
+        .collect::<Vec<_>>();
+    let mut text = content.text.unwrap_or_default();
+    if text.trim().is_empty() && uploads.is_empty() {
         return None;
+    }
+    if text.trim().is_empty() {
+        text = i18n::text("zh-CN", "common.file.request");
     }
     let date = m.origin.ts.value().split('.').next()?.parse().ok()?;
     Some(Request {
+        uploads,
         menu_message: None,
         id: format!("message:{channel}:{}", m.origin.ts),
         channel,

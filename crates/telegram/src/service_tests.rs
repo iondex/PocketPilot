@@ -52,6 +52,10 @@ struct Frame {
 #[derive(Deserialize)]
 #[serde(tag = "method", content = "params")]
 enum Method {
+    #[serde(rename = "fs/createDirectory")]
+    CreateDirectory(p::FsCreateDirectoryParams),
+    #[serde(rename = "fs/writeFile")]
+    WriteFile(p::FsWriteFileParams),
     #[serde(rename = "initialize")]
     Initialize(p::InitializeParams),
     #[serde(rename = "initialized")]
@@ -77,6 +81,7 @@ enum Method {
 }
 
 struct State {
+    uploads: Vec<p::FsWriteFileParams>,
     status: p::ThreadStatus,
     native_name: Option<String>,
     items: Vec<p::ThreadItem>,
@@ -199,7 +204,7 @@ telegram_messages_per_minute=60000
             .unwrap();
         let api =
             Api::local_fixture("1:abcdefghijklmnopqrstuvwxyz".into(), &telegram.uri()).unwrap();
-        let state=Arc::new(Mutex::new(State{native_name:Some("Fixture title".into()),status:p::ThreadStatus::Active(vec![]),items:vec![
+        let state=Arc::new(Mutex::new(State{uploads:Vec::new(),native_name:Some("Fixture title".into()),status:p::ThreadStatus::Active(vec![]),items:vec![
             serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"original question"}]}"#).unwrap(),
             serde_json::from_str(r#"{"type":"agentMessage","id":"a","text":"original answer","phase":"final_answer"}"#).unwrap(),
             serde_json::from_str(r#"{"type":"reasoning","id":"r","summary":["must never appear in Telegram"]}"#).unwrap(),
@@ -285,6 +290,31 @@ telegram_messages_per_minute=60000
                                         next_cursor: None,
                                         backwards_cursor: None,
                                     },
+                                )
+                                .await;
+                            }
+                            Method::CreateDirectory(params) => {
+                                assert!(
+                                    params.path.0.starts_with(
+                                        "/private/account/.codex/pocketpilot/uploads/"
+                                    )
+                                );
+                                state.requests.push("fs/createDirectory");
+                                reply(
+                                    &mut socket,
+                                    frame.id.unwrap(),
+                                    serde_json::from_str::<p::FsCreateDirectoryResponse>("{}")
+                                        .unwrap(),
+                                )
+                                .await;
+                            }
+                            Method::WriteFile(params) => {
+                                state.requests.push("fs/writeFile");
+                                state.uploads.push(params);
+                                reply(
+                                    &mut socket,
+                                    frame.id.unwrap(),
+                                    serde_json::from_str::<p::FsWriteFileResponse>("{}").unwrap(),
                                 )
                                 .await;
                             }
@@ -563,6 +593,7 @@ fn input(id: u32, topic: i32, text: &str) -> Input {
         message_id: id as i32,
         config_hash: None,
         requires_confirmation: false,
+        uploads: Vec::new(),
         reply_to_message_id: None,
     }
 }
@@ -1512,6 +1543,7 @@ async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receip
         receiver,
     );
     let make = |id, channel, command| DInput {
+        uploads: Vec::new(),
         locale: None,
         id,
         bot: 1,
@@ -1623,7 +1655,7 @@ async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receip
 }
 
 #[tokio::test]
-async fn discord_formats_output_preserves_attachment_bytes_and_disables_mentions_on_edits() {
+async fn discord_formats_output_as_messages_and_disables_mentions_on_edits() {
     let http = MockServer::start().await;
     let response = serde_json::json!({
         "id":"12", "channel_id":"11",
@@ -1653,11 +1685,14 @@ async fn discord_formats_output_preserves_attachment_bytes_and_disables_mentions
         assert_eq!(request["allowed_mentions"]["parse"], serde_json::json!([]));
         assert_eq!(request["allowed_mentions"]["replied_user"], false);
     }
-    let upload = std::str::from_utf8(&requests[2].body).unwrap();
-    assert!(upload.contains("session.md"));
-    assert!(upload.contains(source));
-    assert!(upload.contains("allowed_mentions"));
-    assert!(upload.contains("\"parse\":[]"));
+    let third: serde_json::Value = serde_json::from_slice(&requests[2].body).unwrap();
+    assert!(third["content"].as_str().unwrap().contains("三反引号"));
+    assert!(
+        third
+            .get("attachments")
+            .is_none_or(|a| a.as_array().is_some_and(|a| a.is_empty()))
+    );
+    assert!(!String::from_utf8_lossy(&requests[2].body).contains("session.md"));
 }
 
 #[tokio::test]
@@ -3827,7 +3862,8 @@ async fn legacy_cursors_upgrade_without_replaying_old_text_or_sending_transient_
 }
 
 #[tokio::test]
-async fn media_only_inputs_warn_without_starting_a_turn_and_caption_is_forwarded_as_text() {
+async fn legacy_attachment_inputs_without_file_references_require_reupload_without_starting_turns()
+{
     let fixture = Fixture::new().await;
     fixture.pair().await;
     let store = &fixture.service.store;
@@ -3846,14 +3882,67 @@ async fn media_only_inputs_warn_without_starting_a_turn_and_caption_is_forwarded
             .last()
             .unwrap()
             .text
-            .contains("附件内容未发送")
+            .contains("重新上传")
     );
     photo.update_id += 1;
     photo.event_key = "message:10:2251".into();
     photo.message_id += 1;
     photo.text = "caption only".into();
     fixture.service.handle(&photo).await.unwrap();
-    assert!(fixture.state.lock().await.requests.contains(&"turn/steer"));
+    assert!(fixture.state.lock().await.requests.is_empty());
+}
+
+#[tokio::test]
+async fn authorized_file_only_messages_are_downloaded_staged_and_submitted_to_the_selected_codex() {
+    let fixture = Fixture::new().await;
+    let path = &fixture.service.config.path;
+    let config = std::fs::read_to_string(path).unwrap().replace("control_verified=true", "control_verified=true\nendpoint={binary='/fixture/codex',socket='/private/account/.codex/app-server-control/app-server-control.sock'}");
+    std::fs::write(path, config).unwrap();
+    fixture.service.config.reload().unwrap();
+    fixture.pair().await;
+    fixture
+        .service
+        .store
+        .bind(1, 10, 11, "instance", "thread")
+        .await
+        .unwrap();
+    fixture
+        .service
+        .store
+        .set_workspace(1, 10, 11, "workspace")
+        .await
+        .unwrap();
+    Mock::given(path_regex("(?i).*/getfile$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok":true,"result":{"file_id":"private-file","file_unique_id":"fixture","file_size":12,"file_path":"documents/notes.txt"}})))
+        .expect(1).mount(&fixture.telegram).await;
+    Mock::given(path_regex(".*/file/bot.*/documents/notes.txt$"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"fixture file".to_vec()))
+        .expect(1)
+        .mount(&fixture.telegram)
+        .await;
+    let mut file = input(2255, 11, "");
+    file.uploads = vec![session::files::Incoming {
+        name: "notes.txt".into(),
+        location: "private-file".into(),
+        image: false,
+    }];
+    fixture.service.handle(&file).await.unwrap();
+    let state = fixture.state.lock().await;
+    assert_eq!(state.uploads.len(), 1);
+    assert_eq!(state.uploads[0].data_base64, "Zml4dHVyZSBmaWxl");
+    assert!(state.uploads[0].path.0.ends_with("/0/notes.txt"));
+    assert!(state.items.iter().any(|item| matches!(item, p::ThreadItem::UserMessage { content, .. } if content.iter().any(|input| matches!(input, p::UserInput::TextUserInput { text, .. } if text.contains("## notes.txt:") && text.contains("## My request:"))))));
+    let writes = state
+        .requests
+        .iter()
+        .filter(|r| matches!(**r, "fs/writeFile" | "turn/steer"))
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(writes, ["fs/writeFile", "turn/steer"]);
+    drop(state);
+    file.user = 99;
+    fixture.service.handle(&file).await.unwrap();
+    assert_eq!(fixture.state.lock().await.uploads.len(), 1);
 }
 
 #[tokio::test]
@@ -4479,7 +4568,7 @@ async fn reopening_a_bound_session_keeps_its_cursor_and_pending_live_output() {
 }
 
 #[tokio::test]
-async fn explicit_history_export_sends_full_visible_history_only_when_requested() {
+async fn history_export_is_rejected_without_sending_a_document() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     fixture
@@ -4494,9 +4583,8 @@ async fn explicit_history_export_sends_full_visible_history_only_when_requested(
         .await
         .unwrap();
     let output = fixture.outputs().await.pop().unwrap();
-    assert!(output.document);
-    assert!(output.text.contains("original question") && output.text.contains("original answer"));
-    assert!(!output.text.contains("must never appear"));
+    assert!(!output.document);
+    assert!(output.text.contains("不支持"));
     fixture.deliver_pending().await;
     let requests = fixture.telegram.received_requests().await.unwrap();
     let documents = requests
@@ -4509,8 +4597,7 @@ async fn explicit_history_export_sends_full_visible_history_only_when_requested(
                 .ends_with("/senddocument")
         })
         .collect::<Vec<_>>();
-    assert_eq!(documents.len(), 1);
-    assert!(String::from_utf8_lossy(&documents[0].body).contains("session.md"));
+    assert!(documents.is_empty());
     assert!(
         fixture
             .state
@@ -4525,7 +4612,7 @@ async fn explicit_history_export_sends_full_visible_history_only_when_requested(
 #[tokio::test]
 async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
     use slack::{
-        api::{Platform, Upload},
+        api::Platform,
         model::{Command as SCommand, Content, Request as SRequest},
     };
     struct SlackFixture;
@@ -4541,18 +4628,6 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
 
         async fn update(&self, _: &str, _: &str, _: &Content) -> slack::Result<()> {
             Ok(())
-        }
-
-        async fn prepare_file(&self, _: usize) -> slack::Result<Upload> {
-            Err(slack::Error::Request)
-        }
-
-        async fn upload_file(&self, _: &Upload, _: Vec<u8>) -> slack::Result<()> {
-            Err(slack::Error::Request)
-        }
-
-        async fn complete_file(&self, _: &Upload, _: &str, _: Option<&str>) -> slack::Result<()> {
-            Err(slack::Error::Request)
         }
     }
     let fixture = Fixture::new().await;
@@ -4580,6 +4655,7 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
         receiver,
     );
     let open = SRequest {
+        uploads: Vec::new(),
         menu_message: None,
         id: "open".into(),
         channel: "D1".into(),
@@ -4606,6 +4682,7 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
     let store = slack::storage::Store::new(core, "A1", "T1", "U2");
     let b = store.at("D1", "123.000001").await.unwrap().unwrap();
     let r = SRequest {
+        uploads: Vec::new(),
         menu_message: None,
         id: "ask".into(),
         channel: b.channel.clone(),

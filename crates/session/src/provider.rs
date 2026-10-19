@@ -5,6 +5,24 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Mutation {
+    Upload {
+        thread: String,
+        path: String,
+        bytes: Vec<u8>,
+    },
+    StartWithFiles {
+        thread: String,
+        text: String,
+        client_id: String,
+        files: Vec<crate::files::Uploaded>,
+    },
+    SteerWithFiles {
+        thread: String,
+        expected_turn: String,
+        text: String,
+        client_id: String,
+        files: Vec<crate::files::Uploaded>,
+    },
     Create {
         cwd: String,
     },

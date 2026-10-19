@@ -2,31 +2,26 @@ use crate::{Error, Result, config::Config, model::Content};
 use slack_morphism::{errors::SlackClientError, prelude::*};
 use std::{sync::Arc, time::Duration};
 
-pub struct Upload {
-    pub id: String,
-    pub url: String,
-}
-
 #[async_trait::async_trait]
 pub trait Platform: Send + Sync {
+    async fn download(
+        &self,
+        _file: &session::files::Incoming,
+    ) -> Result<session::files::Downloaded> {
+        Err(Error::Request)
+    }
     async fn channel(&self, channel: &str) -> Result<()>;
 
     async fn post(&self, channel: &str, root: Option<&str>, content: &Content) -> Result<String>;
 
     async fn update(&self, channel: &str, root: &str, content: &Content) -> Result<()>;
-
-    async fn prepare_file(&self, length: usize) -> Result<Upload>;
-
-    async fn upload_file(&self, upload: &Upload, bytes: Vec<u8>) -> Result<()>;
-
-    async fn complete_file(&self, upload: &Upload, channel: &str, root: Option<&str>)
-    -> Result<()>;
 }
 
 pub type Client =
     SlackClient<SlackClientHyperConnector<hyper_rustls::HttpsConnector<network::Connector>>>;
 
 pub struct Api {
+    pub proxy: network::Proxy,
     pub client: Arc<Client>,
     pub token: SlackApiToken,
     pub direct_channel: String,
@@ -113,6 +108,7 @@ impl Api {
             Self::owner_conversation(&client, &token, &config.owner_user_id).await?;
         Ok((
             Arc::new(Self {
+                proxy: config.proxy.clone(),
                 client,
                 token,
                 direct_channel,
@@ -153,6 +149,47 @@ impl Api {
 
 #[async_trait::async_trait]
 impl Platform for Api {
+    async fn download(
+        &self,
+        file: &session::files::Incoming,
+    ) -> Result<session::files::Downloaded> {
+        let info = bounded(
+            self.client
+                .open_session(&self.token)
+                .files_info(&SlackApiFilesInfoRequest::new(file.location.clone().into())),
+        )
+        .await?;
+        let url = info
+            .file
+            .url_private_download
+            .clone()
+            .or(info.file.url_private.clone())
+            .ok_or(Error::Request)?;
+        if url.scheme() != "https"
+            || url.host_str() != Some("files.slack.com")
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err(Error::Request);
+        }
+        let bytes = network::download::bytes(
+            &self.proxy,
+            url.as_str(),
+            Some(self.token.token_value.value()),
+            session::files::MAX_BYTES,
+        )
+        .await
+        .map_err(|_| Error::Request)?;
+        Ok(session::files::Downloaded {
+            name: info.file.name.unwrap_or_else(|| file.name.clone()),
+            image: info
+                .file
+                .mimetype
+                .as_ref()
+                .is_some_and(|m| session::files::image_mime(m.value())),
+            bytes,
+        })
+    }
     async fn channel(&self, channel: &str) -> Result<()> {
         if channel != self.direct_channel {
             return Err(Error::Ui("slack.error.scope"));
@@ -197,55 +234,6 @@ impl Platform for Api {
                 .open_session(&self.token)
                 .http_session_api
                 .http_post("chat.update", &request, None),
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn prepare_file(&self, length: usize) -> Result<Upload> {
-        let response = bounded(
-            self.client
-                .open_session(&self.token)
-                .get_upload_url_external(&SlackApiFilesGetUploadUrlExternalRequest::new(
-                    "session.md".into(),
-                    length,
-                )),
-        )
-        .await?;
-        Ok(Upload {
-            id: response.file_id.to_string(),
-            url: response.upload_url.0.to_string(),
-        })
-    }
-
-    async fn upload_file(&self, upload: &Upload, bytes: Vec<u8>) -> Result<()> {
-        bounded(self.client.open_session(&self.token).files_upload_via_url(
-            &SlackApiFilesUploadViaUrlRequest::new(
-                SlackFileUploadUrl(upload.url.parse().map_err(|_| Error::Request)?),
-                bytes,
-                "text/markdown; charset=utf-8".into(),
-            ),
-        ))
-        .await?;
-        Ok(())
-    }
-
-    async fn complete_file(
-        &self,
-        upload: &Upload,
-        channel: &str,
-        root: Option<&str>,
-    ) -> Result<()> {
-        self.channel(channel).await?;
-        let request = SlackApiFilesCompleteUploadExternalRequest::new(vec![
-            SlackApiFilesComplete::new(upload.id.clone().into()).with_title("session.md".into()),
-        ])
-        .with_channel_id(channel.into())
-        .opt_thread_ts(root.map(Into::into));
-        bounded(
-            self.client
-                .open_session(&self.token)
-                .files_complete_upload_external(&request),
         )
         .await?;
         Ok(())

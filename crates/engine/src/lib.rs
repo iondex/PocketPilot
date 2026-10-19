@@ -5,6 +5,10 @@ pub mod config;
 
 pub mod connections;
 
+pub mod control;
+
+pub mod uploads;
+
 pub mod integrations;
 
 pub mod model;

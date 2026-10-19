@@ -1,6 +1,42 @@
 use super::*;
 
 #[tokio::test]
+async fn long_markdown_is_split_into_durable_messages_and_completed_prefixes_are_not_replayed() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).await.unwrap();
+    let body = Outbound::agent(format!(
+        "# Header\n\n**{}**\n\n```rust\n{}\n```",
+        "👩‍💻 text ".repeat(1000),
+        "let n = 1;\n".repeat(1000)
+    ));
+    let parts = body.parts().unwrap();
+    assert!(parts.len() > 10);
+    assert!(
+        parts.iter().all(|p| !p.document
+            && session::markdown::fits(&crate::markdown::render(&p.text).plain, 3800))
+    );
+    store.enqueue(1, 10, 11, "long", &body).await.unwrap();
+    let first = store.pending_deliveries(1, 0).await.unwrap().remove(0);
+    assert!(store.prepare_parts(&first, &parts).await.unwrap());
+    store
+        .delivery_state(&first.id, "pending", "dispatching", None, 0)
+        .await
+        .unwrap();
+    store.acknowledge_part(&first, Some(1), true).await.unwrap();
+    store.recover_deliveries().await.unwrap();
+    let next = store.pending_deliveries(1, 0).await.unwrap().remove(0);
+    assert_eq!(next.next_part, 1);
+    let saved: Vec<Outbound> = serde_json::from_str(next.rendered_parts.as_ref().unwrap()).unwrap();
+    assert_eq!(saved[1].text, parts[1].text);
+    store
+        .delivery_state(&next.id, "pending", "dispatching", None, 0)
+        .await
+        .unwrap();
+    store.recover_deliveries().await.unwrap();
+    assert!(store.pending_deliveries(1, 0).await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn terminal_pairing_delivery_drops_the_plaintext_code() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).await.unwrap();
@@ -54,6 +90,7 @@ fn input(id: u32) -> Input {
         message_id: id as i32,
         config_hash: None,
         requires_confirmation: false,
+        uploads: Vec::new(),
         reply_to_message_id: None,
     }
 }

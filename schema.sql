@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS deliveries (
     not_before INTEGER NOT NULL DEFAULT 0,
     batch_opened_ms INTEGER,
     batch_members INTEGER NOT NULL DEFAULT 0,
+    next_part INTEGER NOT NULL DEFAULT 0,
+    rendered_parts TEXT,
     UNIQUE (bot_id, chat_id, topic_id, source_key)
 );
 
@@ -131,6 +133,8 @@ CREATE TABLE IF NOT EXISTS discord_deliveries (
     payload TEXT NOT NULL,
     state TEXT NOT NULL CHECK(state IN ('pending','dispatching','delivered','outcome_unknown','rejected')),
     not_before INTEGER NOT NULL DEFAULT 0,
+    next_part INTEGER NOT NULL DEFAULT 0,
+    rendered_parts TEXT,
     UNIQUE(bot,guild,channel,source_key)
 );
 
@@ -314,7 +318,7 @@ CREATE TABLE IF NOT EXISTS slack_outbox (
     root TEXT, binding TEXT, revision INTEGER,
     source TEXT NOT NULL, content TEXT NOT NULL, config_hash TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'pending', not_before INTEGER NOT NULL DEFAULT 0,
-    file_id TEXT, UNIQUE(namespace,source)
+    next_part INTEGER NOT NULL DEFAULT 0, rendered_parts TEXT, UNIQUE(namespace,source)
 );
 CREATE INDEX IF NOT EXISTS slack_outbox_pending ON slack_outbox(namespace,state,not_before);
 CREATE TABLE IF NOT EXISTS slack_channel_budget (

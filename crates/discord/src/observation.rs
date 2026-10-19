@@ -6,7 +6,6 @@ use crate::storage::Binding;
 use engine::connections;
 use engine::digest;
 use engine::now;
-use session::RuntimeStatus;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -24,6 +23,7 @@ impl Service {
             .parse::<u64>()
             .map_err(|_| i18n::Message::new("error.discord.backend"))?;
         let input = Input {
+            uploads: Vec::new(),
             locale: None,
             id: 0,
             bot: api.bot,
@@ -54,11 +54,7 @@ impl Service {
             .map_err(|_| i18n::Message::new("error.discord.backend"))?;
         let fresh = hashes(&history);
         let text = if !b.history_ready {
-            if matches!(current.status, RuntimeStatus::Active { .. }) {
-                session::delivery::full_history_in(&history, locale)
-            } else {
-                session::delivery::latest_interaction_in(&history, locale)
-            }
+            session::delivery::latest_interaction_in(&history, locale)
         } else {
             history
                 .items
@@ -75,7 +71,7 @@ impl Service {
                                 "common.role.agent"
                             }
                         ),
-                        i.text
+                        session::content::display(i)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -164,6 +160,7 @@ impl Service {
                         // Only a validated, still-owned binding may receive a stale marker.
                         let snapshot = service.config.snapshot();
                         let input = Input {
+                            uploads: Vec::new(),
                             locale: None,
                             id: 0,
                             bot: api.bot,

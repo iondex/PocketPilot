@@ -62,3 +62,39 @@ fn repeated_table_headers_cannot_expand_past_the_structure_budget() {
     let parsed = Document::parse(&source).unwrap();
     assert_eq!(parsed.plain(), source.trim_end());
 }
+
+#[test]
+fn message_chunks_preserve_all_text_styles_code_and_emoji_in_order() {
+    fn text(nodes: &[Node]) -> String {
+        nodes
+            .iter()
+            .map(|n| match n {
+                Node::Text(s) | Node::Code(s) => s.clone(),
+                Node::Group(_, nodes) => text(nodes),
+                _ => String::new(),
+            })
+            .collect()
+    }
+    let source = format!(
+        "# Header\n\n**{}**\n\n```rust\n{}\n```\n\n3. item\n4. next",
+        "👩‍💻 x ".repeat(300),
+        "let n = 42;\n".repeat(300)
+    );
+    let document = Document::parse(&source).unwrap();
+    let chunks = document.chunks(400, 32);
+    assert!(chunks.len() > 10);
+    assert_eq!(
+        chunks.iter().map(|d| text(d.nodes())).collect::<String>(),
+        text(document.nodes())
+    );
+    assert!(
+        chunks
+            .iter()
+            .all(|d| fits(&d.plain(), 400) && size(d.nodes()) <= 32)
+    );
+    assert!(
+        chunks
+            .iter()
+            .any(|d| matches!(d.nodes().first(), Some(Node::Group(Kind::CodeBlock(_), _))))
+    );
+}

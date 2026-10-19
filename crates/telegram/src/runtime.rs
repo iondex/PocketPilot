@@ -131,6 +131,8 @@ enum Action {
         topics: Vec<i32>,
     },
     SubmitDraft {
+        #[serde(default)]
+        uploads: Vec<session::files::Incoming>,
         text: String,
         steer_only: bool,
         instance: String,

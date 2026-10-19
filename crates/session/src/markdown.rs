@@ -4,6 +4,16 @@ use pulldown_cmark::{CodeBlockKind, Event, Tag};
 #[path = "markdown_input.rs"]
 pub mod input;
 
+#[path = "markdown_chunks.rs"]
+mod chunks;
+
+pub use chunks::split_text;
+
+#[path = "markdown_output.rs"]
+mod output;
+
+pub use output::{Dialect, literal};
+
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 
 const MAX_DEPTH: usize = 64;
@@ -146,8 +156,17 @@ impl Document {
         &self.nodes
     }
 
+    /// Independent message fragments retain block and inline structure.
+    pub fn chunks(&self, units: usize, nodes: usize) -> Vec<Self> {
+        chunks::documents(&self.nodes, units.max(32), nodes.max(8))
+    }
+
     pub fn plain(&self) -> String {
         plain(&self.nodes).trim_end().to_owned()
+    }
+
+    pub fn markdown(&self, dialect: Dialect) -> Option<String> {
+        output::render(&self.nodes, dialect).map(|s| s.trim_end().to_owned())
     }
 
     pub fn preview(&self, limit: usize) -> String {

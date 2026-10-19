@@ -86,16 +86,15 @@ pub fn button(label: &str, nonce: &str) -> SlackBlock {
 }
 
 pub fn message(text: String) -> Content {
-    let document = !session::markdown::fits(&text, 2800);
     Content {
-        blocks: if document || text.is_empty() {
+        blocks: if !session::markdown::fits(&text, 2800) || text.is_empty() {
             vec![]
         } else {
             vec![plain(&text)]
         },
         text,
         format: session::markdown::Format::Plain,
-        document,
+        document: false,
         edit: false,
     }
 }
@@ -103,17 +102,38 @@ pub fn message(text: String) -> Content {
 pub fn markdown(text: String) -> Content {
     let mut content = message(text);
     content.format = session::markdown::Format::Markdown;
-    content.document = !session::markdown::fits(&content.text, 2800);
-    if !content.document {
+    if session::markdown::fits(&content.text, 2800) {
         content.blocks = session::markdown::Document::parse(&content.text)
             .ok()
             .and_then(|doc| crate::markdown::blocks(&doc))
-            .unwrap_or_else(|| {
-                content.document = true;
-                Vec::new()
-            });
+            .unwrap_or_default();
     } else {
         content.blocks.clear();
     }
     content
+}
+
+pub fn parts(content: &Content) -> crate::Result<Vec<Content>> {
+    use session::markdown::{Document, Format, split_text};
+    if content.edit || (!content.blocks.is_empty() && session::markdown::fits(&content.text, 2800))
+    {
+        return Ok(vec![content.clone()]);
+    }
+    if content.format == Format::Plain {
+        return Ok(split_text(&content.text, 2800)
+            .into_iter()
+            .map(message)
+            .collect());
+    }
+    let doc =
+        Document::parse(&content.text).map_err(|_| crate::Error::Ui("slack.error.history"))?;
+    Ok(doc
+        .chunks(1400, 64)
+        .into_iter()
+        .map(|part| Content {
+            text: part.plain(),
+            blocks: crate::markdown::blocks(&part).unwrap_or_default(),
+            ..Content::default()
+        })
+        .collect())
 }

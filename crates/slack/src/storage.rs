@@ -47,6 +47,8 @@ pub struct Outbox {
     pub revision: Option<i64>,
     pub content: String,
     pub config_hash: String,
+    pub next_part: i64,
+    pub rendered_parts: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -77,7 +79,7 @@ impl Store {
         .bind(&self.namespace)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("UPDATE slack_outbox SET state='outcome_unknown',content='' WHERE namespace=? AND state='dispatching'")
+        sqlx::query("UPDATE slack_outbox SET state='outcome_unknown',content='',rendered_parts=NULL WHERE namespace=? AND state='dispatching'")
             .bind(&self.namespace).execute(&mut *tx).await?;
         sqlx::query("UPDATE slack_provisions SET state='outcome_unknown' WHERE app||':'||team||':'||bot=? AND state='dispatching'")
             .bind(&self.namespace).execute(&mut *tx).await?;
@@ -180,6 +182,7 @@ impl Store {
                 .await?;
         }
         let mut request = Request {
+            uploads: Vec::new(),
             menu_message: None,
             id: if reusable {
                 format!("action:{nonce}:{}", source.id.unwrap_or("read"))
@@ -302,6 +305,7 @@ impl Store {
             .bind(observed).bind(&b.id).bind(b.revision).bind(&b.observed).execute(&mut *tx).await?.rows_affected();
         if n == 1 && !content.text.is_empty() {
             let r = Request {
+                uploads: Vec::new(),
                 menu_message: None,
                 id: format!("observe:{}:{}", b.id, engine::digest(observed)),
                 channel: b.channel.clone(),
@@ -347,7 +351,7 @@ impl Store {
     }
 
     pub async fn outgoing(&self) -> Result<Vec<Outbox>> {
-        Ok(sqlx::query_as("SELECT id,channel,root,binding,revision,content,config_hash FROM slack_outbox o WHERE namespace=? AND state='pending' AND not_before<=? AND NOT EXISTS(SELECT 1 FROM slack_outbox p WHERE p.namespace=o.namespace AND p.channel=o.channel AND p.state IN ('pending','dispatching') AND p.rowid<o.rowid) ORDER BY rowid LIMIT 32")
+        Ok(sqlx::query_as("SELECT id,channel,root,binding,revision,content,config_hash,next_part,rendered_parts FROM slack_outbox o WHERE namespace=? AND state='pending' AND not_before<=? AND NOT EXISTS(SELECT 1 FROM slack_outbox p WHERE p.namespace=o.namespace AND p.channel=o.channel AND p.state IN ('pending','dispatching') AND p.rowid<o.rowid) ORDER BY rowid LIMIT 32")
             .bind(&self.namespace).bind(engine::now()).fetch_all(self.core.pool()).await?)
     }
 
@@ -364,9 +368,10 @@ impl Store {
             return Ok(false);
         }
         let n = sqlx::query(
-            "UPDATE slack_outbox SET state='dispatching' WHERE id=? AND state='pending' AND not_before<=unixepoch()",
+            "UPDATE slack_outbox SET state='dispatching' WHERE id=? AND state='pending' AND next_part=? AND not_before<=unixepoch()",
         )
         .bind(&o.id)
+        .bind(o.next_part)
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -389,17 +394,25 @@ impl Store {
     }
 
     pub async fn finish_output(&self, id: &str, state: &str, delay: i64) -> Result<()> {
-        sqlx::query("UPDATE slack_outbox SET state=?,not_before=?,content=CASE WHEN ?='pending' THEN content ELSE '' END WHERE id=?")
-            .bind(state).bind(engine::now()+delay).bind(state).bind(id).execute(self.core.pool()).await?;
+        sqlx::query("UPDATE slack_outbox SET state=?,not_before=?,content=CASE WHEN ?='pending' THEN content ELSE '' END,rendered_parts=CASE WHEN ?='pending' THEN rendered_parts ELSE NULL END WHERE id=?")
+            .bind(state).bind(engine::now()+delay).bind(state).bind(state).bind(id).execute(self.core.pool()).await?;
         Ok(())
     }
 
-    pub async fn file(&self, id: &str, file: &str) -> Result<()> {
-        sqlx::query("UPDATE slack_outbox SET file_id=? WHERE id=? AND state='dispatching'")
-            .bind(file)
-            .bind(id)
-            .execute(self.core.pool())
-            .await?;
+    pub async fn acknowledge_part(&self, o: &Outbox, more: bool) -> Result<()> {
+        let changed = sqlx::query("UPDATE slack_outbox SET next_part=next_part+1,state=?,not_before=?,content=CASE WHEN ? THEN content ELSE '' END,rendered_parts=CASE WHEN ? THEN rendered_parts ELSE NULL END WHERE id=? AND state='dispatching' AND next_part=?")
+            .bind(if more { "pending" } else { "delivered" })
+            .bind(engine::now()+2).bind(more).bind(more).bind(&o.id).bind(o.next_part)
+            .execute(self.core.pool()).await?.rows_affected();
+        if changed != 1 {
+            return Err(Error::Request);
+        }
+        Ok(())
+    }
+
+    pub async fn prepare_parts(&self, o: &Outbox, parts: &[Content]) -> Result<()> {
+        sqlx::query("UPDATE slack_outbox SET rendered_parts=? WHERE id=? AND state='pending' AND next_part=0 AND rendered_parts IS NULL")
+            .bind(serde_json::to_string(parts)?).bind(&o.id).execute(self.core.pool()).await?;
         Ok(())
     }
 

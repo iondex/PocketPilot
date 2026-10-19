@@ -34,6 +34,7 @@ impl EventHandler for Handler {
         }
         let mut fields = BTreeMap::new();
         let mut confirmed = false;
+        let mut uploads = Vec::new();
         for option in &command.data.options {
             match &option.value {
                 CommandDataOptionValue::String(value) => {
@@ -42,20 +43,37 @@ impl EventHandler for Handler {
                 CommandDataOptionValue::Boolean(value) if option.name == "confirm" => {
                     confirmed = *value
                 }
+                CommandDataOptionValue::Attachment(id) => {
+                    if let Some(file) = command.data.resolved.attachments.get(id) {
+                        uploads.push(session::files::Incoming {
+                            name: file.filename.clone(),
+                            location: file.url.clone(),
+                            image: file
+                                .content_type
+                                .as_ref()
+                                .is_some_and(|m| session::files::image_mime(m)),
+                        });
+                    }
+                }
                 _ => {}
             }
         }
+        if !uploads.is_empty() && fields.get("text").is_none_or(|s| s.trim().is_empty()) {
+            fields.insert(
+                "text".into(),
+                i18n::text(&command.locale, "common.file.request"),
+            );
+        }
         let parsed = crate::parse(&command.data.name, &fields, confirmed);
-        let mut markdown = false;
         let mut channel_link = false;
         let text = match parsed {
             Ok(action) => {
-                let history = matches!(action, crate::Command::History);
                 let opened = matches!(
                     action,
                     crate::Command::Open { .. } | crate::Command::New { .. }
                 );
                 let input = Input {
+                    uploads,
                     locale: Some(command.locale.clone()),
                     id: command.id.get(),
                     bot: self.api.bot,
@@ -70,7 +88,6 @@ impl EventHandler for Handler {
                 } else {
                     match self.backend.handle(&self.api, input).await {
                         Ok(text) => {
-                            markdown = history;
                             // Open/New return only localized static text, a numeric channel ID,
                             // and a localized state. Preserve that generated navigation link.
                             channel_link = opened;
@@ -82,29 +99,29 @@ impl EventHandler for Handler {
             }
             Err(error) => i18n::LocalizedError::localized(&error, &command.locale),
         };
-        let mut reply = EditInteractionResponse::new().allowed_mentions(crate::api::mentions());
-        if channel_link {
-            reply = reply.content(text);
+        let parts = if channel_link {
+            vec![text]
         } else {
-            let format = if markdown {
-                session::markdown::Format::Markdown
-            } else {
-                session::markdown::Format::Plain
-            };
-            match crate::render::content(&text, format) {
-                Err(_) => {
-                    reply = reply.content(i18n::text(&command.locale, "discord.history.too_large"));
-                }
-                Ok(content) if content.attachment => {
-                    reply = reply
-                        .content(i18n::text(&command.locale, "discord.history.attachment"))
-                        .new_attachment(CreateAttachment::bytes(text.into_bytes(), "session.md"));
-                }
-                Ok(content) => reply = reply.content(content.text),
-            }
-        }
+            crate::render::messages(&text, session::markdown::Format::Plain)
+                .unwrap_or_else(|_| vec![i18n::text(&command.locale, "discord.history.too_large")])
+        };
+        let mut parts = parts.into_iter();
+        let reply = EditInteractionResponse::new()
+            .allowed_mentions(crate::api::mentions())
+            .content(parts.next().unwrap_or_default());
         if command.edit_response(&ctx.http, reply).await.is_err() {
             tracing::warn!("Discord interaction response unavailable; not resent");
+            return;
+        }
+        for part in parts {
+            let reply = CreateInteractionResponseFollowup::new()
+                .ephemeral(true)
+                .allowed_mentions(crate::api::mentions())
+                .content(part);
+            if command.create_followup(&ctx.http, reply).await.is_err() {
+                tracing::warn!("Discord interaction continuation unavailable; not resent");
+                break;
+            }
         }
     }
 }
@@ -156,13 +173,18 @@ fn commands() -> Vec<CreateCommand> {
                 .description_localized("en-US", i18n::text("en", "discord.option.confirm"))
                 .required(true),
             ),
-        localized_command("pp-ask", "discord.cmd.ask").add_option(string(
-            "text",
-            "discord.option.input",
-            true,
-        )),
+        localized_command("pp-ask", "discord.cmd.ask")
+            .add_option(string("text", "discord.option.input", false))
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Attachment,
+                    "file",
+                    i18n::text("zh-CN", "discord.option.file"),
+                )
+                .description_localized("en-US", i18n::text("en", "discord.option.file")),
+            ),
         localized_command("pp-status", "discord.cmd.status"),
-        localized_command("pp-history", "discord.cmd.history"),
+        localized_command("pp-recent", "discord.cmd.recent"),
         localized_command("pp-rename", "discord.cmd.rename").add_option(string(
             "title",
             "discord.option.title",
@@ -188,6 +210,18 @@ pub async fn run(
     let http = api.http.clone();
     let guild = api.guild;
     let bot = api.bot;
+    for old in GuildId::new(guild)
+        .get_commands(&http)
+        .await
+        .map_err(|_| Error::Request)?
+    {
+        if old.name == "pp-history" {
+            GuildId::new(guild)
+                .delete_command(&http, old.id)
+                .await
+                .map_err(|_| Error::Request)?;
+        }
+    }
     for command in commands() {
         GuildId::new(guild)
             .create_command(&http, command)

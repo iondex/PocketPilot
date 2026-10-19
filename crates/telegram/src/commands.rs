@@ -89,16 +89,17 @@ impl Service {
                 .await?;
         }
 
-        if !input.attachments.is_empty() {
+        if !scoped.uploads.is_empty() && scoped.text.trim().is_empty() {
+            scoped.text = ::i18n::text(crate::i18n::lang(&scoped), "common.file.request");
+        }
+        if !input.attachments.is_empty() && input.uploads.is_empty() {
             self.respond(
                 &scoped,
                 &format!("attachments:{}", input.event_key),
-                Outbound::ui("tg.attachment.text_only"),
+                Outbound::ui("common.file.unavailable"),
             )
             .await?;
-            if input.text.trim().is_empty() {
-                return Ok(());
-            }
+            return Ok(());
         }
         let off_topic = scoped.topic == 0 && scoped.callback.is_none();
         if off_topic {
@@ -158,6 +159,7 @@ impl Service {
                     self.create(input, &snapshot, &workspace, &text).await
                 }
                 Action::SubmitDraft {
+                    uploads,
                     text,
                     steer_only,
                     instance,
@@ -171,7 +173,9 @@ impl Service {
                     {
                         return Err(Error::Expired);
                     }
-                    self.submit(input, &snapshot, &text, steer_only).await
+                    let mut confirmed = input.clone();
+                    confirmed.uploads = uploads;
+                    self.submit(&confirmed, &snapshot, &text, steer_only).await
                 }
             };
         }
@@ -306,30 +310,13 @@ impl Service {
                         .history(provider.as_ref(), workspace, &binding.thread_id, &snapshot)
                         .await?;
                     if args.trim() == "export" {
-                        if !history.all_pages_read {
-                            return self
-                                .respond(
-                                    input,
-                                    &input.event_key,
-                                    Outbound::ui("tg.history.export_incomplete"),
-                                )
-                                .await;
-                        }
-                        let mut body = Outbound::agent(
-                            history
-                                .items
-                                .iter()
-                                .map(|item| super::messages::render(item, crate::i18n::lang(input)))
-                                .collect::<Vec<_>>()
-                                .join("\n\n"),
-                        );
-                        if body.text.is_empty() {
-                            return self
-                                .respond(input, &input.event_key, Outbound::ui("tg.history.empty"))
-                                .await;
-                        }
-                        body.document = true;
-                        return self.respond(input, &input.event_key, body).await;
+                        return self
+                            .respond(
+                                input,
+                                &input.event_key,
+                                Outbound::ui("common.export.unsupported"),
+                            )
+                            .await;
                     } else if args.trim() == "errors" {
                         self.error_history(input, &history)
                     } else {

@@ -109,6 +109,12 @@ enum Workspaces {
 #[derive(Subcommand)]
 enum Providers {
     List,
+    /// Verify shared active state, steer and disconnect using a dedicated test session, then enable control.
+    Verify {
+        id: String,
+        #[arg(long)]
+        project: String,
+    },
     /// Declare that this exact shared execution instance has passed lifecycle verification.
     Trust {
         id: String,
@@ -119,6 +125,8 @@ enum Providers {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    Control(#[from] engine::control::Error),
     #[error(transparent)]
     #[allow(clippy::upper_case_acronyms)] // Project convention keeps SSH uppercase.
     SSH(#[from] ssh::Error),
@@ -154,6 +162,7 @@ pub enum Error {
 impl ::i18n::LocalizedError for Error {
     fn message(&self) -> ::i18n::Message {
         match self {
+            Self::Control(error) => ::i18n::LocalizedError::message(error),
             Self::SharedEndpoint => ::i18n::Message::new("error.cli.shared_endpoint"),
             Self::Selection => ::i18n::Message::new("error.cli.selection"),
             Self::Output => ::i18n::Message::new("error.cli.output"),
@@ -370,6 +379,20 @@ async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Re
         },
         Command::Providers { command } => match command {
             Providers::List => print(&config.providers)?,
+            Providers::Verify { id, project } => {
+                let store = engine::storage::Store::open(&config.service.data_dir).await?;
+                let verified =
+                    engine::control::verify(&config.runtime, &store, &id, &project).await?;
+                let mut provider = config
+                    .providers
+                    .iter()
+                    .find(|p| p.id == id)
+                    .cloned()
+                    .ok_or(Error::Selection)?;
+                provider.control_verified = true;
+                catalog.save_provider(&provider).await?;
+                print(&verified)?;
+            }
             Providers::Trust { id, revoke } => {
                 let mut provider = config
                     .providers

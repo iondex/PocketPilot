@@ -20,7 +20,7 @@ pub struct Outbound {
     pub text_id: Option<String>,
     #[serde(default)]
     pub agent_markdown: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub document: bool,
     #[serde(default)]
     pub appearance: Option<crate::presentation::Appearance>,
@@ -54,6 +54,49 @@ fn default_pairing_required() -> bool {
 }
 
 impl Outbound {
+    pub fn parts(&self) -> Result<Vec<Self>, crate::Error> {
+        if self.document {
+            return Err(crate::Error::Rejected);
+        }
+        if session::markdown::fits(&self.text, 3500) {
+            return Ok(vec![self.clone()]);
+        }
+        if self.edit_message.is_some() {
+            return Err(crate::Error::TooLarge);
+        }
+        let texts = if self.agent_markdown {
+            session::markdown::Document::parse(&self.text)
+                .map_err(|_| crate::Error::TooLarge)?
+                .chunks(1000, 64)
+                .into_iter()
+                .map(|d| {
+                    d.markdown(session::markdown::Dialect::CommonMark)
+                        .unwrap_or_else(|| d.plain())
+                })
+                .collect::<Vec<_>>()
+        } else {
+            session::markdown::split_text(&self.text, 3000)
+        };
+        let total = texts.len();
+        Ok(texts
+            .into_iter()
+            .enumerate()
+            .map(|(index, text)| {
+                let mut part = self.clone();
+                part.text = text;
+                if index + 1 != total {
+                    part.buttons.clear();
+                }
+                if index > 0 {
+                    part.appearance = None;
+                    part.remove_status = None;
+                    part.topic_title = None;
+                }
+                part
+            })
+            .collect())
+    }
+
     pub fn ui(id: impl Into<String>) -> Self {
         let mut body = Self::text("");
         body.text_id = Some(id.into());
@@ -113,6 +156,8 @@ pub struct Delivery {
     pub topic_id: i32,
     pub payload: String,
     pub source_key: String,
+    pub next_part: i64,
+    pub rendered_parts: Option<String>,
 }
 
 #[derive(Debug)]

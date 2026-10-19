@@ -7,7 +7,6 @@ use engine::connections;
 use engine::reload::Snapshot;
 use session::AgentProvider;
 use session::History;
-use session::RuntimeStatus;
 
 impl Service {
     pub(super) async fn history(
@@ -125,11 +124,7 @@ impl Service {
             .map_err(error)?
             .ok_or("discord.error.binding_missing")?;
         if !b.history_ready {
-            let text = if matches!(current.status, RuntimeStatus::Active { .. }) {
-                session::delivery::full_history_in(&history, &locale)
-            } else {
-                session::delivery::latest_interaction_in(&history, &locale)
-            };
+            let text = session::delivery::latest_interaction_in(&history, &locale);
             self.store
                 .discord_publish(&b, "initial-history", &text, &hashes(&history))
                 .await

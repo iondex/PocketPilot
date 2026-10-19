@@ -104,12 +104,15 @@ impl Service {
                 self.input(&input, hash, &text).await?;
             }
             Command::Status | Command::History { .. } => {
+                if matches!(r.command, Command::History { export: true }) {
+                    return Err(Error::Ui("common.export.unsupported"));
+                }
                 let b = self.bound(r).await?;
                 let ws = self.validate(&snapshot, &b)?;
                 let provider = self.context.connections.get(&snapshot.config, ws).await?;
                 let current = provider.read(&b.thread).await?;
                 engine::connections::require_workspace(&current.cwd, ws)?;
-                let text = if let Command::History { export } = &r.command {
+                let text = if let Command::History { .. } = &r.command {
                     let _permit = self
                         .context
                         .connections
@@ -125,11 +128,7 @@ impl Service {
                     if !history.all_pages_read {
                         return Err(Error::Ui("slack.error.history"));
                     }
-                    if *export {
-                        session::delivery::full_history_in(&history, &self.locale())
-                    } else {
-                        session::delivery::latest_interaction_in(&history, &self.locale())
-                    }
+                    session::delivery::latest_interaction_in(&history, &self.locale())
                 } else {
                     format!(
                         "{}\n{}\n{}",
@@ -140,14 +139,15 @@ impl Service {
                 };
                 self.fresh(r, hash)?;
                 self.bound(r).await?;
-                let mut c = if matches!(r.command, Command::History { .. }) {
+                if matches!(r.command, Command::Status) {
+                    self.publish_card(&b, &text, hash, true).await?;
+                    return Ok(());
+                }
+                let c = if matches!(r.command, Command::History { .. }) {
                     render::markdown(text)
                 } else {
                     render::message(text)
                 };
-                if matches!(r.command, Command::History { export: true }) {
-                    c.document = true;
-                }
                 self.store.output(r, &c, hash).await?;
             }
             Command::UnbindConfirm => {
@@ -183,6 +183,7 @@ impl Service {
 
     pub(super) async fn root_card(&self, b: &Binding, text: &str, hash: &str) -> Result<Content> {
         let r = Request {
+            uploads: Vec::new(),
             menu_message: None,
             id: format!("card:{}:{}", b.id, engine::digest(text)),
             channel: b.channel.clone(),
@@ -198,7 +199,6 @@ impl Service {
         for (label, command) in [
             ("slack.status", Command::Status),
             ("slack.history", Command::History { export: false }),
-            ("slack.export", Command::History { export: true }),
             ("slack.unbind", Command::UnbindConfirm),
         ] {
             c.blocks.push(

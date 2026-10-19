@@ -143,6 +143,16 @@ supports_websockets = false
     let empty = writer.read(&thread).await.unwrap();
     assert_eq!(empty.status, RuntimeStatus::Idle);
     assert!(empty.active_turn.is_none());
+    let upload = canonical_cwd.join("uploads").join("fixture.txt");
+    writer
+        .execute(Mutation::Upload {
+            thread: thread.clone(),
+            path: upload.to_string_lossy().into_owned(),
+            bytes: b"fixture attachment".to_vec(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&upload).unwrap(), b"fixture attachment");
     writer
         .execute(Mutation::SetTitleIfMissing {
             thread: thread.clone(),

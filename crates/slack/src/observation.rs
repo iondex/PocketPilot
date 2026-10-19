@@ -35,7 +35,7 @@ impl Service {
                         let snapshot=service.context.config.snapshot();
                         if service.validate(&snapshot,&b).is_ok() {
                             let text=i18n::text(&service.locale(),"slack.observation_unavailable");
-                            let _=service.publish_card(&b,&text,&snapshot.hash).await;
+                            let _=service.publish_card(&b,&text,&snapshot.hash,false).await;
                         }
                     }
                     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -72,6 +72,7 @@ impl Service {
             return Err(Error::Ui("slack.error.history"));
         }
         let r = Request {
+            uploads: Vec::new(),
             menu_message: None,
             id: format!("observe:{}", b.id),
             channel: b.channel.clone(),
@@ -111,7 +112,7 @@ impl Service {
                                 "common.role.agent"
                             }
                         ),
-                        i.text
+                        session::content::display(i)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -128,14 +129,22 @@ impl Service {
             current.status.text_in(&self.locale()),
             b.thread
         );
-        self.publish_card(b, &text, &snapshot.hash).await
+        self.publish_card(b, &text, &snapshot.hash, false).await
     }
 
-    async fn publish_card(&self, b: &Binding, text: &str, hash: &str) -> Result<()> {
-        if text != b.card {
+    pub(super) async fn publish_card(
+        &self,
+        b: &Binding,
+        text: &str,
+        hash: &str,
+        force: bool,
+    ) -> Result<()> {
+        let cached = format!("{text}\n[card:2]");
+        if force || cached != b.card {
             let mut content = self.root_card(b, text, hash).await?;
             content.edit = true;
             let r = Request {
+                uploads: Vec::new(),
                 menu_message: None,
                 id: format!("card:{}:{}", b.id, uuid::Uuid::new_v4()),
                 channel: b.channel.clone(),
@@ -149,7 +158,7 @@ impl Service {
             self.fresh(&r, hash)?;
             self.bound(&r).await?;
             self.store.output(&r, &content, hash).await?;
-            self.store.card(b, text).await?;
+            self.store.card(b, &cached).await?;
         }
         Ok(())
     }
@@ -163,6 +172,7 @@ impl Service {
             }
             for o in self.store.outgoing().await? {
                 let r = Request {
+                    uploads: Vec::new(),
                     menu_message: None,
                     id: o.id.clone(),
                     channel: o.channel.clone(),
@@ -204,28 +214,44 @@ impl Service {
                 if r.binding.is_some() && self.bound(&r).await.is_err() {
                     continue;
                 }
+                let content: Content = serde_json::from_str(&o.content)?;
+                if content.document {
+                    self.store.finish_output(&o.id, "rejected", 0).await?;
+                    continue;
+                }
+                let parts: Vec<Content> = if let Some(saved) = &o.rendered_parts {
+                    serde_json::from_str(saved)?
+                } else {
+                    let parts = render::parts(&content)?;
+                    self.store.prepare_parts(&o, &parts).await?;
+                    parts
+                };
+                let Some(part) = usize::try_from(o.next_part).ok().and_then(|i| parts.get(i))
+                else {
+                    self.store.finish_output(&o.id, "rejected", 0).await?;
+                    continue;
+                };
                 if !self.store.claim_output(&o).await? {
                     continue;
                 }
-                let content: Content = serde_json::from_str(&o.content)?;
                 let result = if content.edit {
                     match &o.root {
-                        Some(root) => self.api.update(&o.channel, root, &content).await,
+                        Some(root) => self.api.update(&o.channel, root, part).await,
                         None => Err(Error::Request),
                     }
-                } else if content.document {
-                    self.document(&o, &content, &scope_hash).await
                 } else {
                     self.api
-                        .post(&o.channel, o.root.as_deref(), &content)
+                        .post(&o.channel, o.root.as_deref(), part)
                         .await
                         .map(|_| ())
                 };
                 match result {
-                    Ok(()) => self.store.finish_output(&o.id, "delivered", 0).await?,
-                    Err(Error::RateLimit(delay)) if !content.document => {
-                        self.store.rate_limit(&o.id, delay).await?
+                    Ok(()) => {
+                        self.store
+                            .acknowledge_part(&o, (o.next_part as usize) + 1 < parts.len())
+                            .await?
                     }
+                    Err(Error::RateLimit(delay)) => self.store.rate_limit(&o.id, delay).await?,
                     Err(_) if content.edit => {
                         self.store.finish_output(&o.id, "pending", 30).await?
                     }
@@ -239,36 +265,5 @@ impl Service {
             }
             tokio::select! {_=stop.changed()=>return Ok(()),_=tokio::time::sleep(Duration::from_millis(500))=>{}}
         }
-    }
-
-    async fn document(&self, o: &crate::storage::Outbox, c: &Content, hash: &str) -> Result<()> {
-        if c.text.len() > 8 * 1024 * 1024 {
-            return Err(Error::Ui("slack.error.history"));
-        }
-        let upload = self.api.prepare_file(c.text.len()).await?;
-        self.store.file(&o.id, &upload.id).await?;
-        self.api
-            .upload_file(&upload, c.text.as_bytes().to_vec())
-            .await?;
-        let r = Request {
-            menu_message: None,
-            id: o.id.clone(),
-            channel: o.channel.clone(),
-            user: self.settings.owner_user_id.clone(),
-            root: o.root.clone(),
-            binding: o.binding.clone(),
-            revision: o.revision,
-            date: engine::now(),
-            command: Command::Status,
-        };
-        let snapshot = self.fresh(&r, hash)?;
-        if r.binding.is_some() {
-            let binding = self.bound(&r).await?;
-            self.validate(&snapshot, &binding)?;
-        }
-        self.api.channel(&o.channel).await?;
-        self.api
-            .complete_file(&upload, &o.channel, o.root.as_deref())
-            .await
     }
 }

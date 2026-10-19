@@ -89,7 +89,7 @@ pub enum Command {
         text: String,
     },
     Status,
-    History,
+    Recent,
     Rename {
         title: String,
     },
@@ -98,6 +98,7 @@ pub enum Command {
 
 #[derive(Clone, Debug)]
 pub struct Input {
+    pub uploads: Vec<session::files::Incoming>,
     pub locale: Option<String>,
     pub id: u64,
     pub bot: u64,
@@ -178,7 +179,7 @@ pub(crate) fn parse(
             text: field("text")?,
         },
         "pp-status" => Command::Status,
-        "pp-history" => Command::History,
+        "pp-recent" => Command::Recent,
         "pp-rename" => Command::Rename {
             title: field("title")?,
         },

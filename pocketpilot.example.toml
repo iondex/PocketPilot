@@ -90,4 +90,3 @@ messages_per_minute = 18
 history_active = "recent_preview"
 history_preview_chars = 1200
 history_idle = "last_user_and_final"
-overflow = "single_document"

@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+base64.workspace = true
 i18n.workspace = true
 ssh = { path = "../ssh" }
 session = { path = "../session" }

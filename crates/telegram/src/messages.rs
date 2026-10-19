@@ -220,7 +220,11 @@ mod tests {
         for limit in [256, 1200, 2800] {
             let preview = initial(&history, true, &HashSet::new(), "en", limit);
             assert!(preview.encode_utf16().count() < 3800);
-            assert!(preview.contains('…') && preview.contains("/history export"));
+            assert!(
+                preview.contains('…')
+                    && preview.contains("/history")
+                    && !preview.contains("/history export")
+            );
         }
     }
 

@@ -8,6 +8,8 @@ use url::Url;
 
 mod relay;
 
+pub mod download;
+
 pub use relay::Relay;
 
 #[cfg(test)]
