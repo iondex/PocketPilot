@@ -4,7 +4,7 @@
 
 ## 当前源码边界
 
-九个 crate 均为 publish=false，源码物理目录保持 src/ 下单层文件。
+十个 crate 均为 publish=false，源码物理目录保持 src/ 下单层文件。
 
 | crate | 所有权 |
 | --- | --- |
@@ -329,3 +329,7 @@ Lark adapter 使用 region/tenant/chat/thread/root-message 地址、根状态卡
 按后续明确需求，session::Mutation 增加 SetTitleIfMissing，Codex 从 build.rs 导出的 ThreadSetNameParams/Response 调用 thread/name/set。仅显式新建、打开或重命名时，在 cwd/绑定/权限与新鲜度检查后尝试；执行前再次读取原生 name，非空时保留原名。不发送用户输入、不 resume、不启动或中断 turn。官方 API 没有 compare-and-set 条件，已有标题检查与写入之间仍可能遇到原客户端并发改名；不声称跨客户端原子性。后台观察、进程启停和重连没有此操作许可。
 
 Telegram 的 presentation/markdown/presence/i18n 是独立平铺模块。Appearance 元数据通过持久投递队列、合并与限速，typing 是独立短期 lease；二者均不能调用 AgentProvider::execute。消息正文的 Markdown 与管理菜单 MarkdownV2 是不同的渲染入口。
+
+## 公共导航
+
+聊天界面的 workspace 表示执行环境/主机（Host），project 表示该环境内的项目目录（持久化 Workspace），session 位于项目内。engine::navigation 是 Slack/Discord 的公共目录选择模块，集中处理归属校验、排序、歧义拒绝与分页；平台模块只生成原生控件或命令。session 查询、操作账本、会话 actor 和 provider 连接仍由现有 engine/session 模块共享。

@@ -6,11 +6,13 @@
 
 在用户自建服务器安装自己的 bot，授权 bot 和 applications.commands。需要 View Channels、Manage Channels、Send Messages、Read Message History、Attach Files；使用用户计划的 Administrator bot 也能工作。原型使用 GUILDS intent 和 slash commands，不需要 Message Content intent。
 
-在根 pocketpilot.toml 中填写 [discord].token 和 guild_id，token 不进入 .env、日志或示例。然后运行：
+在根 pocketpilot.toml 中填写 [discord].token、guild_id 和可选 proxy，token 不进入 .env、日志或示例。然后运行：
 
 ```sh
-cargo build --release -p app --features discord --locked
-./target/release/pocketpilot serve
+make package FEATURES=discord,slack
+cargo clean
+./dist/pocketpilot doctor --credentials --discord
+./dist/pocketpilot serve
 ```
 
 可以只配 Discord，也可以与 Telegram 同进程启动。未启用编译 feature 却填写 Discord 配置会明确报错；没有两个并行服务争用同一个账本的部署方式。host/workspace 沿用同一根配置，平台 token/guild 和 data_dir 改动需要重启桥接。
@@ -21,10 +23,11 @@ cargo build --release -p app --features discord --locked
 
 | 命令 | 行为 |
 | --- | --- |
-| /pp-workspaces | 查看配置允许的工作区和短名 |
-| /pp-sessions workspace:短名 | 分页列出状态、短标题和 thread ID；下一页传返回的 cursor |
-| /pp-open workspace:短名 thread:ID | 为已有会话建立 category/channel 映射；不 resume 或发送输入 |
-| /pp-new workspace:短名 text:内容 confirm:true | 明确创建新会话并发首轮，每步单独持久回执 |
+| /pp-workspaces | 选择工作空间（本机/AWS 等执行环境） |
+| /pp-projects workspace:环境名称或ID | 查看该环境内的项目目录和短名 |
+| /pp-sessions workspace:环境 project:项目短名 | 分页列出状态、短标题和 thread ID；下一页传返回的 cursor |
+| /pp-open workspace:环境 project:项目短名 thread:ID | 为已有会话建立 category/channel 映射；不 resume 或发送输入 |
+| /pp-new workspace:环境 project:项目短名 text:内容 confirm:true | 明确创建新会话并发首轮，每步单独持久回执 |
 | /pp-ask text:内容 | 在绑定 channel 内续轮；NotLoaded 显式 resume，active 使用 expectedTurnId steer |
 | /pp-status | 只读刷新状态 |
 | /pp-history | 一个消息/附件查看全部可读 user/agent 文本 |
@@ -33,7 +36,9 @@ cargo build --release -p app --features discord --locked
 
 命令先收到 ephemeral ACK，再处理慢 SSH。操作回执仅发送给调用者，实际会话历史与输出进入其 session channel。新 category 对 @everyone 隐藏，owner 和 bot 有显式访问权限；已有服务器管理员仍遵循 Discord 自身权限规则。
 
-一个工作区一个 PP category，一个 session 一个短名 channel；短名尾部保留 thread 标识。channel 内固定状态卡展示状态、短标题和 thread ID。进入 active 会话先投递一个完整历史集合，idle 显示最后用户输入与对应 final；超过 1800 字符发送单个 Markdown 附件，原型附件预算 8 MiB，超限明确报错、不截断冒充完整历史。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
+用户先选 workspace（执行环境/主机），再选项目目录，最后选 session。目录选择、归属校验与排序复用 engine::navigation；平台只负责命令呈现。
+
+一个项目一个 PP category，一个 session 一个短名 channel；短名尾部保留 thread 标识。channel 内固定状态卡展示状态、短标题和 thread ID。进入 active 会话先投递一个完整历史集合，idle 显示最后用户输入与对应 final；超过 1800 字符发送单个 Markdown 附件，原型附件预算 8 MiB，超限明确报错、不截断冒充完整历史。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
 
 ## 持久化与生命周期
 
@@ -54,3 +59,5 @@ agent 输入使用与 Telegram 相同的 operations 状态机：Received → Pre
 当前 mock HTTP + 类型化 WebSocket fixture 覆盖 category/channel 创建、完整历史过滤、只读进入、steer、同 interaction 去重、丢回执不重发、owner 拒绝、解绑不停止任务；另有持久资源/输出恢复与容器不可改绑测试。
 
 真实 gateway、权限、上传和断网行为需要在目标服务器单独验收。下一阶段再增加 select/button 菜单、普通 channel 文本输入、完整离线 inbox、资源核对 CLI、删除 channel 后替换与可配置合并预算。当前用 slash 明确发消息，避免把普通聊天误当 agent 输入。
+
+只读接入诊断使用 `doctor --discord`；Gateway 的实际 Ready 事件会记录 `Discord Gateway ready`，与 REST 初始化日志区分。

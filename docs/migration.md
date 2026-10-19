@@ -58,3 +58,7 @@ Slack 安装/权限见 [Slack 指南](slack-setup.md)，Discord 见 [服务器�
 ## 5. 收尾
 
 确认服务运行的是 `dist/pocketpilot` 后，执行 `make clean` 释放构建目录。保留私有数据和必要的迁移备份，待新机器验收完成后按自己的备份策略处理旧副本；清理 `target/` 不涉及配置、账本或 Codex 历史。
+
+## Slack 旧频道模式升级
+
+新版本仅接受配置 owner 与 App 的一对一私聊。删除 `[slack].allowed_channel_ids`，按 [Slack 指南](slack-setup.md) 更新 manifest 和重新安装授权。DM ID 由 Slack 返回，不写入配置；一个 DM 支持多个项目。旧频道绑定不会被改成私聊绑定，也不会继续投递到频道；在 DM 中重新选择已有 session 建立新映射。旧表/额外字段保持原样，不自动删除数据库或历史。

@@ -81,4 +81,4 @@ SSH 使用有效 OpenSSH config，支持 ProxyJump、ProxyCommand、agent 和 kn
 
 菜单编辑验收：连续选择主机、工作区和会话时应编辑同一菜单消息；已删除菜单的明确编辑失败可重新发送，未知编辑结果不补发。/start 始终提供新入口，便于清空本地聊天记录后恢复可见菜单。快速点击旧按钮不得使过时页面覆盖当前页面或重复创建/删除。
 
-Slack 自建 app、manifest、token 与专用频道验收见 [Slack 安装与测试](slack-setup.md)。`doctor --credentials` 检查 xapp/xoxb 前缀；真实 token、权限和 Socket Mode 连接由启动与专用测试确认。
+Slack 自建 app、manifest、token 与 owner 私聊验收见 [Slack 安装与测试](slack-setup.md)。`doctor --credentials` 检查 xapp/xoxb 前缀；真实 token、权限和 Socket Mode 连接由启动与专用测试确认。

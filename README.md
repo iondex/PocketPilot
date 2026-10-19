@@ -62,13 +62,13 @@ cargo build --release -p app --features discord --locked
 ./target/release/pocketpilot serve
 ```
 
-在同一根配置增加 [discord] 的 token 与 guild_id；可以和 Telegram 同进程运行，共享连接/会话锁/写入账本。一个 workspace 一个 category，一个 session 一个 channel，owner 使用 /pp-workspaces、/pp-sessions、/pp-open、/pp-new 和 /pp-ask。完整范围、安装权限与限制见 [Discord 原型](docs/design/discord.md)。真实服务器的权限与客户端交互需单独验收。
+在同一根配置增加 [discord] 的 token 与 guild_id；可以和 Telegram 同进程运行，共享连接/会话锁/写入账本。一个 workspace 一个 category，一个 session 一个 channel，owner 先用 /pp-workspaces 选择执行环境，再用 /pp-projects 选择目录、/pp-sessions 选择会话；/pp-open、/pp-new 都显式填写 workspace 和 project。只读接入诊断使用 doctor --discord。完整范围、安装权限与限制见 [Discord 原型](docs/design/discord.md)。真实服务器的权限与客户端交互需单独验收。
 
 ## Slack 原型
 
-从 [安装指南](docs/slack-setup.md) 导入 [App Manifest](docs/slack-manifest.json)，准备 xapp / xoxb token 和 app/team/user/channel ID，填写根配置。编译 `cargo build --release -p app --features slack --locked` 后运行同一个 `serve`。一个项目一个频道，一个会话一条根卡片和 thread；`/pp` 选择项目/会话，thread 普通文字续轮或 steer。新建只创建命名空会话，首条任务另发。
+从 [安装指南](docs/slack-setup.md) 更新或导入 [App Manifest](docs/slack-manifest.json)，准备 xapp / xoxb token 和 app/team/owner ID，填写根配置。仅支持与授权 owner 私聊，无需频道、channel ID 或 `/pp`。在 Apps → PocketPilot → Messages 发送文字依次选择 workspace（执行环境）→ 项目/目录 → session；导航更新原菜单，一个 DM 管理多个项目，每个会话使用独立根卡片/thread，任务在对应 thread 内发送。新建只创建命名空会话，首条任务另发。
 
-使用 slack-morphism 2.31.0 与出站 Socket Mode，无需公网服务。首版只允许本机配置的一个用户操作非共享频道；历史、状态和确认使用卡片按钮。设计及限制见 [Slack](docs/design/slack.md)。真实 workspace 尚需按安装指南验收。
+使用 slack-morphism 2.31.0、显式代理和出站 Socket Mode，无需公网服务；菜单、历史、状态和确认通过 DM 消息及卡片按钮呈现。编译启用 `--features slack` 后运行同一个 `serve`。现有 App 的网页/Slack CLI 升级步骤、重新安装要求及验收见安装指南；设计与边界见 [Slack](docs/design/slack.md)。
 
 ## 动态目录与日志
 

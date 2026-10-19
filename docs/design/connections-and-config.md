@@ -43,7 +43,7 @@ notify 监听根配置的父目录，处理原子替换；debounce 和周期 res
 | 显示名、Telegram 合并与速率 | 新操作采用当前配置；持久批次已有固定 flush 截止时间 |
 | 密码/seed/认证策略 | 现有连接保持；后续认证读取相同已验证配置 hash |
 | 自动检测到其他 socket / 有效远程用户变化 | 原 provider ID 拒绝重定向，须分配新 ID 并重新绑定 |
-| Telegram token/default_locale、Discord token/guild、Slack token/app/team/user/channel 范围、data_dir | 整份候选拒绝，需重启桥接后应用 |
+| Telegram token/default_locale/proxy、Discord token/guild/proxy、Slack token/app/team/owner/proxy、data_dir | 整份候选拒绝，需重启桥接后应用 |
 | logging | 启动时装配，需重启桥接应用 |
 | OpenSSH config | 发现时读取，重连时重新解析；不监控全部 Include 文件并主动断开有效连接 |
 
@@ -77,3 +77,9 @@ logging.filter 直接控制 tracing，普通会话的成功续轮/steer 与详�
 
 
 根级 language 控制 CLI 与后台缺省展示，取值 zh-CN 或 en。Telegram 的 default_locale 和用户偏好继续独立。共享文案与错误索引见 [i18n 设计](i18n.md)；语言配置不改变 host/provider/workspace 身份或原生会话状态。
+
+## Channel 代理
+
+在 `[telegram]`、`[discord]`、`[slack]` 中分别设置 `proxy = "http://192.0.2.10:7890"`。省略、空字符串或空白字符串均为直连，显式忽略进程的 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY 和 NO_PROXY。当前支持无认证 HTTP 代理，HTTPS/WSS 经 CONNECT 隧道建立，保留目标证书校验；不支持 SOCKS、带账号密码的代理或带路径/query 的 URL。代理失败时不回退直连。
+
+Telegram 的 API、长轮询及 doctor 身份检查共享配置；Discord 的 REST 与 Gateway、Slack 的 Web API、文件传输与 Socket Mode 都使用各自配置。Discord SDK 缺少 WebSocket connector hook，使用有界 loopback relay 将其 Gateway 流量接入 CONNECT 隧道；Slack 使用具名 envelope/ack 与 SDK payload DTO，独立传输层提供代理、超时和退避重连。代理改动和凭据改动一样要求重启桥接，候选重载整份拒绝。
