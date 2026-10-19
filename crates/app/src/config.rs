@@ -1,6 +1,7 @@
 pub use discord::config::Config as Discord;
 pub use engine::config::{ConfigError, Host, Logging, TransportKind, Workspace};
 use serde::Deserialize;
+pub use slack::config::Config as Slack;
 use std::path::{Path, PathBuf};
 pub use telegram::config::Config as Telegram;
 
@@ -11,6 +12,7 @@ pub struct Config {
     pub runtime: engine::config::Config,
     pub telegram: Option<Telegram>,
     pub discord: Option<Discord>,
+    pub slack: Option<Slack>,
 }
 
 impl std::ops::Deref for Config {
@@ -36,6 +38,9 @@ pub fn load(path: &Path) -> Result<LoadedConfig, ConfigError> {
 pub fn parse(path: &Path, text: &str) -> Result<LoadedConfig, ConfigError> {
     let mut config: Config = toml::from_str(text).map_err(|_| ConfigError::Parse)?;
     config.runtime.prepare(path, text)?;
+    if config.slack.as_ref().is_some_and(|s| !s.valid()) {
+        return Err(ConfigError::Credentials);
+    }
     if config
         .telegram
         .as_ref()
@@ -67,11 +72,19 @@ pub fn runtime_parser(
     let loaded = parse(path, text)?;
     let root = loaded.config;
     let restart_key = engine::digest(&format!(
-        "{:?}\0{:?}",
+        "{:?}\0{:?}\0{:?}",
         root.telegram
             .as_ref()
             .map(|t| (&t.token, &t.default_locale)),
-        root.discord.as_ref().map(|d| (&d.token, d.guild_id))
+        root.discord.as_ref().map(|d| (&d.token, d.guild_id)),
+        root.slack.as_ref().map(|s| (
+            &s.app_token,
+            &s.bot_token,
+            &s.app_id,
+            &s.team_id,
+            &s.owner_user_id,
+            &s.allowed_channel_ids
+        ))
     ));
     Ok(engine::reload::ParsedConfig {
         config: root.runtime,
@@ -154,5 +167,24 @@ mod tests {
     fn public_example_is_a_valid_configuration() {
         load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pocketpilot.example.toml"))
             .unwrap();
+    }
+
+    #[test]
+    fn slack_account_scope_is_validated_redacted_and_requires_restart() {
+        let path = Path::new("/tmp/pocketpilot.toml");
+        let text = "[slack]\napp_token='xapp-fixture-secret'\nbot_token='xoxb-fixture-secret'\napp_id='A1'\nteam_id='T1'\nowner_user_id='U1'\nallowed_channel_ids=['C1']\n";
+        let loaded = parse(path, text).unwrap();
+        let debug = format!("{:?}", loaded.config);
+        assert!(!debug.contains("fixture-secret"));
+        assert!(loaded.config.slack.unwrap().credentials_valid());
+        assert!(parse(path, &text.replace("['C1']", "['C1','C1']")).is_err());
+        assert!(parse(path, &text.replace("['C1']", "[]")).is_err());
+        let before = runtime_parser(path, text).unwrap();
+        let after = runtime_parser(
+            path,
+            &text.replace("owner_user_id='U1'", "owner_user_id='U3'"),
+        )
+        .unwrap();
+        assert_ne!(before.restart_key, after.restart_key);
     }
 }

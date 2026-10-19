@@ -8,6 +8,7 @@ publish.workspace = true
 [features]
 default = []
 discord = ["discord/runtime"]
+slack = ["slack/runtime"]
 
 [[bin]]
 name = "pocketpilot"
@@ -21,6 +22,7 @@ session = { path = "../session" }
 codex = { path = "../codex" }
 telegram = { path = "../telegram" }
 discord = { path = "../discord", default-features = false }
+slack = { path = "../slack", default-features = false }
 clap.workspace = true
 secrecy.workspace = true
 serde.workspace = true

@@ -179,6 +179,8 @@ struct ConfigurationSummary {
     telegram_configured: bool,
     discord_configured: bool,
     discord_runtime_enabled: bool,
+    slack_configured: bool,
+    slack_runtime_enabled: bool,
     credentials_checked: bool,
     control_enabled: bool,
 }
@@ -186,6 +188,14 @@ struct ConfigurationSummary {
 fn configuration_summary(config: &Config, check: bool) -> Result<ConfigurationSummary, Error> {
     if check && let Some(telegram) = &config.telegram {
         let _ = credentials::read(telegram)?;
+    }
+    if check
+        && config
+            .slack
+            .as_ref()
+            .is_some_and(|s| !s.credentials_valid())
+    {
+        return Err(config::ConfigError::Credentials.into());
     }
     // Discord checks non-empty credentials and guild ID during config loading;
     // token validity and permissions require a real Discord connection.
@@ -196,6 +206,8 @@ fn configuration_summary(config: &Config, check: bool) -> Result<ConfigurationSu
         telegram_configured: config.telegram.is_some(),
         discord_configured: config.discord.is_some(),
         discord_runtime_enabled: cfg!(feature = "discord"),
+        slack_configured: config.slack.is_some(),
+        slack_runtime_enabled: cfg!(feature = "slack"),
         credentials_checked: check,
         control_enabled: config.providers.iter().any(|p| p.control_verified),
     })

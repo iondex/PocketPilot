@@ -1,0 +1,24 @@
+{
+  "display_information": {
+    "name": "PocketPilot",
+    "description": "Control your shared Codex sessions from project threads"
+  },
+  "features": {
+    "bot_user": { "display_name": "PocketPilot", "always_online": false },
+    "slash_commands": [
+      { "command": "/pp", "description": "Open PocketPilot projects and sessions", "should_escape": false }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": ["commands", "chat:write", "channels:read", "groups:read", "channels:history", "groups:history", "files:write"]
+    }
+  },
+  "settings": {
+    "socket_mode_enabled": true,
+    "interactivity": { "is_enabled": true },
+    "event_subscriptions": { "bot_events": ["message.channels", "message.groups"] },
+    "org_deploy_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

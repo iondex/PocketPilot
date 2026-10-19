@@ -1,0 +1,440 @@
+use super::*;
+use crate::render;
+use session::provider::Mutation;
+
+impl Service {
+    pub(super) async fn action_button(
+        &self,
+        r: &Request,
+        hash: &str,
+        label: &str,
+        action: Action,
+    ) -> Result<slack_morphism::prelude::SlackBlock> {
+        let nonce = self.store.action(r, action, hash).await?;
+        Ok(render::button(&i18n::text(&self.locale(), label), &nonce))
+    }
+
+    pub(super) async fn command(&self, r: &Request, hash: &str) -> Result<()> {
+        let snapshot = self.fresh(r, hash)?;
+        self.api.channel(&r.channel).await?;
+        self.fresh(r, hash)?;
+        match &r.command {
+            Command::Menu | Command::Projects { .. } => {
+                let offset = match r.command {
+                    Command::Projects { offset } => offset,
+                    _ => 0,
+                };
+                let mut c = render::message(i18n::text(&self.locale(), "slack.projects"));
+                for ws in snapshot.config.workspaces.iter().skip(offset).take(12) {
+                    let nonce = self
+                        .store
+                        .action(
+                            r,
+                            Action::Run(Command::Sessions {
+                                workspace: ws.id.clone(),
+                                cursor: None,
+                            }),
+                            hash,
+                        )
+                        .await?;
+                    c.blocks.push(render::button(
+                        &session::delivery::short_title(&ws.name, 60),
+                        &nonce,
+                    ));
+                }
+                if snapshot.config.workspaces.len() > offset + 12 {
+                    c.blocks.push(
+                        self.action_button(
+                            r,
+                            hash,
+                            "slack.next",
+                            Action::Run(Command::Projects {
+                                offset: offset + 12,
+                            }),
+                        )
+                        .await?,
+                    );
+                }
+                self.store.output(r, &c, hash, true).await?;
+            }
+            Command::Sessions { workspace, cursor } => {
+                let ws = self.workspace(&snapshot, workspace)?;
+                let provider = self.context.connections.get(&snapshot.config, ws).await?;
+                let page = engine::connections::list_picker(
+                    &self.store.core,
+                    provider.as_ref(),
+                    ws,
+                    cursor.clone(),
+                    8,
+                )
+                .await?;
+                self.fresh(r, hash)?;
+                let mut c = render::message(ws.name.clone());
+                c.blocks.push(
+                    self.action_button(
+                        r,
+                        hash,
+                        "slack.new",
+                        Action::NewModal {
+                            workspace: workspace.clone(),
+                        },
+                    )
+                    .await?,
+                );
+                for session in page.data {
+                    let nonce = self
+                        .store
+                        .action(
+                            r,
+                            Action::Run(Command::Open {
+                                workspace: workspace.clone(),
+                                thread: session.reference.thread.clone(),
+                            }),
+                            hash,
+                        )
+                        .await?;
+                    c.blocks.push(render::plain(&format!(
+                        "{} · {}",
+                        session.status.label_in(&self.locale()),
+                        session::delivery::short_title(&session.title, 65)
+                    )));
+                    c.blocks.push(render::button(
+                        &i18n::text(&self.locale(), "slack.open"),
+                        &nonce,
+                    ));
+                }
+                if let Some(cursor) = page.next_cursor {
+                    c.blocks.push(
+                        self.action_button(
+                            r,
+                            hash,
+                            "slack.next",
+                            Action::Run(Command::Sessions {
+                                workspace: workspace.clone(),
+                                cursor: Some(cursor),
+                            }),
+                        )
+                        .await?,
+                    );
+                }
+                c.blocks.push(
+                    self.action_button(r, hash, "slack.projects", Action::Run(Command::Menu))
+                        .await?,
+                );
+                self.store.output(r, &c, hash, true).await?;
+            }
+            Command::Open { workspace, thread } => {
+                self.open(r, hash, workspace, thread).await?;
+            }
+            Command::New { workspace, title } => {
+                if title.trim().is_empty() || title.chars().count() > 120 {
+                    return Err(Error::Ui("slack.error.title"));
+                }
+                let ws = self.workspace(&snapshot, workspace)?;
+                self.require_channel_project(&r.channel, &ws.id).await?;
+                let actor = self
+                    .context
+                    .connections
+                    .actor(&ws.provider_id, "__create")
+                    .await;
+                let _guard = actor.lock().await;
+                let receipt = self
+                    .mutate(
+                        r,
+                        hash,
+                        ws,
+                        "__new",
+                        "create",
+                        Mutation::Create {
+                            cwd: ws.cwd.clone(),
+                        },
+                    )
+                    .await?;
+                self.mutate(
+                    r,
+                    hash,
+                    ws,
+                    &receipt.thread,
+                    "title",
+                    Mutation::SetTitleIfMissing {
+                        thread: receipt.thread.clone(),
+                        title: title.trim().into(),
+                    },
+                )
+                .await?;
+                self.open(r, hash, workspace, &receipt.thread).await?;
+            }
+            Command::Input { text } => self.input(r, hash, text).await?,
+            Command::Confirm { inbox } => {
+                let old = self
+                    .store
+                    .inbox(inbox)
+                    .await?
+                    .ok_or(Error::Ui("slack.error.stale"))?;
+                if old.state != "awaiting_confirmation" || old.config_hash != hash {
+                    return Err(Error::Ui("slack.error.stale"));
+                }
+                let mut input: Request = serde_json::from_str(&old.request)?;
+                if input.binding != r.binding
+                    || input.revision != r.revision
+                    || input.channel != r.channel
+                    || input.root != r.root
+                    || input.user != r.user
+                {
+                    return Err(Error::Ui("slack.error.scope"));
+                }
+                let Command::Input { text } = input.command.clone() else {
+                    return Err(Error::Ui("slack.error.stale"));
+                };
+                if !self
+                    .store
+                    .state(inbox, "awaiting_confirmation", "done")
+                    .await?
+                {
+                    return Err(Error::Ui("slack.error.stale"));
+                }
+                input.id = r.id.clone();
+                input.date = r.date;
+                self.input(&input, hash, &text).await?;
+            }
+            Command::Status | Command::History { .. } => {
+                let b = self.bound(r).await?;
+                let ws = self.validate(&snapshot, &b)?;
+                let provider = self.context.connections.get(&snapshot.config, ws).await?;
+                let current = provider.read(&b.thread).await?;
+                engine::connections::require_workspace(&current.cwd, ws)?;
+                let text = if let Command::History { export } = &r.command {
+                    let _permit = self
+                        .context
+                        .connections
+                        .history_limit(&b.instance)
+                        .await
+                        .acquire_owned()
+                        .await
+                        .map_err(|_| Error::Request)?;
+                    let history = provider
+                        .history(&b.thread)
+                        .await?
+                        .without_transient_errors();
+                    if !history.all_pages_read {
+                        return Err(Error::Ui("slack.error.history"));
+                    }
+                    if *export {
+                        session::delivery::full_history_in(&history, &self.locale())
+                    } else {
+                        session::delivery::latest_interaction_in(&history, &self.locale())
+                    }
+                } else {
+                    format!(
+                        "{}\n{}\n{}",
+                        current.title,
+                        current.status.label_in(&self.locale()),
+                        b.thread
+                    )
+                };
+                self.fresh(r, hash)?;
+                self.bound(r).await?;
+                let mut c = render::message(text);
+                if matches!(r.command, Command::History { export: true }) {
+                    c.document = true;
+                }
+                self.store.output(r, &c, hash, !c.document).await?;
+            }
+            Command::UnbindConfirm => {
+                self.bound(r).await?;
+                let mut c = render::message(i18n::text(&self.locale(), "slack.unbind.confirm"));
+                c.blocks.push(
+                    self.action_button(r, hash, "slack.confirm", Action::Run(Command::Unbind))
+                        .await?,
+                );
+                self.store.output(r, &c, hash, true).await?;
+            }
+            Command::Unbind => {
+                if !(0..=300).contains(&engine::now().saturating_sub(r.date)) {
+                    return Err(Error::Ui("slack.error.stale"));
+                }
+                let b = self.bound(r).await?;
+                self.fresh(r, hash)?;
+                self.store.activate(&b, false).await?;
+                let mut reply = r.clone();
+                reply.binding = None;
+                reply.revision = None;
+                self.store
+                    .output(
+                        &reply,
+                        &render::message(i18n::text(&self.locale(), "slack.unbound")),
+                        hash,
+                        true,
+                    )
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn require_channel_project(&self, channel: &str, workspace: &str) -> Result<()> {
+        let saved: Option<String> = sqlx::query_scalar(
+            "SELECT workspace FROM slack_channels WHERE app||':'||team||':'||bot=? AND channel=?",
+        )
+        .bind(&self.store.namespace)
+        .bind(channel)
+        .fetch_optional(self.store.core.pool())
+        .await?;
+        if saved.is_some_and(|w| w != workspace) {
+            return Err(Error::Ui("slack.error.channel_project"));
+        }
+        Ok(())
+    }
+
+    pub(super) async fn root_card(&self, b: &Binding, text: &str, hash: &str) -> Result<Content> {
+        let r = Request {
+            id: format!("card:{}:{}", b.id, engine::digest(text)),
+            channel: b.channel.clone(),
+            user: b.owner.clone(),
+            root: Some(b.root.clone()),
+            binding: Some(b.id.clone()),
+            revision: Some(b.revision),
+            date: engine::now(),
+            command: Command::Status,
+        };
+        let mut c = render::message(text.into());
+        c.document = false;
+        for (label, command) in [
+            ("slack.status", Command::Status),
+            ("slack.history", Command::History { export: false }),
+            ("slack.export", Command::History { export: true }),
+            ("slack.unbind", Command::UnbindConfirm),
+        ] {
+            c.blocks.push(
+                self.action_button(&r, hash, label, Action::Run(command))
+                    .await?,
+            );
+        }
+        Ok(c)
+    }
+
+    async fn open(&self, r: &Request, hash: &str, workspace: &str, thread: &str) -> Result<()> {
+        let snapshot = self.fresh(r, hash)?;
+        let ws = self.workspace(&snapshot, workspace)?;
+        self.require_channel_project(&r.channel, &ws.id).await?;
+        let actor = self
+            .context
+            .connections
+            .actor(&ws.provider_id, thread)
+            .await;
+        let _guard = actor.lock().await;
+        let provider = self.context.connections.get(&snapshot.config, ws).await?;
+        let current = provider.read(thread).await?;
+        engine::connections::require_workspace(&current.cwd, ws)?;
+        let _permit = self
+            .context
+            .connections
+            .history_limit(&ws.provider_id)
+            .await
+            .acquire_owned()
+            .await
+            .map_err(|_| Error::Request)?;
+        let history = provider.history(thread).await?.without_transient_errors();
+        if !history.all_pages_read {
+            return Err(Error::Ui("slack.error.history"));
+        }
+        self.fresh(r, hash)?;
+        self.api.channel(&r.channel).await?;
+        let existing = self
+            .store
+            .existing(&r.channel, &ws.provider_id, thread)
+            .await?;
+        let b = if let Some(mut b) = existing {
+            self.validate(&snapshot, &b)?;
+            if !b.active {
+                self.store.activate(&b, true).await?;
+                b.active = true;
+                b.revision += 1;
+            }
+            b
+        } else {
+            let p = snapshot
+                .config
+                .providers
+                .iter()
+                .find(|p| p.id == ws.provider_id)
+                .ok_or(Error::Ui("slack.error.scope"))?;
+            let h = snapshot
+                .config
+                .hosts
+                .iter()
+                .find(|h| h.id == p.host_id)
+                .ok_or(Error::Ui("slack.error.scope"))?;
+            let mut b = Binding {
+                id: uuid::Uuid::new_v4().to_string(),
+                app: self.settings.app_id.clone(),
+                team: self.settings.team_id.clone(),
+                bot: self.bot.clone(),
+                channel: r.channel.clone(),
+                root: String::new(),
+                owner: r.user.clone(),
+                workspace: ws.id.clone(),
+                instance: ws.provider_id.clone(),
+                thread: thread.into(),
+                cwd: current.cwd.clone(),
+                endpoint: engine::connections::fingerprint(h, p),
+                active: true,
+                revision: 1,
+                observed: "{}".into(),
+                card: String::new(),
+                history_ready: false,
+            };
+            self.store.reserve(&b).await?;
+            self.fresh(r, hash)?;
+            let text = format!(
+                "{}\n{}\n{}",
+                session::delivery::short_title(&current.title, 80),
+                current.status.label_in(&self.locale()),
+                thread
+            );
+            b.root = self
+                .api
+                .post(&r.channel, None, None, &render::message(text))
+                .await?;
+            // Persist the exact created root even if scope changed while the
+            // request was in flight; later delivery rechecks authorization.
+            self.store.bind(&b).await?;
+            b
+        };
+        self.fresh(r, hash)?;
+        if !b.history_ready {
+            let preview = session::delivery::latest_interaction_in(&history, &self.locale());
+            let text = preview.chars().take(1200).collect::<String>();
+            self.store
+                .publish(
+                    &b,
+                    &render::message(text),
+                    &super::observation::hashes(&history)?,
+                    hash,
+                )
+                .await?;
+        }
+        // Explicit opening refreshes expired card controls without replaying history.
+        self.store.card(&b, "").await?;
+        let mut reply = render::message(i18n::t!(
+            "slack.opened",
+            locale = &self.locale(),
+            channel = &b.channel,
+            root = &b.root
+        ));
+        reply.blocks = vec![
+            slack_morphism::prelude::SlackSectionBlock::new()
+                .with_text(slack_morphism::md!(
+                    "<https://app.slack.com/client/{}/{}/thread/{}-{}|{}>",
+                    self.settings.team_id,
+                    b.channel,
+                    b.channel,
+                    b.root,
+                    i18n::text(&self.locale(), "slack.open")
+                ))
+                .into(),
+        ];
+        self.store.output(r, &reply, hash, true).await?;
+        Ok(())
+    }
+}

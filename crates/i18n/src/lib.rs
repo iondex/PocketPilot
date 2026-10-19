@@ -142,7 +142,7 @@ mod tests {
                 }
                 for value in std::fs::read_to_string(&file).unwrap().split('"') {
                     if [
-                        "tg.", "error.", "discord.", "nav.", "common.", "state.", "cli.",
+                        "tg.", "error.", "discord.", "slack.", "nav.", "common.", "state.", "cli.",
                     ]
                     .iter()
                     .any(|prefix| value.starts_with(prefix))

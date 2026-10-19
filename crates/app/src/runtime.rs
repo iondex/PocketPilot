@@ -15,10 +15,12 @@ pub enum Error {
     Store(#[from] engine::storage::StoreError),
     #[error(transparent)]
     Integration(#[from] IntegrationError),
-    #[error("configure a Telegram or Discord integration")]
+    #[error("configure a Telegram, Discord or Slack integration")]
     Missing,
     #[error("Discord requires --features discord")]
     Feature,
+    #[error("Slack requires --features slack")]
+    SlackFeature,
     #[error("a runtime task stopped unexpectedly")]
     WorkerStopped,
 }
@@ -28,6 +30,7 @@ impl ::i18n::LocalizedError for Error {
         match self {
             Self::Missing => ::i18n::Message::new("error.runtime.missing"),
             Self::Feature => ::i18n::Message::new("error.runtime.feature"),
+            Self::SlackFeature => ::i18n::Message::new("error.runtime.slack_feature"),
             Self::WorkerStopped => ::i18n::Message::new("error.runtime.worker"),
             Self::Config(error) => ::i18n::LocalizedError::message(error),
             Self::Store(error) => ::i18n::LocalizedError::message(error),
@@ -66,6 +69,16 @@ pub async fn run(path: PathBuf) -> Result<(), Error> {
         {
             let _ = settings;
             return Err(Error::Feature);
+        }
+    }
+    if let Some(settings) = root.slack {
+        #[cfg(feature = "slack")]
+        integrations.push(Arc::new(slack::Slack::new(settings)));
+
+        #[cfg(not(feature = "slack"))]
+        {
+            let _ = settings;
+            return Err(Error::SlackFeature);
         }
     }
     if integrations.is_empty() {

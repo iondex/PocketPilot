@@ -280,3 +280,49 @@ CREATE TABLE IF NOT EXISTS topic_removals (
     state TEXT NOT NULL CHECK (state IN ('dispatching','accepted','rejected','outcome_unknown')),
     PRIMARY KEY (bot_id,chat_id,topic_id)
 );
+
+CREATE TABLE IF NOT EXISTS slack_channels (
+    app TEXT NOT NULL, team TEXT NOT NULL, bot TEXT NOT NULL, channel TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    PRIMARY KEY(app,team,bot,channel)
+);
+CREATE TABLE IF NOT EXISTS slack_bindings (
+    id TEXT PRIMARY KEY, app TEXT NOT NULL, team TEXT NOT NULL, bot TEXT NOT NULL,
+    channel TEXT NOT NULL, root TEXT NOT NULL, owner TEXT NOT NULL,
+    workspace TEXT NOT NULL, instance TEXT NOT NULL, thread TEXT NOT NULL,
+    cwd TEXT NOT NULL, endpoint TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+    revision INTEGER NOT NULL DEFAULT 1, observed TEXT NOT NULL DEFAULT '{}',
+    card TEXT NOT NULL DEFAULT '', history_ready INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(app,team,bot,channel,root), UNIQUE(app,team,bot,channel,instance,thread)
+);
+CREATE TRIGGER IF NOT EXISTS slack_binding_identity_immutable
+BEFORE UPDATE OF app,team,bot,channel,root,owner,workspace,instance,thread,cwd,endpoint ON slack_bindings
+BEGIN SELECT RAISE(ABORT,'Slack container identity is immutable'); END;
+CREATE TABLE IF NOT EXISTS slack_provisions (
+    app TEXT NOT NULL, team TEXT NOT NULL, bot TEXT NOT NULL, channel TEXT NOT NULL,
+    instance TEXT NOT NULL, thread TEXT NOT NULL, state TEXT NOT NULL,
+    PRIMARY KEY(app,team,bot,channel,instance,thread)
+);
+CREATE TABLE IF NOT EXISTS slack_inbox (
+    id TEXT PRIMARY KEY, namespace TEXT NOT NULL, source TEXT NOT NULL,
+    request TEXT NOT NULL, config_hash TEXT NOT NULL, state TEXT NOT NULL,
+    created INTEGER NOT NULL DEFAULT (unixepoch()), UNIQUE(namespace,source)
+);
+CREATE TABLE IF NOT EXISTS slack_actions (
+    nonce TEXT PRIMARY KEY, namespace TEXT NOT NULL, channel TEXT NOT NULL,
+    owner TEXT NOT NULL, root TEXT, binding TEXT, revision INTEGER,
+    action TEXT NOT NULL, config_hash TEXT NOT NULL, expires INTEGER NOT NULL,
+    consumed INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS slack_outbox (
+    id TEXT PRIMARY KEY, namespace TEXT NOT NULL, channel TEXT NOT NULL,
+    root TEXT, recipient TEXT, binding TEXT, revision INTEGER,
+    source TEXT NOT NULL, content TEXT NOT NULL, config_hash TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending', not_before INTEGER NOT NULL DEFAULT 0,
+    file_id TEXT, UNIQUE(namespace,source)
+);
+CREATE INDEX IF NOT EXISTS slack_outbox_pending ON slack_outbox(namespace,state,not_before);
+CREATE TABLE IF NOT EXISTS slack_channel_budget (
+    namespace TEXT NOT NULL, channel TEXT NOT NULL, next_send INTEGER NOT NULL,
+    PRIMARY KEY(namespace,channel)
+);

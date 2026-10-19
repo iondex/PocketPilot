@@ -32,6 +32,7 @@ test-support = []
 [dev-dependencies]
 codex = { path = "../codex" }
 discord = { path = "../discord", features = ["test-support"] }
+slack = { path = "../slack", features = ["test-support"] }
 tempfile.workspace = true
 futures-util.workspace = true
 tokio-tungstenite.workspace = true

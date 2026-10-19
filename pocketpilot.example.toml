@@ -28,6 +28,15 @@ default_locale = "zh-CN"
 # token = "REPLACE_WITH_DISCORD_BOT_TOKEN"
 # guild_id = 123456789012345678
 
+# 可选 Slack：从 docs/slack-manifest.json 创建内部 app，编译 --features slack。
+# [slack]
+# app_token = "xapp-REPLACE_IN_PRIVATE_CONFIG"
+# bot_token = "xoxb-REPLACE_IN_PRIVATE_CONFIG"
+# app_id = "A000000001"
+# team_id = "T000000001"
+# owner_user_id = "U000000001"
+# allowed_channel_ids = ["C000000001"]
+
 [[hosts]]
 id = "00000000-0000-4000-8000-000000000001"
 name = "开发机"

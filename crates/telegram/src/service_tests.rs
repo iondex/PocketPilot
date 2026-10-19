@@ -4482,3 +4482,146 @@ async fn explicit_history_export_sends_full_visible_history_only_when_requested(
             .all(|method| !matches!(*method, "thread/resume" | "turn/start" | "turn/steer"))
     );
 }
+
+#[tokio::test]
+async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
+    use slack::{
+        api::{Platform, Upload},
+        model::{Command as SCommand, Content, Request as SRequest},
+    };
+    struct SlackFixture;
+    #[async_trait::async_trait]
+    impl Platform for SlackFixture {
+        async fn channel(&self, _: &str) -> slack::Result<()> {
+            Ok(())
+        }
+
+        async fn post(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: &Content,
+        ) -> slack::Result<String> {
+            Ok("123.000001".into())
+        }
+
+        async fn update(&self, _: &str, _: &str, _: &Content) -> slack::Result<()> {
+            Ok(())
+        }
+
+        async fn prepare_file(&self, _: usize) -> slack::Result<Upload> {
+            Err(slack::Error::Request)
+        }
+
+        async fn upload_file(&self, _: &Upload, _: Vec<u8>) -> slack::Result<()> {
+            Err(slack::Error::Request)
+        }
+
+        async fn complete_file(&self, _: &Upload, _: &str, _: Option<&str>) -> slack::Result<()> {
+            Err(slack::Error::Request)
+        }
+    }
+    let fixture = Fixture::new().await;
+    let core = fixture.service.store.core().clone();
+    let settings = slack::config::Config {
+        app_token: "xapp-fixture".into(),
+        bot_token: "xoxb-fixture".into(),
+        app_id: "A1".into(),
+        team_id: "T1".into(),
+        owner_user_id: "U1".into(),
+        allowed_channel_ids: vec!["C1".into()],
+    };
+    let context = engine::integrations::Context {
+        config: fixture.service.config.clone(),
+        store: core.clone(),
+        connections: fixture.service.connections.clone(),
+    };
+    let (_stop, receiver) = watch::channel(false);
+    let service = slack::runtime::Service::local_fixture(
+        settings,
+        context,
+        Arc::new(SlackFixture),
+        "U2".into(),
+        receiver,
+    );
+    let open = SRequest {
+        id: "open".into(),
+        channel: "C1".into(),
+        user: "U1".into(),
+        root: None,
+        binding: None,
+        revision: None,
+        date: now(),
+        command: SCommand::Open {
+            workspace: "workspace".into(),
+            thread: "thread".into(),
+        },
+    };
+    service.handle_fixture(&open).await.unwrap();
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .any(|r| matches!(*r, "thread/resume" | "turn/start" | "turn/steer"))
+    );
+    let store = slack::storage::Store::new(core, "A1", "T1", "U2");
+    let b = store.at("C1", "123.000001").await.unwrap().unwrap();
+    let r = SRequest {
+        id: "ask".into(),
+        channel: b.channel.clone(),
+        user: "U1".into(),
+        root: Some(b.root.clone()),
+        binding: Some(b.id.clone()),
+        revision: Some(b.revision),
+        date: now(),
+        command: SCommand::Input {
+            text: "continue from Slack".into(),
+        },
+    };
+    service.handle_fixture(&r).await.unwrap();
+    service.handle_fixture(&r).await.unwrap();
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/steer")
+            .count(),
+        1
+    );
+    let mut denied = r.clone();
+    denied.id = "denied".into();
+    denied.user = "U3".into();
+    assert!(service.handle_fixture(&denied).await.is_err());
+    fixture.state.lock().await.drop_write = true;
+    let mut lost = r.clone();
+    lost.id = "lost".into();
+    assert!(service.handle_fixture(&lost).await.is_err());
+    assert!(service.handle_fixture(&lost).await.is_err());
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .filter(|r| **r == "turn/steer")
+            .count(),
+        2
+    );
+    let mut unbind = r.clone();
+    unbind.id = "unbind".into();
+    unbind.command = SCommand::Unbind;
+    service.handle_fixture(&unbind).await.unwrap();
+    assert!(service.handle_fixture(&r).await.is_err());
+    assert!(matches!(
+        fixture.state.lock().await.status,
+        p::ThreadStatus::Active(_)
+    ));
+}

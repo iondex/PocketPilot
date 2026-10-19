@@ -54,6 +54,7 @@ pub fn init(config: &Logging) -> Result<Option<tracing_appender::non_blocking::W
             "sqlx",
             "ssh2_config",
             "serenity",
+            "slack_morphism",
         ]
         .iter()
         .any(|target| metadata.target().starts_with(target))
