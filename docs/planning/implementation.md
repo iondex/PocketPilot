@@ -189,7 +189,7 @@ G0 按实际 runtime + transport/profile 认证，不按全局版本号一键放
 依赖：W06/W09。归属：session/delivery.rs、telegram/rendering。
 
 - 识别最后 user/对应 final，缺 final/缺 phase 明确标示；不拿上一轮输出冒充本轮回答。
-- Telegram 入场只显示最近内容预览，读取结果用于建立去重基线；再次打开保留游标和未投递增量。完整历史由 /history export 明确导出，普通长输出及主动查询仍支持单个 Markdown 附件。
+- Telegram 入场只显示最近内容预览，读取结果用于建立去重基线；再次打开保留游标和未投递增量。不提供完整历史导出；普通长输出及主动查询均按结构分段，用户文件附件走独立上传流程。
 - 历史屏障有成功、失败、unknown、超限、用户放弃和 deadline 出口，不挡住之后的新实时文本。
 - 产物：HistoryBundle 和文本/文件 renderer；不发 agent 总结任务。
 - 验证：A13/A14/A41/A42/A43/A45；静态和活跃变化场景分别检查。

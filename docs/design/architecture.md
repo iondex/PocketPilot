@@ -339,4 +339,6 @@ Telegram 的 presentation/markdown/presence/i18n 是独立平铺模块。Appeara
 
 session::markdown 以 pulldown-cmark 为语法解析器，集中提供有界文档结构、中文粗体兼容、安全链接、表格降级和纯文本 fallback；Telegram 复用输入解析，保留已有 HTML 渲染。Slack 把公共结构映射为 SDK 的普通 rich_text 元素，Discord 映射为其 Markdown 子集。平台菜单、状态和错误使用字面文本入口，不把动态标题作为正文语法。RuntimeStatus::text_in 提供共同的无图标状态文案，图标由平台入口决定。
 
-原始 Markdown 与显示文本分别保留；原文用于文件导出，显示超限或不能保真时整份降级为附件。UTF-16 长度与公共预览的 grapheme 边界分别处理。Slack 顶层 fallback 禁用标记解析，Discord 所有消息和编辑保留 allowed_mentions；格式优化不改变 outbox、未知结果、权限或原生操作语义。能力、验证范围和第三方库选型见 [Markdown 与 emoji](../research/chat-formatting.md)。
+原始 Markdown 与显示文本分别保留；文字按文档结构分段并分别渲染，显示超限时继续分段，不能保真的语法保持字面内容；不提供历史导出或自动生成历史附件。UTF-16 长度与公共预览的 grapheme 边界分别处理。Slack 顶层 fallback 禁用标记解析，Discord 所有消息和编辑保留 allowed_mentions；格式优化不改变 outbox、未知结果、权限或原生操作语义。能力、验证范围和第三方库选型见 [Markdown 与 emoji](../research/chat-formatting.md)。
+
+入站文件通过公共 Incoming 引用、下载预算和 Uploaded 路径上下文进入会话。平台只负责解析文件引用和通过自身代理/凭据下载；engine::uploads 生成所选执行账号的私有附件路径，Codex adapter 以类型化 fs/createDirectory 与 fs/writeFile 写入文件。每次上传是明确用户动作的独立持久 operation，后台观察不能上传；图片再作为 LocalImage 输入，其余文件以路径上下文送入。过期输入的确认保留文件引用，未知写入不重发。

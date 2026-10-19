@@ -1,6 +1,6 @@
 # Discord 真实服务器验收
 
-适用于已经创建独立服务器和 bot 的部署。当前实现是 Gateway + guild slash commands；本地 HTTP/WebSocket fixture 不能证明真实权限、客户端呈现或上传可用。命令语义见 [Discord 原型](design/discord.md)。
+适用于已经创建独立服务器和 bot 的部署。当前实现是 Gateway + guild slash commands；本地 HTTP/WebSocket fixture 不能证明真实权限、客户端呈现或附件传递可用。命令语义见 [Discord 原型](design/discord.md)。
 
 ## 安装与准备
 
@@ -51,15 +51,15 @@ cargo clean
 
 ```text
 /pp-status
-/pp-history
+/pp-recent
 /pp-rename title:discord-smoke
 ```
 
-核对原生 thread ID 与 cwd；确认原端没有新增 turn，也没有因 `/pp-open` 或查询自动 resume。idle 会话入场显示最后输入与对应 final；active 会话入场发送完整可读历史。`/pp-history` 返回完整可读 user/agent 文本，渲染后超过 1,800 个 UTF-16 单元或代码无法保真表示时转为一个原文 Markdown 附件，原型预算为 8 MiB；不要用 Telegram 的“入场短预览”标准验收 Discord。
+核对原生 thread ID 与 cwd；确认原端没有新增 turn，也没有因 `/pp-open` 或查询自动 resume。入场与 `/pp-recent` 只显示最近用户输入和对应 final。渲染后超限的结果分段发送为普通消息，不生成 `session.md`，不支持完整历史导出。
 
 ## 第二轮：创建、续轮和 steer
 
-先按 [共享执行验证](design/local-desktop.md#部署验证) 确认 provider 对应同一执行实例，再用 `providers trust PROVIDER_ID` 记录控制确认。`doctor --connect` 不会自动授予控制；已有通过验证的 provider 无需再次 trust。
+先按 [共享执行验证](design/local-desktop.md#部署验证) 确认 provider 对应同一执行实例，停止桥接后用 `providers verify PROVIDER_ID --project PROJECT_ID` 验证专用会话并记录控制确认，再恢复桥接。`doctor --connect` 不会自动授予控制；已有通过验证的 provider 无需再次 trust。
 
 ```text
 /pp-new workspace:执行环境ID project:测试项目短名 text:只回复 DISCORD_SMOKE_OK，不运行工具，不修改文件 confirm:true
@@ -83,7 +83,8 @@ NotLoaded 会话仅在明确 `/pp-ask` 时 resume。等待审批/用户输入的
 | --- | --- |
 | Markdown | 短合成样本包含标题、粗斜体、引用、列表、代码和链接；表格显示为列名与值，任务显示勾选框；HTML 与剧透标记保持字面含义 |
 | 动态标题 | 项目/session 名包含 `* _ ~ < > &` 与 emoji；菜单和状态卡保持文字，不产生额外格式 |
-| 长输出 | 专用测试会话产生超过 1,800 个 UTF-16 单元的合成文本，收到原文 `session.md`；中文、代码块完整，含内嵌三反引号的代码也走附件 |
+| 长输出 | 专用测试会话产生超过 1,800 个 UTF-16 单元的合成文本，收到多条普通消息；中文、代码块内容完整，不出现自动生成的历史文件 |
+| 文件上传 | 在已绑定 channel 执行 `/pp-ask file:附件 text:查看此文件`；也可只填 file。Codex 收到执行主机上的文件路径，图片使用原生图片输入；无历史导出命令 |
 | mentions | 合成输出包含 `@everyone`、`<@123>` 和 `<@&123>`，不触发用户、角色或全体通知 |
 | 非 owner | 普通成员看不到 PP category；非 owner 管理员即便能看见或调用命令，也不能操作会话 |
 | 错误上下文 | 私信、其他 guild、未绑定 channel 不得把输入发送到原会话 |

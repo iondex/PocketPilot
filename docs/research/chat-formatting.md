@@ -86,16 +86,17 @@ Discord 文档说明其桌面/Android 与 iOS 采用不同 emoji 图形资源，
 | Slack fallback | 从文档生成可读纯文本，转义 `& < >`；post/update 显式 `mrkdwn=false`、`link_names=false`，post 禁用自动 URL 解析与 unfurl |
 | Discord 正文 | 生成标题、强调、引用、列表、链接和代码子集；原文中的 Discord 专属提及/剧透语法作为文字，所有发送、编辑和交互保留 `allowed_mentions` 禁用通知 |
 | 菜单与状态 | 动态标题、目录、选项保持字面意义；共享 `RuntimeStatus::text_in` 提供不带图标的状态，Telegram 原有带图标入口保留 |
-| 文件与长度 | Slack 保守预算 2,800、Discord 渲染后 1,800，按 UTF-16 计数；Slack 富文本元素过多或 Discord 无法保真表示嵌入反引号时，改为完整 `session.md`；导出不改写原文 |
+| 文字与长度 | Slack 保守预算 2,800、Discord 渲染后 1,800、Telegram 3,500，按 UTF-16 计数；公共文档按结构分段，每段独立渲染，复杂语法降级为字面文本，不生成 `session.md` |
+| 历史与附件 | 三端只保留最近交互，不提供历史导出入口；独立文件附件用于用户上传给 Codex，文件本身与聊天文字分开处理 |
 | 持久兼容 | 旧 Slack outbox 没有 format 字段时默认为纯文本；新正文明确标记 Markdown；发送与未知结果保护延用原账本 |
 
 代码依据：[公共解析](../../crates/session/src/markdown.rs)、[Slack 适配](../../crates/slack/src/markdown.rs)、[Slack API](../../crates/slack/src/api.rs)、[Discord 适配](../../crates/discord/src/render.rs)、[Discord Gateway](../../crates/discord/src/gateway.rs)。预算是项目自己的保守阈值，不是平台上限。Unicode emoji 保留原文，自定义 shortcode 不跨平台猜测转换，不增加 emoji 权限。
 
 ## 5. 验证与后续范围
 
-本地测试覆盖中文标点粗体、嵌套强调、HTML 字面文本、安全链接、代码、任务清单、表格降级、emoji/组合字符、UTF-16 长度，以及 SDK 请求的通知保护和旧 outbox 默认值。Telegram 既有 HTML 渲染行为保留并纳入全 workspace 回归。Slack 的 `blocks.validate` 已接受覆盖 section、链接、有序列表、引用及带语言代码块的合成 payload；该只读校验不等同于桌面/移动端视觉验收。
+本地测试覆盖中文标点粗体、嵌套强调、HTML 字面文本、安全链接、代码、任务清单、表格降级、emoji/组合字符、UTF-16 长度，附件下载预算、原生文件写入，以及 SDK 请求的通知保护、旧 outbox 默认值和分段恢复。Telegram 既有 HTML 渲染行为保留并纳入全 workspace 回归。Slack 的 `blocks.validate` 已接受覆盖 section、链接、有序列表、引用及带语言代码块的合成 payload；该只读校验不等同于桌面/移动端视觉验收。
 
-当前长文直接发完整附件；内联摘要、多个消息的结构化切分和图片预览不在本轮范围。不能在不扩展持久投递状态的情况下先发摘要再补附件，否则回执未知时可能重复输出。完整附件、桌面/移动端显示和实际通知仍需按 [Slack 操作指南](../slack-setup.md)、[Discord 测试指南](../testing-discord.md) 由用户触发验收。
+长文字以多个普通消息连续显示。投递前固定各段内容并持久保存；每段回执后记录下一个段号，重启从未发送段继续。当前段回执未知则停留在 outcome_unknown，不重发已确认段或未知段。段间复用原平台的发送预算和绑定/权限检查。桌面/移动端显示和实际通知仍需按 [Slack 操作指南](../slack-setup.md)、[Discord 测试指南](../testing-discord.md) 由用户触发验收。
 
 第三方库的维护、许可和适配范围见 [选型核验](markdown-libraries.md)。
 

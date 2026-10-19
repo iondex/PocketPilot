@@ -31,3 +31,6 @@ CodexErrorInfo 包含字符串、结构化错误和开放分支。生成器适�
 RPC 解码失败只记录白名单 schema 路径与固定错误类别，不记录响应正文或 serde 错误文本。
 
 标题补齐使用 ThreadSetNameParams/ThreadSetNameResponse 生成根，仍不提交生成产物。空对象响应仅按生成类型反序列化，业务不访问它的扩展内容。
+
+
+用户上传附件使用生成的 FsCreateDirectoryParams/Response 与 FsWriteFileParams/Response。对应方法仅注册为 WriteRequest，在明确、持久记录并重新授权的 Mutation::Upload 中调用；后台观察仍不持有文件写入许可。上传数据使用 base64 字段传输，不手写文件协议 DTO，不记录文件内容。

@@ -22,6 +22,8 @@ PocketPilot 能否管理 Desktop 活跃会话，取决于双方是否连接同�
 4. 验证 steer、桥接断线后继续运行与最终历史读取，再为该 provider 确认控制权限。
 5. 已有原生本地任务不自动迁移；必须避免两个执行器同时恢复同一 thread。
 
+停止 PocketPilot 桥接后，可执行 `./dist/pocketpilot providers verify PROVIDER_ID --project PROJECT_ID` 完成第 3–4 步并开启控制，再恢复桥接。该命令创建专用测试会话，验证两连接共享 active turn、steer、断线后继续与最终回复，并验证原生附件写入；输入和文件写入都有持久操作记录。失败不改变控制资格，不重发未知写入，也不停止原生任务。`providers trust` 保留给已通过外部验证的部署作人工登记，不能替代上述验证。
+
 若目标版本允许，也可另行评估回环 SSH 部署，让后续会话通过明确的共享 daemon 运行。启用本机 SSH、密钥和 known_hosts 属于部署者的系统配置，不由 PocketPilot 自动完成；该方案需要单独验收。
 
 缺少共享入口时，管理已有本地活跃任务仍是不满足的能力，不能以历史浏览或另起服务替代。

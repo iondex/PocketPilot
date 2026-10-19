@@ -12,8 +12,9 @@
 | 动态目录 | 执行实例自动发现、工作区登记和发现、完整分页、活动时间排序及稳定会话分页 |
 | Telegram | 私聊 topics、管理导航、空会话创建、状态 icon、typing、历史与错误、来源去重、Markdown 和附件展示 |
 | Slack 原型 | slack-morphism、Socket Mode、持久 ACK、菜单/命名空会话、thread 输入、根卡片、历史导出与恢复草稿；真实 team 待验收 |
-| 正文显示 | 公共 Markdown 结构、安全链接、表格降级、字面标签、UTF-16 预算与原文附件；Slack rich_text / Discord 子集适配 |
+| 正文显示 | 公共 Markdown 结构、安全链接、表格降级、字面标签、UTF-16 预算与可恢复分段；Slack rich_text / Discord 子集 / Telegram HTML 适配 |
 | 通用平台边界 | integration 接口、共享连接与操作串行；可选 Discord/Slack 原型；后续 provider 和平台保留扩展边界 |
+| 用户文件 | 三端解析私有文件引用，授权后有界下载，写入所选 Codex 主机；图片使用原生输入，文档提供文件路径，无历史导出 |
 | 运行支持 | 根目录单一配置、tracing、日志轮转、显式语言选择及类型化错误 |
 
 ## 证据分类

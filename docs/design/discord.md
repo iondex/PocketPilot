@@ -30,7 +30,7 @@ cargo clean
 | /pp-new workspace:环境 project:项目短名 text:内容 confirm:true | 明确创建新会话并发首轮，每步单独持久回执 |
 | /pp-ask text:内容 | 在绑定 channel 内续轮；NotLoaded 显式 resume，active 使用 expectedTurnId steer |
 | /pp-status | 只读刷新状态 |
-| /pp-history | 一个消息/附件查看全部可读 user/agent 文本 |
+| /pp-recent | 一个消息/附件查看全部可读 user/agent 文本 |
 | /pp-rename title:显示名 | 只修改 Discord channel 名 |
 | /pp-unbind | 只解除映射，原生会话继续运行 |
 
@@ -38,7 +38,7 @@ cargo clean
 
 用户先选 workspace（执行环境/主机），再选项目目录，最后选 session。目录选择、归属校验与排序复用 engine::navigation；平台只负责命令呈现。
 
-一个项目一个 PP category，一个 session 一个短名 channel；短名尾部保留 thread 标识。channel 内固定状态卡展示状态、短标题和 thread ID。进入 active 会话先投递一个完整历史集合，idle 显示最后用户输入与对应 final；正文通过公共 Markdown 解析输出 Discord 支持的子集，菜单和动态标题按字面转义。渲染后超过 1,800 个 UTF-16 单元或代码反引号无法保真表示时，发送保留原文的单个 Markdown 附件，原型附件预算 8 MiB，超限明确报错、不截断冒充完整历史。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
+一个项目一个 PP category，一个 session 一个短名 channel；短名尾部保留 thread 标识。channel 内固定状态卡展示状态、短标题和 thread ID。进入会话显示最后用户输入与对应 final；正文通过公共 Markdown 解析输出 Discord 支持的子集，菜单和动态标题按字面转义。渲染后超过 1,800 个 UTF-16 单元时按结构分段；不能保真的语法保留为文字，不生成 `session.md`，也不提供完整历史导出。分段结果和已确认段号持久保存。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
 
 ## 持久化与生命周期
 
@@ -56,8 +56,10 @@ agent 输入使用与 Telegram 相同的 operations 状态机：Received → Pre
 
 ## 验证与下一阶段
 
-当前 mock HTTP + 类型化 WebSocket fixture 覆盖 category/channel 创建、完整历史过滤、只读进入、steer、同 interaction 去重、丢回执不重发、owner 拒绝、解绑不停止任务；另有持久资源/输出恢复与容器不可改绑测试。
+当前 mock HTTP + 类型化 WebSocket fixture 覆盖 category/channel 创建、最近交互过滤、只读进入、steer、同 interaction 去重、丢回执不重发、owner 拒绝、解绑不停止任务；另有持久资源/输出恢复与容器不可改绑测试。
 
 真实 gateway、权限、上传和断网行为需要在目标服务器单独验收。下一阶段再增加 select/button 菜单、普通 channel 文本输入、完整离线 inbox、资源核对 CLI、删除 channel 后替换与可配置合并预算。当前用 slash 明确发消息，避免把普通聊天误当 agent 输入。
 
 只读接入诊断使用 `doctor --discord`；Gateway 的实际 Ready 事件会记录 `Discord Gateway ready`，与 REST 初始化日志区分。
+
+用户可通过 `/pp-ask file:附件 text:可选说明` 将文件发送到当前绑定会话。文件在 owner、绑定和控制权限校验后下载并写入选定 Codex 主机；详见 [附件说明](../attachments.md)。

@@ -62,3 +62,18 @@ Slack 安装/权限见 [Slack 指南](slack-setup.md)，Discord 见 [服务器�
 ## Slack 旧频道模式升级
 
 新版本仅接受配置 owner 与 App 的一对一私聊。删除 `[slack].allowed_channel_ids`，按 [Slack 指南](slack-setup.md) 更新 manifest 和重新安装授权。DM ID 由 Slack 返回，不写入配置；一个 DM 支持多个项目。旧频道绑定不会被改成私聊绑定，也不会继续投递到频道；在 DM 中重新选择已有 session 建立新映射。旧表/额外字段保持原样，不自动删除数据库或历史。
+
+## 分段消息账本升级
+
+新数据库直接使用根 schema.sql。已有原型数据库需要停止桥接、备份后，检查下列三张表，补齐缺少的列；不要清空绑定或操作记录，已经存在的列不要重复执行 ALTER。
+
+```sql
+ALTER TABLE deliveries ADD COLUMN next_part INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE deliveries ADD COLUMN rendered_parts TEXT;
+ALTER TABLE slack_outbox ADD COLUMN next_part INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE slack_outbox ADD COLUMN rendered_parts TEXT;
+ALTER TABLE discord_deliveries ADD COLUMN next_part INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE discord_deliveries ADD COLUMN rendered_parts TEXT;
+```
+
+移除旧配置中的 `[delivery].overflow`；长文字统一分段，不再提供 single_document 模式。程序不会自动迁移旧列。已确认段号和固定的分段内容需要一起保留，不能将 next_part 重置后重投；Dispatching/OutcomeUnknown 继续遵循不重发规则。旧的历史文件投递不会再上传；旧按钮请求导出时提示不支持。Slack 新安装使用 `files:read` 读取入站附件，已有安装添加该 scope 后需要 Reinstall 授权。

@@ -34,13 +34,13 @@ cargo build --release --workspace --locked
 
 /new 按「主机 → 工作区 → 标题 → 确认」创建空会话；也可用 /new HOST/WORKSPACE 标题 或 /new WORKSPACE_ID 标题 快捷创建。同名工作区需指定主机或完整 ID，不会默认挑选一个。首条任务由用户在新话题中发送，活跃会话的输入直接 steer。
 
-进入会话只发送最近内容的短预览，不自动导出历史；再次打开已绑定会话不重复投递旧记录。/history 动态读取最近输入及同轮最终结果，过滤中间说明，长结果可能作为文件发送；/history export 主动导出全部可见历史。/status 查看实际状态与完整详情。/topics 管理单个话题，也包含「清除全部会话话题」；/topics clear 可直接进入批量清理确认。删除 Telegram 话题与聊天记录时保留 Codex 会话和固定管理入口。Bot API 无法枚举全部话题，仅管理已记录的话题。
+进入会话只发送最近内容的短预览，不自动导出历史；再次打开已绑定会话不重复投递旧记录。/history 动态读取最近输入及同轮最终结果，过滤中间说明，长结果分段显示；不提供会话历史导出。/status 查看实际状态与完整详情。/topics 管理单个话题，也包含「清除全部会话话题」；/topics clear 可直接进入批量清理确认。删除 Telegram 话题与聊天记录时保留 Codex 会话和固定管理入口。Bot API 无法枚举全部话题，仅管理已记录的话题。
 
 私聊命令列表注册中英文说明。Telegram 不支持按 topic 分配不同的命令列表，/help 按当前话题显示对应说明。
 
 共享语言资源与类型化错误见 [i18n 设计](docs/design/i18n.md)。Logo 生成用 [这份 prompt](docs/design/logo-prompt.md)。
 
-会话正文以同行 emoji 区分过程、最终结果和错误。同一原生会话的外部用户输入可见，Telegram 自身输入去重；工具和推理不转发。topic icon 表达状态，运行时持续 typing，不发送额外成功 ACK 或空闲状态卡。重连/重试中的可恢复错误保持静默，只有最终失败或中断才发送错误结果。入场预览限制长度，完整历史仅按需导出；普通长输出仍可使用单个 Markdown 附件，短时输出持久合并，同一私聊的全部 topics 共享预算。附件只显示正文和文件名，不预览图片。
+会话正文以同行 emoji 区分过程、最终结果和错误。同一原生会话的外部用户输入可见，Telegram 自身输入去重；工具和推理不转发。topic icon 表达状态，运行时持续 typing，不发送额外成功 ACK 或空闲状态卡。重连/重试中的可恢复错误保持静默，只有最终失败或中断才发送错误结果。入场预览限制长度，不提供完整历史导出；普通长输出按结构分段显示，短时输出持久合并，同一私聊的全部 topics 共享预算。附件只显示正文和文件名，不预览图片。
 
 /history errors 单独查看近期错误，避免将旧轮次错误配到新输入。
 
@@ -97,3 +97,5 @@ cargo build -p app --release --no-default-features --locked
 新建时填写的内容只作为标题，不发送给 agent，也不启动一轮。原生标题为空时，通过官方 thread/name/set 补写；已有原生标题不覆盖，后台观察/重连不补写。Agent Markdown 使用 pulldown-cmark 解析后转换为 Telegram HTML，表格转为逐项内容；超长仍发送原始 Markdown 附件。
 
 中英文 UI 使用 rust-i18n，偏好按 bot/user 独立持久化。/language zh-CN 切换中文，/language en 切换英文；默认中文，telegram.default_locale 可选 zh-CN、en 或 auto。语言资源编译进 binary，运行时仍只读取根 TOML。
+
+三端支持用户上传文件给 Codex：Telegram 在绑定话题、Slack 在绑定 thread、Discord 使用 `/pp-ask file:…`。文件与文字分别处理，见 [附件说明](docs/attachments.md)。

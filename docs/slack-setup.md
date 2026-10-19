@@ -16,7 +16,7 @@ PocketPilot 仅支持与配置 owner 的一对一私聊。无需创建频道、�
    | `chat:write` | 发送根卡片、菜单、会话回复，更新状态 |
    | `im:history` | 接收授权用户发给 App 的消息 |
    | `im:write` | 启动时通过 `conversations.open` 确认 owner 的唯一 DM |
-   | `files:write` | 导出完整历史和长输出 |
+   | `files:read` | 读取用户上传的文件 |
 
 5. 删除旧频道权限 `channels:read`、`groups:read`、`channels:history`、`groups:history`；移除 `/pp` slash command 及其 `commands` 权限。
 6. 在 **Event Subscriptions → Subscribe to bot events** 只保留 `message.im`，删除 `message.channels`、`message.groups`。保持 **Socket Mode** 和 **Interactivity** 开启，无需 Request URL。
@@ -64,7 +64,7 @@ features['app_home'] = {
     'messages_tab_read_only_enabled': False,
 }
 manifest.setdefault('oauth_config', {})['scopes'] = {
-    'bot': ['chat:write', 'im:history', 'im:write', 'files:write'],
+    'bot': ['chat:write', 'im:history', 'im:write', 'files:read'],
 }
 settings = manifest.setdefault('settings', {})
 settings['socket_mode_enabled'] = True
@@ -144,13 +144,13 @@ cargo clean
 3. 先选择 workspace（本机/AWS 等执行环境），再在下拉框选择该环境的项目/目录，最后选择已有会话。PocketPilot 发送该会话的根卡片，并给出打开 thread 的链接；打开只读，不会自动 resume。
 4. 在对应根卡片的 **thread 内回复** 才提交任务。可用专用测试会话发送“只回复 SLACK_DM_OK，不运行工具，不修改文件”，核对原端只收到一次。
 5. 切换项目或环境时使用菜单的返回按钮，或在 DM 主输入框再次发送“菜单”。导航和分页更新原消息，不连续追加菜单；会话卡片的操作按钮集中排列。不同项目的会话使用各自根卡片/thread；不会把主输入框当作最近一次会话的输入。
-6. 根卡片提供状态、最近交互、完整历史和解除绑定。再次打开同一会话复用原 thread，不重播历史；解绑仅解除桥接，不终止原生任务。
-7. 新建会话通过按钮打开标题输入框，确认后创建空会话，第一条任务仍需在 thread 内另发。创建/续轮前按 [测试指南](testing.md) 验证共享实例生命周期，再由 CLI 执行 `providers trust PROVIDER_ID` 登记控制资格。
-8. 验证另一用户、普通/私有频道、群聊和另一个 DM 均不能控制或接收输出。消息编辑、bot 回复和未绑定 thread 不会发起任务；纯附件不启动任务，带 caption 时仅发送文字。
+6. 根卡片提供状态、最近交互和解除绑定。再次打开同一会话复用原 thread，不重播历史；解绑仅解除桥接，不终止原生任务。
+7. 新建会话通过按钮打开标题输入框，确认后创建空会话，第一条任务仍需在 thread 内另发。创建/续轮前按 [测试指南](testing.md) 验证共享实例生命周期，停止桥接后由 CLI 执行 `providers verify PROVIDER_ID --project PROJECT_ID` 完成专用会话验证并开启控制，然后重启桥接。
+8. 验证另一用户、普通/私有频道、群聊和另一个 DM 均不能控制或接收输出。消息编辑、bot 回复和未绑定 thread 不会发起任务；已绑定 thread 内支持文件与可选文字一起提交，主输入框仍只打开菜单。
 9. 重启后旧输入不得自动重发；恢复/过期输入需新的确认，Dispatching/OutcomeUnknown 先核对原端结果。退出 PocketPilot 后，原生任务应继续运行。
 
 此版本不再读写旧的 `slack_channels` 项目频道映射。已有数据库中的旧表/字段不会自动删除，旧频道绑定也不会改绑到 DM；运行时只接受 Slack 返回的 owner DM，旧频道收发会被拒绝。保留数据备份，在 DM 中重新选择会话即可建立新的私聊绑定。
 
-短正文会显示粗体标题、强调、代码、引用和列表；Markdown 表格降级为“列名：值”，任务显示勾选框。菜单、项目名与状态保持字面文本，Unicode emoji 保留，自定义 shortcode 不自动映射。使用专用测试会话的短合成输出验收这些格式，并在桌面与移动端各查看一次；包含 `<@U000000001>`、`<!channel>` 的文本不应触发通知。完整历史和超限内容应收到原文 `session.md`，代码中的反引号、中文与组合 emoji 不应被截断。实现边界见 [Markdown 与 emoji](research/chat-formatting.md)。
+短正文会显示粗体标题、强调、代码、引用和列表；Markdown 表格降级为“列名：值”，任务显示勾选框。菜单、项目名与状态保持字面文本，Unicode emoji 保留，自定义 shortcode 不自动映射。使用专用测试会话的短合成输出验收这些格式，并在桌面与移动端各查看一次；包含 `<@U000000001>`、`<!channel>` 的文本不应触发通知。超限回复应直接分段显示，代码、中文与组合 emoji 不应丢失；没有历史导出入口，也不会自动生成 `session.md`。文件附件只用于上传给 Codex，见 [附件说明](attachments.md)。实现边界见 [Markdown 与 emoji](research/chat-formatting.md)。
 
 平台依据：[App Home / Messages](https://docs.slack.dev/surfaces/app-home/)、[message.im](https://docs.slack.dev/reference/events/message.im/)、[conversations.open](https://docs.slack.dev/reference/methods/conversations.open/)。

@@ -36,7 +36,7 @@
 
 仓库有 Vitest 测试和 CI，实际测试覆盖标题、粗斜体、删除线、列表、引用式链接、转义、图片、代码块、语言标记、提及和引用等。这比“README 声称支持 Markdown”提供了更强证据。但本文没有运行该测试集，没有量化覆盖率，也没有证明它满足本项目的通知、安全链接、长度和原文保真策略。[N2][N4]
 
-结论：**JS 项目可以优先评估；本项目作为参考和合成用例来源。**它返回 Slack 格式字符串，不负责 workspace → 项目 → session 导航、持久 outbox、Block Kit 菜单、按钮权限或文件导出。即使采用，平台适配和投递逻辑仍然存在。
+结论：**JS 项目可以优先评估；本项目作为参考和合成用例来源。**它返回 Slack 格式字符串，不负责 workspace → 项目 → session 导航、持久 outbox、Block Kit 菜单、按钮权限或文件附件。即使采用，平台适配和投递逻辑仍然存在。
 
 ### slack-markdown-converter：确实存在，暂不推荐直接采用
 
@@ -74,7 +74,7 @@ README 同时明确列出限制：parser 不解析 block quotes，嵌套和词�
 
 `slack-morphism` 的 Block Kit 类型和 `serenity` 的消息/组件 builder 负责构造平台 payload；给字段设置 `mrkdwn` 或调用 `content` 不会自动转换 CommonMark 文档。[K1][K2]
 
-特别是 Serenity 的 `MessageBuilder::push_safe` 只做其定义的 normalization 及部分字符转义；`push_codeblock_safe` 会将输入中的三反引号替换为空格。这适合特定展示场景，却不能作为保持代码原文的通用转换函数。`safe` 名称不等于本项目所需的“完整格式兼容、禁止通知、导出保真”。正文路径仍须保留 `allowed_mentions`，完整附件保留原文。[K2]
+特别是 Serenity 的 `MessageBuilder::push_safe` 只做其定义的 normalization 及部分字符转义；`push_codeblock_safe` 会将输入中的三反引号替换为空格。这适合特定展示场景，却不能作为保持代码原文的通用转换函数。`safe` 名称不等于本项目所需的“完整格式兼容、禁止通知、内容保真”。正文路径仍须保留 `allowed_mentions`，用户文件附件与文字分开处理。[K2]
 
 ## 本项目的接入边界
 
