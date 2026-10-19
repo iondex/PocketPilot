@@ -83,11 +83,12 @@ impl Service {
                 .await
                 .map_err(error)?;
         }
-        let card = format!(
-            "{} · {}\nthread：{}",
-            current.status.text_in(locale),
-            session::delivery::short_title(&current.title, 80),
-            b.thread
+        let card = i18n::t!(
+            "discord.session.details",
+            locale = locale,
+            title = session::delivery::short_title(&current.title, 80),
+            state = crate::ui::status(&current.status, locale),
+            workspace = &ws.name
         );
         self.update_card(api, b, &card).await
     }

@@ -80,10 +80,7 @@ impl Service {
             .map_err(error)?
         {
             Some(id) => id,
-            None => api
-                .channel(category, &current.title, thread)
-                .await
-                .map_err(error)?,
+            None => api.channel(category, &current.title).await.map_err(error)?,
         };
         self.fresh(api, input, snapshot, true).await?;
         let provider = snapshot

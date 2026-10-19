@@ -149,7 +149,7 @@ _version: 1
 "error.discord.request": "The Discord request failed; credentials and response are redacted."
 "error.discord.denied": "The Discord command is invalid or unauthorized."
 "error.discord.backend": "The Discord backend rejected the operation. Refresh its status."
-"error.discord.too_large": "History exceeds Discord’s single attachment limit."
+"error.discord.too_large": "The message exceeds the processing budget. View it in the original client."
 "error.runtime.missing": "Configure a Telegram, Discord or Slack integration."
 "error.runtime.feature": "This build does not include Discord. Build with the discord feature."
 "error.runtime.worker": "A runtime task stopped unexpectedly."
@@ -168,11 +168,9 @@ _version: 1
 "discord.history.too_large": "The message exceeds the processing budget. View it in the original client."
 "discord.unbound": "The channel is unbound; the session keeps running."
 "discord.renamed": "The channel display name was updated."
-"discord.input.accepted": "Accepted · turn %{turn}"
-"discord.session.details": "%{title}\nState: %{state}\nWorkspace: %{workspace}\nThread: %{thread}"
-"discord.session.added": "Added <#%{channel}> · %{state}\nUse /pp-ask text:MESSAGE in that channel."
-"discord.sessions.open": "\n\nOpen: /pp-open workspace:%{workspace} project:%{project} thread:ID"
-"discord.sessions.next": "\nNext page cursor: %{cursor}"
+"discord.input.accepted": "Sent. Replies will appear in this session."
+"discord.session.details": "%{title}\n%{state}\nProject: %{workspace}"
+"discord.session.added": "Session opened · %{state}\nGo to <#%{channel}> and use /pp-ask to send a task or file."
 "discord.card.pending": "Sending status card. Use /pp-status if the result is uncertain."
 "discord.card.offline": "Connection unknown · refresh /pp-status"
 "common.role.user": "User"
@@ -202,15 +200,13 @@ _version: 1
 "discord.error.binding_missing": "The binding was not saved."
 "discord.cmd.workspaces": "Choose a workspace (execution host)"
 "discord.cmd.sessions": "List workspace sessions"
-"discord.cmd.open": "Add an existing session to a channel"
+"discord.cmd.open": "Open the menu and choose an existing session"
 "discord.cmd.new": "Create a session and send its first input"
 "discord.cmd.ask": "Continue the channel session or steer its active turn"
 "discord.cmd.status": "Current channel session status"
 "discord.cmd.rename": "Rename the channel"
 "discord.cmd.unbind": "Unbind the channel while keeping its session"
-"discord.option.workspace": "Workspace name or ID (execution host)"
-"discord.option.cursor": "Cursor returned by the previous page"
-"discord.option.thread": "Codex thread ID"
+"discord.option.workspace": "Execution environment name (optional; opens the menu)"
 "discord.option.first_input": "First user input"
 "discord.option.input": "User input"
 "discord.option.title": "Display name"
@@ -282,9 +278,7 @@ error.telegram.icon_unavailable: "Topic icons are temporarily unavailable; retry
 "slack.workspaces.empty": "No workspaces configured. Add an allowed host first."
 "slack.choose": "Choose"
 "discord.cmd.projects": "List projects in a workspace"
-"discord.option.project": "Project short name or ID within the selected workspace"
-"discord.workspaces.next": "Next: /pp-projects workspace:NAME_OR_ID"
-"discord.projects.next": "Next: /pp-sessions workspace:%{workspace} project:SHORT_NAME"
+"discord.option.project": "Project name (or choose from the menu)"
 "discord.projects.empty": "No project directories found in this workspace."
 "error.navigation.selection": "The workspace, project or session selection changed. Choose a workspace again."
 
@@ -303,3 +297,61 @@ error.telegram.icon_unavailable: "Topic icons are temporarily unavailable; retry
 "discord.option.file": "File for the current Codex session (text optional)"
 
 "common.file.unavailable": "The original file reference is unavailable. Please upload the attachment again."
+
+"discord.cmd.menu": "Open the workspace, project and session picker"
+
+"discord.ui.workspaces": "Choose a workspace"
+
+"discord.ui.workspace_hint": "Choose an execution environment, then a project and session."
+
+"discord.ui.choose_workspace": "Choose an environment"
+
+"discord.ui.project_count": "%{count} projects"
+
+"discord.ui.no_workspaces": "No workspaces yet. Configure an execution environment first."
+
+"discord.ui.projects": "Choose a project"
+
+"discord.ui.choose_project": "Choose a project or directory"
+
+"discord.ui.range": "Showing %{first}–%{last} of %{total}"
+
+"discord.ui.sessions": "Choose a session"
+
+"discord.ui.choose_session": "Choose a session to open"
+
+"discord.ui.session_hint": "Opening only connects the session. Send a task to start work."
+
+"discord.ui.not_loaded": "Not loaded"
+
+"discord.ui.previous": "Previous"
+
+"discord.ui.next": "Next"
+
+"discord.ui.refresh": "Refresh"
+
+"discord.ui.back_workspaces": "Workspaces"
+
+"discord.ui.back_projects": "Projects"
+
+"discord.ui.back_sessions": "Back to sessions"
+
+"discord.ui.channel": "Go to session"
+
+"discord.ui.expired": "This menu expired or belongs to another user. Run /pp for a new menu."
+
+"discord.ui.use_menu": "Run /pp to choose a session from the menu."
+
+"discord.sessions.empty": "No sessions yet. Use /pp-new to create one."
+
+"discord.ui.updated_unknown": "Update time unavailable"
+
+"discord.ui.updated_now": "Updated just now"
+
+"discord.ui.updated_minutes": "%{count} minutes ago"
+
+"discord.ui.updated_hours": "%{count} hours ago"
+
+"discord.ui.updated_days": "%{count} days ago"
+
+"discord.ui.channel_topic": "PocketPilot · /pp menu · /pp-ask send a task or file · /pp-recent recent interaction"

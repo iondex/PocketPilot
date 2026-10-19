@@ -26,6 +26,9 @@ pub mod api;
 mod render;
 
 #[cfg(feature = "runtime")]
+pub mod ui;
+
+#[cfg(feature = "runtime")]
 pub mod gateway;
 
 #[cfg(feature = "runtime")]
@@ -48,7 +51,7 @@ pub enum Error {
     Denied,
     #[error("Discord prototype backend rejected the operation; refresh its status")]
     Backend,
-    #[error("history exceeds the prototype's single attachment limit")]
+    #[error("message exceeds the processing limit")]
     TooLarge,
 }
 
@@ -114,6 +117,16 @@ pub struct Input {
 pub trait Backend: Send + Sync + 'static {
     /// Called after a guild-owner check and ephemeral interaction ACK.
     async fn handle(&self, api: &Api, input: Input) -> Result<String, i18n::Message>;
+
+    async fn menu(
+        &self,
+        _api: &Api,
+        _input: Input,
+        _token: Option<String>,
+        _value: Option<String>,
+    ) -> Result<ui::Screen, i18n::Message> {
+        Err("discord.ui.expired".into())
+    }
 }
 
 /// Restrict routing independently of command registration/Discord permissions.
@@ -121,7 +134,7 @@ pub fn authorized(expected_guild: u64, actual_guild: Option<u64>, owner: u64, us
     actual_guild == Some(expected_guild) && owner != 0 && owner == user
 }
 
-pub fn channel_name(title: &str, thread: &str) -> String {
+pub fn channel_name(title: &str) -> String {
     let title = session::delivery::short_title(title, 65)
         .chars()
         .map(|c| {
@@ -132,14 +145,14 @@ pub fn channel_name(title: &str, thread: &str) -> String {
             }
         })
         .collect::<String>();
-    let title = title.trim_matches('-');
+    let title = title
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let title = title.as_str();
     let title = if title.is_empty() { "session" } else { title };
-    let suffix = thread
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .take(8)
-        .collect::<String>();
-    format!("{title}-{suffix}")
+    title.into()
 }
 
 #[cfg(any(feature = "runtime", test))]
@@ -155,7 +168,13 @@ pub(crate) fn parse(
             .ok_or(Error::Denied)
     };
     Ok(match name {
-        "pp-workspaces" => Command::Workspaces,
+        "pp" | "pp-workspaces" => Command::Workspaces,
+        "pp-projects" | "pp-sessions" | "pp-open" if !text.contains_key("workspace") => {
+            Command::Workspaces
+        }
+        "pp-projects" | "pp-sessions" if !text.contains_key("project") => Command::Projects {
+            workspace: field("workspace")?,
+        },
         "pp-projects" => Command::Projects {
             workspace: field("workspace")?,
         },
@@ -204,24 +223,38 @@ mod tests {
 
     #[test]
     fn channel_names_are_short_and_cannot_ping_members() {
-        let name = channel_name("Hello @everyone / Test", "abcdef123456");
+        let name = channel_name("Hello @everyone / Test");
         assert!(!name.contains('@'));
-        assert!(name.ends_with("-abcdef12"));
-        assert!(channel_name(&"好".repeat(500), "thread").chars().count() < 100);
+        assert_eq!(name, "hello-everyone-test");
+        assert!(channel_name(&"好".repeat(500)).chars().count() < 100);
     }
 
     #[test]
-    fn project_and_session_commands_require_the_selected_workspace() {
+    fn navigation_commands_fill_missing_selections_through_the_menu() {
+        assert!(matches!(
+            parse("pp", &BTreeMap::new(), false).unwrap(),
+            Command::Workspaces
+        ));
+        assert!(matches!(
+            parse("pp-open", &BTreeMap::new(), false).unwrap(),
+            Command::Workspaces
+        ));
         let mut fields = BTreeMap::from([("workspace".into(), "host-a".into())]);
         assert!(
             matches!(parse("pp-projects", &fields, false).unwrap(), Command::Projects { workspace } if workspace == "host-a")
         );
-        assert!(parse("pp-sessions", &fields, false).is_err());
+        assert!(matches!(
+            parse("pp-sessions", &fields, false).unwrap(),
+            Command::Projects { .. }
+        ));
         fields.insert("project".into(), "project-a".into());
         assert!(
             matches!(parse("pp-sessions", &fields, false).unwrap(), Command::Sessions { workspace, project, .. } if workspace == "host-a" && project == "project-a")
         );
         fields.remove("workspace");
-        assert!(parse("pp-sessions", &fields, false).is_err());
+        assert!(matches!(
+            parse("pp-sessions", &fields, false).unwrap(),
+            Command::Workspaces
+        ));
     }
 }

@@ -149,7 +149,7 @@ _version: 1
 "error.discord.request": "Discord 请求失败，凭据与响应已隐藏。"
 "error.discord.denied": "Discord 命令无效或未获授权。"
 "error.discord.backend": "Discord 后端拒绝了操作，请刷新状态。"
-"error.discord.too_large": "历史超过 Discord 单个附件大小限制。"
+"error.discord.too_large": "消息超过处理预算，请在原客户端查看。"
 "error.runtime.missing": "请配置 Telegram、Discord 或 Slack 集成。"
 "error.runtime.feature": "此构建未包含 Discord，请使用 discord feature 构建。"
 "error.runtime.worker": "后台任务异常退出。"
@@ -168,11 +168,9 @@ _version: 1
 "discord.history.too_large": "消息超过处理预算，请在原客户端查看。"
 "discord.unbound": "已解除 channel 映射，会话继续运行。"
 "discord.renamed": "channel 显示名已更新。"
-"discord.input.accepted": "已接受 · turn %{turn}"
-"discord.session.details": "%{title}\n状态：%{state}\n工作区：%{workspace}\nthread：%{thread}"
-"discord.session.added": "已添加 <#%{channel}> · %{state}\n在该 channel 使用 /pp-ask text:内容。"
-"discord.sessions.open": "\n\n打开：/pp-open workspace:%{workspace} project:%{project} thread:ID"
-"discord.sessions.next": "\n下一页 cursor：%{cursor}"
+"discord.input.accepted": "已发送，回复会显示在当前会话。"
+"discord.session.details": "%{title}\n%{state}\n项目：%{workspace}"
+"discord.session.added": "会话已打开 · %{state}\n进入 <#%{channel}>，使用 /pp-ask 发送任务或上传文件。"
 "discord.card.pending": "状态卡发送中；若结果未知请使用 /pp-status"
 "discord.card.offline": "连接未知 · 请刷新 /pp-status"
 "common.role.user": "用户"
@@ -202,15 +200,13 @@ _version: 1
 "discord.error.binding_missing": "映射未保存。"
 "discord.cmd.workspaces": "选择工作空间（执行环境/主机）"
 "discord.cmd.sessions": "查看工作区会话"
-"discord.cmd.open": "将已有会话加入自己的 channel"
+"discord.cmd.open": "打开菜单并选择已有会话"
 "discord.cmd.new": "创建会话并发送首条输入"
 "discord.cmd.ask": "继续当前 channel 会话；活跃时 steer"
 "discord.cmd.status": "当前 channel 会话状态"
 "discord.cmd.rename": "仅修改 channel 显示名"
 "discord.cmd.unbind": "仅解除 channel 映射，会话继续运行"
-"discord.option.workspace": "工作空间的名称或 ID（本机/AWS 等执行环境）"
-"discord.option.cursor": "上一页返回的分页游标"
-"discord.option.thread": "Codex thread ID"
+"discord.option.workspace": "执行环境的名称（可留空使用菜单）"
 "discord.option.first_input": "首条用户输入"
 "discord.option.input": "用户输入"
 "discord.option.title": "显示名称"
@@ -282,9 +278,7 @@ error.telegram.icon_unavailable: "话题图标暂不可用，将在 %{seconds} �
 "slack.workspaces.empty": "尚未配置工作空间，请先添加允许连接的主机。"
 "slack.choose": "选择"
 "discord.cmd.projects": "查看工作空间中的项目目录"
-"discord.option.project": "已选工作空间内的项目短名或 ID"
-"discord.workspaces.next": "下一步：/pp-projects workspace:工作空间名称或ID"
-"discord.projects.next": "下一步：/pp-sessions workspace:%{workspace} project:项目短名"
+"discord.option.project": "项目名称（从菜单选择更方便）"
 "discord.projects.empty": "此工作空间尚未发现项目目录。"
 "error.navigation.selection": "工作空间、项目或会话已变化，请从工作空间重新选择。"
 
@@ -303,3 +297,61 @@ error.telegram.icon_unavailable: "话题图标暂不可用，将在 %{seconds} �
 "discord.option.file": "发送给当前 Codex 会话的文件（可单独上传）"
 
 "common.file.unavailable": "附件的原始引用不可用，请重新上传文件。"
+
+"discord.cmd.menu": "打开菜单，选择执行环境、项目和会话"
+
+"discord.ui.workspaces": "选择工作空间"
+
+"discord.ui.workspace_hint": "先选择执行环境，再选择项目和会话。"
+
+"discord.ui.choose_workspace": "选择执行环境"
+
+"discord.ui.project_count": "%{count} 个项目"
+
+"discord.ui.no_workspaces": "暂无工作空间，请先配置执行环境。"
+
+"discord.ui.projects": "选择项目"
+
+"discord.ui.choose_project": "选择项目或目录"
+
+"discord.ui.range": "显示 %{first}–%{last}，共 %{total} 项"
+
+"discord.ui.sessions": "选择会话"
+
+"discord.ui.choose_session": "选择并打开会话"
+
+"discord.ui.session_hint": "打开仅建立连接；发送任务后才会执行。"
+
+"discord.ui.not_loaded": "未载入"
+
+"discord.ui.previous": "上一页"
+
+"discord.ui.next": "下一页"
+
+"discord.ui.refresh": "刷新"
+
+"discord.ui.back_workspaces": "返回工作空间"
+
+"discord.ui.back_projects": "返回项目"
+
+"discord.ui.back_sessions": "返回会话列表"
+
+"discord.ui.channel": "进入会话"
+
+"discord.ui.expired": "菜单已失效或不属于当前用户。输入 /pp 打开新菜单。"
+
+"discord.ui.use_menu": "输入 /pp 打开菜单并选择会话。"
+
+"discord.sessions.empty": "暂无会话。可用 /pp-new 创建专用会话。"
+
+"discord.ui.updated_unknown": "暂无更新时间"
+
+"discord.ui.updated_now": "刚刚更新"
+
+"discord.ui.updated_minutes": "%{count} 分钟前"
+
+"discord.ui.updated_hours": "%{count} 小时前"
+
+"discord.ui.updated_days": "%{count} 天前"
+
+"discord.ui.channel_topic": "PocketPilot · /pp 打开菜单 · /pp-ask 发送任务或附件 · /pp-recent 最近交互"

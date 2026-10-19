@@ -60,7 +60,7 @@ impl Api {
         })
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(feature = "test-support", test))]
     pub fn local_fixture(endpoint: &str, guild: u64, bot: u64) -> Self {
         Self {
             http: Arc::new(
@@ -167,26 +167,24 @@ impl Api {
         Ok(channel.id.get())
     }
 
-    pub async fn channel(&self, category: u64, title: &str, thread: &str) -> Result<u64, Error> {
+    pub async fn channel(&self, category: u64, title: &str) -> Result<u64, Error> {
         let channel = GuildId::new(self.guild)
             .create_channel(
                 &self.http,
-                CreateChannel::new(crate::channel_name(title, thread))
+                CreateChannel::new(crate::channel_name(title))
                     .category(ChannelId::new(category))
-                    .topic(format!(
-                        "PocketPilot · {thread} · /pp-status /pp-ask /pp-recent"
-                    )),
+                    .topic(i18n::text("zh-CN", "discord.ui.channel_topic")),
             )
             .await
             .map_err(|_| Error::Request)?;
         Ok(channel.id.get())
     }
 
-    pub async fn rename(&self, channel: u64, title: &str, thread: &str) -> Result<(), Error> {
+    pub async fn rename(&self, channel: u64, title: &str) -> Result<(), Error> {
         ChannelId::new(channel)
             .edit(
                 &self.http,
-                EditChannel::new().name(crate::channel_name(title, thread)),
+                EditChannel::new().name(crate::channel_name(title)),
             )
             .await
             .map_err(|_| Error::Request)?;

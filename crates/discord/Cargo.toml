@@ -29,6 +29,8 @@ serenity = { optional = true, version = "0.12", default-features = false, featur
 
 [dev-dependencies]
 tempfile.workspace = true
+toml.workspace = true
+wiremock = "0.6"
 
 [lints]
 workspace = true

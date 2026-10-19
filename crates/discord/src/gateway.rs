@@ -20,16 +20,27 @@ impl EventHandler for Handler {
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-        let Interaction::Command(command) = interaction else {
+        if let Interaction::Component(component) = &interaction {
+            self.component(&ctx.http, component).await;
             return;
-        };
-        if command.guild_id.map(|g| g.get()) != Some(self.api.guild)
-            || !command.data.name.starts_with("pp-")
-        {
+        }
+        if let Interaction::Command(command) = interaction {
+            self.command(&ctx.http, command).await;
+        }
+    }
+}
+
+fn ours(name: &str) -> bool {
+    name == "pp" || name.starts_with("pp-")
+}
+
+impl Handler {
+    async fn command(&self, http: &serenity::http::Http, command: CommandInteraction) {
+        if command.guild_id.map(|g| g.get()) != Some(self.api.guild) || !ours(&command.data.name) {
             return;
         }
         // ACK before SSH or owner lookup, keeping all command replies private.
-        if command.defer_ephemeral(&ctx.http).await.is_err() {
+        if command.defer_ephemeral(http).await.is_err() {
             return;
         }
         let mut fields = BTreeMap::new();
@@ -85,6 +96,25 @@ impl EventHandler for Handler {
                 };
                 if self.api.authorize(&input).await.is_err() {
                     i18n::text(&command.locale, "discord.owner_only")
+                } else if matches!(
+                    input.command,
+                    crate::Command::Workspaces
+                        | crate::Command::Projects { .. }
+                        | crate::Command::Sessions { .. }
+                ) {
+                    match self.backend.menu(&self.api, input, None, None).await {
+                        Ok(screen) => {
+                            let reply = EditInteractionResponse::new()
+                                .content(screen.text)
+                                .components(screen.components)
+                                .allowed_mentions(crate::api::mentions());
+                            if command.edit_response(http, reply).await.is_err() {
+                                tracing::warn!("Discord menu response unavailable; not resent");
+                            }
+                            return;
+                        }
+                        Err(error) => error.render(&command.locale),
+                    }
                 } else {
                     match self.backend.handle(&self.api, input).await {
                         Ok(text) => {
@@ -109,7 +139,7 @@ impl EventHandler for Handler {
         let reply = EditInteractionResponse::new()
             .allowed_mentions(crate::api::mentions())
             .content(parts.next().unwrap_or_default());
-        if command.edit_response(&ctx.http, reply).await.is_err() {
+        if command.edit_response(http, reply).await.is_err() {
             tracing::warn!("Discord interaction response unavailable; not resent");
             return;
         }
@@ -118,9 +148,73 @@ impl EventHandler for Handler {
                 .ephemeral(true)
                 .allowed_mentions(crate::api::mentions())
                 .content(part);
-            if command.create_followup(&ctx.http, reply).await.is_err() {
+            if command.create_followup(http, reply).await.is_err() {
                 tracing::warn!("Discord interaction continuation unavailable; not resent");
                 break;
+            }
+        }
+    }
+}
+
+impl Handler {
+    async fn component(&self, http: &serenity::http::Http, interaction: &ComponentInteraction) {
+        let Some(token) = interaction.data.custom_id.strip_prefix("pp:") else {
+            return;
+        };
+        if interaction.guild_id.map(|id| id.get()) != Some(self.api.guild)
+            || interaction.message.author.id.get() != self.api.bot
+            || !interaction
+                .message
+                .flags
+                .is_some_and(|f| f.contains(MessageFlags::EPHEMERAL))
+        {
+            return;
+        }
+        let value = match &interaction.data.kind {
+            ComponentInteractionDataKind::Button => None,
+            ComponentInteractionDataKind::StringSelect { values } if values.len() == 1 => {
+                values.first().cloned()
+            }
+            _ => return,
+        };
+        // Acknowledge the update before catalog/SSH work; the result edits this same private menu.
+        if interaction.defer(http).await.is_err() {
+            return;
+        }
+        let input = Input {
+            uploads: Vec::new(),
+            locale: Some(interaction.locale.clone()),
+            id: interaction.id.get(),
+            bot: self.api.bot,
+            guild: self.api.guild,
+            channel: interaction.channel_id.get(),
+            user: interaction.user.id.get(),
+            date: interaction.id.created_at().unix_timestamp(),
+            command: crate::Command::Workspaces,
+        };
+        let result = self
+            .backend
+            .menu(&self.api, input, Some(token.into()), value)
+            .await;
+        match result {
+            Ok(screen) => {
+                let reply = EditInteractionResponse::new()
+                    .content(screen.text)
+                    .components(screen.components)
+                    .allowed_mentions(crate::api::mentions());
+                if interaction.edit_response(http, reply).await.is_err() {
+                    tracing::warn!("Discord menu update unavailable; operation not replayed");
+                }
+            }
+            Err(error) => {
+                // Leave the last usable screen in place; only the clicking user sees the error.
+                let reply = CreateInteractionResponseFollowup::new()
+                    .ephemeral(true)
+                    .content(error.render(&interaction.locale))
+                    .allowed_mentions(crate::api::mentions());
+                if interaction.create_followup(http, reply).await.is_err() {
+                    tracing::warn!("Discord menu error response unavailable; not resent");
+                }
             }
         }
     }
@@ -146,20 +240,17 @@ fn localized_command(name: &str, id: &str) -> CreateCommand {
 
 fn commands() -> Vec<CreateCommand> {
     vec![
+        localized_command("pp", "discord.cmd.menu"),
         localized_command("pp-workspaces", "discord.cmd.workspaces"),
         localized_command("pp-projects", "discord.cmd.projects").add_option(string(
             "workspace",
             "discord.option.workspace",
-            true,
+            false,
         )),
         localized_command("pp-sessions", "discord.cmd.sessions")
-            .add_option(string("workspace", "discord.option.workspace", true))
-            .add_option(string("project", "discord.option.project", true))
-            .add_option(string("cursor", "discord.option.cursor", false)),
-        localized_command("pp-open", "discord.cmd.open")
-            .add_option(string("workspace", "discord.option.workspace", true))
-            .add_option(string("project", "discord.option.project", true))
-            .add_option(string("thread", "discord.option.thread", true)),
+            .add_option(string("workspace", "discord.option.workspace", false))
+            .add_option(string("project", "discord.option.project", false)),
+        localized_command("pp-open", "discord.cmd.open"),
         localized_command("pp-new", "discord.cmd.new")
             .add_option(string("workspace", "discord.option.workspace", true))
             .add_option(string("project", "discord.option.project", true))
@@ -256,3 +347,7 @@ pub async fn run(
     manager.shutdown_all().await;
     result
 }
+
+#[cfg(test)]
+#[path = "gateway_tests.rs"]
+mod tests;

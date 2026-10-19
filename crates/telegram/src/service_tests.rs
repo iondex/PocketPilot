@@ -1553,16 +1553,104 @@ async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receip
         date: now(),
         command,
     };
-    let open = make(
-        1,
-        7,
-        DCommand::Open {
-            workspace: "host".into(),
-            project: "FX".into(),
-            thread: "thread".into(),
-        },
+    let pick = |screen: &discord::ui::Screen| {
+        let payload = serde_json::to_value(&screen.components).unwrap();
+        let select = &payload[0]["components"][0];
+        assert_eq!(select["type"], 3);
+        (
+            select["custom_id"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("pp:")
+                .unwrap()
+                .to_string(),
+            select["options"][0]["value"].as_str().unwrap().to_string(),
+        )
+    };
+    let workspaces = service
+        .menu(&api, make(100, 7, DCommand::Workspaces), None, None)
+        .await
+        .unwrap();
+    let (token, value) = pick(&workspaces);
+    let projects = service
+        .menu(
+            &api,
+            make(101, 7, DCommand::Workspaces),
+            Some(token),
+            Some(value),
+        )
+        .await
+        .unwrap();
+    let (token, value) = pick(&projects);
+    let sessions = service
+        .menu(
+            &api,
+            make(102, 7, DCommand::Workspaces),
+            Some(token),
+            Some(value),
+        )
+        .await
+        .unwrap();
+    let wire = serde_json::to_value(&sessions.components).unwrap();
+    assert_eq!(
+        wire[0]["components"][0]["options"][0]["label"],
+        "Fixture title"
     );
-    assert!(service.handle(&api, open).await.unwrap().contains("<#11>"));
+    assert!(
+        wire[0]["components"][0]["options"][0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("运行中")
+    );
+    assert!(
+        wire[0]["components"][0]["options"][0]["emoji"]["name"]
+            .as_str()
+            .unwrap()
+            .contains("🔵")
+    );
+    assert!(!sessions.text.contains("thread") && !sessions.text.contains("cursor"));
+    let (token, value) = pick(&sessions);
+    assert!(
+        !fixture
+            .state
+            .lock()
+            .await
+            .requests
+            .iter()
+            .any(|r| matches!(*r, "thread/resume" | "turn/start" | "turn/steer"))
+    );
+    let opened = service
+        .menu(
+            &api,
+            make(103, 7, DCommand::Workspaces),
+            Some(token.clone()),
+            Some(value.clone()),
+        )
+        .await
+        .unwrap();
+    assert!(opened.text.contains("<#11>"));
+    let buttons = serde_json::to_value(&opened.components).unwrap();
+    assert_eq!(
+        buttons[0]["components"][0]["url"],
+        "https://discord.com/channels/2/11"
+    );
+    assert!(
+        service
+            .menu(
+                &api,
+                make(104, 7, DCommand::Workspaces),
+                Some(token),
+                Some(value)
+            )
+            .await
+            .is_err()
+    );
+    let status = service
+        .handle(&api, make(105, 11, DCommand::Status))
+        .await
+        .unwrap();
+    assert!(status.contains("Fixture title"));
+    assert!(!status.contains("thread") && !status.contains("Thread"));
     let history = discord::storage::Store::new(fixture.service.store.core().clone())
         .discord_pending(1, 2, now())
         .await

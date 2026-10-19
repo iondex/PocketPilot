@@ -61,6 +61,66 @@ pub struct Delivery {
 }
 
 impl Store {
+    pub async fn ui_action(
+        &self,
+        input: &crate::Input,
+        hash: &str,
+        action: crate::ui::Action,
+    ) -> Result<String, Error> {
+        let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
+        sqlx::query("DELETE FROM discord_ui_actions WHERE expires<?")
+            .bind(engine::now())
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?;
+        // Keep the latest screens bounded even when the owner repeatedly refreshes.
+        sqlx::query("DELETE FROM discord_ui_actions WHERE rowid IN (SELECT rowid FROM discord_ui_actions WHERE bot=? AND guild=? AND owner=? ORDER BY rowid DESC LIMIT -1 OFFSET 1024)")
+            .bind(input.bot.to_string()).bind(input.guild.to_string()).bind(input.user.to_string())
+            .execute(&mut *tx).await.map_err(|_| Error::Database)?;
+        let nonce = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO discord_ui_actions(nonce,bot,guild,owner,channel,config_hash,action,expires) VALUES(?,?,?,?,?,?,?,?)")
+            .bind(&nonce).bind(input.bot.to_string()).bind(input.guild.to_string()).bind(input.user.to_string()).bind(input.channel.to_string())
+            .bind(hash).bind(serde_json::to_string(&action).map_err(|_| Error::Database)?)
+            .bind(engine::now()+86400).execute(&mut *tx).await.map_err(|_| Error::Database)?;
+        tx.commit().await.map_err(|_| Error::Database)?;
+        Ok(nonce)
+    }
+
+    pub async fn ui_resolve(
+        &self,
+        input: &crate::Input,
+        hash: &str,
+        nonce: &str,
+        value: Option<&str>,
+    ) -> Result<Option<crate::ui::View>, Error> {
+        let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
+        let row = sqlx::query("SELECT action FROM discord_ui_actions WHERE nonce=? AND bot=? AND guild=? AND owner=? AND channel=? AND config_hash=? AND expires>=? AND consumed=0")
+            .bind(nonce).bind(input.bot.to_string()).bind(input.guild.to_string()).bind(input.user.to_string()).bind(input.channel.to_string())
+            .bind(hash).bind(engine::now()).fetch_optional(&mut *tx).await.map_err(|_| Error::Database)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let action: crate::ui::Action =
+            serde_json::from_str(row.get("action")).map_err(|_| Error::Database)?;
+        let view = match (action, value) {
+            (crate::ui::Action::Navigate(view), None) => Some(view),
+            (crate::ui::Action::Select(choices), Some(value)) => value
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| choices.get(index).cloned()),
+            _ => None,
+        };
+        if matches!(view, Some(crate::ui::View::Open { .. })) {
+            sqlx::query("UPDATE discord_ui_actions SET consumed=1 WHERE nonce=? AND consumed=0")
+                .bind(nonce)
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| Error::Database)?;
+        }
+        tx.commit().await.map_err(|_| Error::Database)?;
+        Ok(view)
+    }
+
     pub async fn discord_recover(&self) -> Result<(), Error> {
         for table in [
             "discord_categories",

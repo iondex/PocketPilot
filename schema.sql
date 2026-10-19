@@ -148,6 +148,14 @@ CREATE TABLE IF NOT EXISTS discord_provisions (
     PRIMARY KEY(bot,guild,instance,thread)
 );
 
+CREATE TABLE IF NOT EXISTS discord_ui_actions (
+    nonce TEXT PRIMARY KEY,
+    bot TEXT NOT NULL, guild TEXT NOT NULL, owner TEXT NOT NULL, channel TEXT NOT NULL,
+    config_hash TEXT NOT NULL, action TEXT NOT NULL,
+    expires INTEGER NOT NULL, consumed INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS discord_ui_actions_expiry ON discord_ui_actions(expires);
+
 CREATE TABLE IF NOT EXISTS inbound_updates (
     bot_id INTEGER NOT NULL,
     polling_epoch INTEGER NOT NULL,

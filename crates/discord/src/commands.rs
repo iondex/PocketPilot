@@ -16,82 +16,8 @@ impl Service {
     ) -> Result<String> {
         let locale = self.locale(input);
         match &input.command {
-            Command::Workspaces => {
-                let mut rows = engine::navigation::Navigator::new(&snapshot.config)
-                    .workspaces()
-                    .iter()
-                    .map(|view| format!("{} · {}", view.host.name, view.host.id))
-                    .collect::<Vec<_>>();
-                rows.push(i18n::text(&locale, "discord.workspaces.next"));
-                Ok(rows.join("\n"))
-            }
-            Command::Projects { workspace } => {
-                let view = engine::navigation::Navigator::new(&snapshot.config)
-                    .workspace(workspace)
-                    .map_err(error)?;
-                let host = view.host;
-                let projects = view.projects;
-                let mut rows = vec![host.name.clone()];
-                rows.extend(
-                    projects
-                        .iter()
-                        .map(|ws| format!("{} · {}\n{}", ws.short_name, ws.name, ws.cwd)),
-                );
-                if projects.is_empty() {
-                    rows.push(i18n::text(&locale, "discord.projects.empty"));
-                }
-                rows.push(
-                    i18n::t!(
-                        "discord.projects.next",
-                        locale = &locale,
-                        workspace = &host.id
-                    )
-                    .to_string(),
-                );
-                Ok(rows.join("\n\n"))
-            }
-            Command::Sessions {
-                workspace,
-                project,
-                cursor,
-            } => {
-                let ws = self.project(&snapshot.config, workspace, project)?;
-                let provider = self
-                    .connections
-                    .get(&snapshot.config, ws)
-                    .await
-                    .map_err(error)?;
-                let page =
-                    connections::list_picker(&self.store, provider.as_ref(), ws, cursor.clone(), 8)
-                        .await
-                        .map_err(error)?;
-                let mut text = page
-                    .data
-                    .iter()
-                    .map(|s| {
-                        format!(
-                            "{} · {}\n{}",
-                            s.status.text_in(&locale),
-                            session::delivery::short_title(&s.title, 45),
-                            s.reference.thread
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                text.push_str(&i18n::t!(
-                    "discord.sessions.open",
-                    locale = &locale,
-                    workspace = workspace,
-                    project = &ws.short_name
-                ));
-                if let Some(cursor) = page.next_cursor {
-                    text.push_str(&i18n::t!(
-                        "discord.sessions.next",
-                        locale = &locale,
-                        cursor = cursor
-                    ));
-                }
-                Ok(text)
+            Command::Workspaces | Command::Projects { .. } | Command::Sessions { .. } => {
+                Err("discord.ui.use_menu".into())
             }
             Command::Open {
                 workspace,
@@ -249,25 +175,20 @@ impl Service {
                     )
                     .await?;
                 }
-                let receipt = self
-                    .mutate(
-                        api,
-                        input,
-                        snapshot,
-                        "input",
-                        Target {
-                            workspace: ws,
-                            thread: &b.thread,
-                            binding: Some(&b),
-                        },
-                        engine::uploads::attach(mutation, files),
-                    )
-                    .await?;
-                Ok(i18n::t!(
-                    "discord.input.accepted",
-                    locale = &locale,
-                    turn = receipt.turn.unwrap_or_default()
-                ))
+                self.mutate(
+                    api,
+                    input,
+                    snapshot,
+                    "input",
+                    Target {
+                        workspace: ws,
+                        thread: &b.thread,
+                        binding: Some(&b),
+                    },
+                    engine::uploads::attach(mutation, files),
+                )
+                .await?;
+                Ok(i18n::text(&locale, "discord.input.accepted"))
             }
             Command::Unbind => {
                 let b = self.bound(input).await?;
@@ -279,9 +200,7 @@ impl Service {
                 let b = self.bound(input).await?;
                 self.validate_binding(&snapshot.config, &b)?;
                 self.fresh(api, input, snapshot, true).await?;
-                api.rename(input.channel, title, &b.thread)
-                    .await
-                    .map_err(error)?;
+                api.rename(input.channel, title).await.map_err(error)?;
                 Ok(i18n::text(&locale, "discord.renamed"))
             }
             Command::Status | Command::Recent => {
@@ -312,9 +231,8 @@ impl Service {
                         "discord.session.details",
                         locale = &locale,
                         title = current.title,
-                        state = current.status.text_in(&locale),
+                        state = crate::ui::status(&current.status, &locale),
                         workspace = &ws.name,
-                        thread = &b.thread
                     ))
                 }
             }

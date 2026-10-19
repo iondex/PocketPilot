@@ -32,6 +32,9 @@ mod observation;
 #[path = "routing.rs"]
 mod routing;
 
+#[path = "menus.rs"]
+mod menus;
+
 pub struct Service {
     config: Arc<ConfigFile>,
     store: Store,
@@ -128,6 +131,15 @@ pub async fn run(
 
 #[async_trait::async_trait]
 impl Backend for Service {
+    async fn menu(
+        &self,
+        api: &Api,
+        input: Input,
+        token: Option<String>,
+        value: Option<String>,
+    ) -> Result<crate::ui::Screen> {
+        self.menu_screen(api, input, token, value).await
+    }
     async fn handle(&self, api: &Api, input: Input) -> Result<String> {
         let snapshot = self.config.snapshot();
         let output = self.command(api, &input, &snapshot).await?;
