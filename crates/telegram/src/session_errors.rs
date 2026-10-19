@@ -9,6 +9,7 @@ impl Store {
         thread: &str,
         mut history: History,
     ) -> Result<History, StoreError> {
+        history = history.without_transient_errors();
         let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;
         for item in history.items.iter().filter(|i| i.is_error()) {
             let payload = serde_json::to_string(item).map_err(|_| StoreError::Database)?;
@@ -26,6 +27,9 @@ impl Store {
         for payload in saved {
             let error: TextItem =
                 serde_json::from_str(&payload).map_err(|_| StoreError::Database)?;
+            if !error.is_error() {
+                continue;
+            }
             if history.items.iter().any(|i| {
                 i.is_error()
                     && i.turn_id == error.turn_id

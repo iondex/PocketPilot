@@ -93,10 +93,14 @@ pub struct TextItem {
 }
 
 impl TextItem {
+    pub fn is_transient_error(&self) -> bool {
+        self.phase.as_deref() == Some("error_retry")
+    }
+
     pub fn is_error(&self) -> bool {
         matches!(
             self.phase.as_deref(),
-            Some("error" | "error_retry" | "turn_failed" | "turn_interrupted")
+            Some("error" | "turn_failed" | "turn_interrupted")
         )
     }
 }
@@ -111,6 +115,13 @@ pub struct History {
     pub items: Vec<TextItem>,
     /// True only when pagination completed, not a guarantee of an atomic snapshot.
     pub all_pages_read: bool,
+}
+
+impl History {
+    pub fn without_transient_errors(mut self) -> Self {
+        self.items.retain(|item| !item.is_transient_error());
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]

@@ -47,7 +47,7 @@ SSH 使用有效 OpenSSH config，支持 ProxyJump、ProxyCommand、agent 和 kn
 | 共享状态 | Desktop、CLI 和 Telegram 观察同一 active turn；`/status` 返回实际状态，等待审批时不替用户回答审批 |
 | 历史 | 进入长会话只显示短预览，不导出文件；再次打开不重播。`/history` 查看最近输入和同轮 final；`/history errors` 列近期错误；`/history export` 主动导出全部可见历史 |
 | 输入来源 | 同一原生会话的外部输入以 🧑‍💻 展示；Telegram 自身输入精确去重；其他会话内容不得串入 |
-| 阶段与格式 | 💭 过程、✅ final、💬 阶段未知、❌ 失败、⚠️ 服务端重试；emoji 后空格接首行；粗体、链接、代码及表格正常显示 |
+| 阶段与格式 | 💭 过程、✅ final、💬 阶段未知、❌ 最终失败；可恢复重试不发消息；emoji 后空格接首行；粗体、链接、代码及表格正常显示 |
 | 附件 | 标准附件包装缩为正文与文件名，不显示绝对路径或图片；Telegram 上传只转发 caption 文字并提示限制，纯附件不启动任务 |
 | 标题与状态 | topic 仅保留截短原始标题，管理 icon 为 📁，空闲/未加载为 💬；状态变化更新 icon，运行中持续 typing |
 | 限速 | 短时输出持久合并，同一私聊的全部 topics 共享预算；429 遵守 retry_after；普通长输出或主动历史查询可用单个 Markdown 附件，入场预览不产生文件 |

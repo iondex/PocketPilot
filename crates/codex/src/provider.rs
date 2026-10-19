@@ -178,14 +178,19 @@ fn text_item(turn_id: &str, turn_complete: bool, item: p::ThreadItem) -> Option<
 
 fn turn_items(turn: p::Turn) -> Vec<TextItem> {
     let complete = matches!(turn.status, p::TurnStatus::Completed);
-    let error = if let Some(error) = turn.error {
-        Some(("error", error.message))
-    } else {
-        match turn.status {
-            p::TurnStatus::Failed => Some(("turn_failed", String::new())),
-            p::TurnStatus::Interrupted => Some(("turn_interrupted", String::new())),
-            _ => None,
-        }
+    let error = match turn.status {
+        p::TurnStatus::Failed | p::TurnStatus::Interrupted => Some(match turn.error {
+            Some(error) => ("error", error.message),
+            None => (
+                if matches!(turn.status, p::TurnStatus::Interrupted) {
+                    "turn_interrupted"
+                } else {
+                    "turn_failed"
+                },
+                String::new(),
+            ),
+        }),
+        _ => None,
     };
     let mut items = turn
         .items
@@ -608,6 +613,17 @@ fn text_input(text: String) -> Result<Vec<p::UserInput>, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_terminal_turn_states_expose_native_errors() {
+        for status in ["inProgress", "completed"] {
+            let turn = serde_json::from_str(&format!(r#"{{"id":"t","status":"{status}","itemsView":"full","items":[{{"type":"agentMessage","id":"a","text":"normal progress","phase":"commentary"}}],"error":{{"message":"Reconnecting... 1/5"}}}}"#)).unwrap();
+            let items = turn_items(turn);
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].text, "normal progress");
+            assert!(!items[0].is_error());
+        }
+    }
 
     #[test]
     fn failed_turns_preserve_primary_errors_without_internal_details() {

@@ -21,7 +21,11 @@ impl Service {
             .acquire()
             .await
             .map_err(|_| i18n::Message::new("error.discord.backend"))?;
-        provider.history(thread).await.map_err(error)
+        provider
+            .history(thread)
+            .await
+            .map(session::History::without_transient_errors)
+            .map_err(error)
     }
 
     pub(super) async fn open(

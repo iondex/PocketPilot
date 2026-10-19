@@ -619,6 +619,12 @@ async fn failed_history_does_not_flip_a_known_runtime_or_repeatedly_rename_the_t
     stop.send(true).unwrap();
     delivery.await.unwrap();
     let requests = fixture.telegram.received_requests().await.unwrap();
+    assert!(
+        requests
+            .iter()
+            .all(|r| !r.url.path().to_ascii_lowercase().ends_with("/sendmessage")),
+        "background history read failures must not send chat messages"
+    );
     let renames = requests
         .iter()
         .filter(|r| {
@@ -3704,11 +3710,26 @@ async fn errors_survive_reopening_storage_and_history_keeps_turn_attribution() {
         Some("error_retry"),
         "network failed",
     );
-    assert!(super::messages::error_text(&retry, "zh-CN").contains("⚠️ Codex 正在重试"));
+    assert!(super::messages::error_text(&retry, "zh-CN").is_empty());
+    sqlx::query("INSERT INTO session_errors(instance_id,thread_id,turn_id,item_id,payload) VALUES('instance','thread','old','r',?)")
+        .bind(serde_json::to_string(&retry).unwrap()).execute(reopened.pool()).await.unwrap();
+    let history = reopened
+        .retain_errors(
+            "instance",
+            "thread",
+            session::History {
+                all_pages_read: true,
+                items: vec![retry],
+            },
+        )
+        .await
+        .unwrap();
+    assert!(history.items.iter().all(|item| !item.is_transient_error()));
+    assert!(history.items.iter().any(|item| item.is_error()));
 }
 
 #[tokio::test]
-async fn legacy_cursors_upgrade_without_replaying_old_text_and_outages_emit_one_error() {
+async fn legacy_cursors_upgrade_without_replaying_old_text_or_sending_transient_errors() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     let store = &fixture.service.store;
@@ -3748,7 +3769,7 @@ async fn legacy_cursors_upgrade_without_replaying_old_text_and_outages_emit_one_
         .iter()
         .filter(|b| b.text.starts_with("❌"))
         .count();
-    assert_eq!(count, 1);
+    assert_eq!(count, 0);
     fixture.service.refresh_binding(&binding).await.unwrap();
     fixture
         .service
@@ -3762,7 +3783,7 @@ async fn legacy_cursors_upgrade_without_replaying_old_text_and_outages_emit_one_
             .iter()
             .filter(|b| b.text.starts_with("❌"))
             .count(),
-        2
+        0
     );
 }
 
@@ -3824,7 +3845,7 @@ async fn workspace_pages_use_recency_before_name_in_both_navigation_flows() {
 }
 
 #[tokio::test]
-async fn connection_notice_before_first_history_does_not_mark_history_delivered() {
+async fn offline_status_before_first_history_does_not_mark_history_delivered() {
     let fixture = Fixture::new().await;
     fixture.pair().await;
     let store = &fixture.service.store;

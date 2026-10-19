@@ -1,7 +1,6 @@
 //! Local error notification collection; never subscribes/resumes a remote thread.
 use crate::{Client, protocol as p};
 use session::{Role, TextItem};
-use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -22,28 +21,16 @@ pub(crate) fn listen(client: &Client) -> Errors {
                             continue;
                         };
                         if let Ok(error) = serde_json::from_str::<p::ErrorNotification>(raw.get()) {
+                            if error.will_retry {
+                                continue;
+                            }
                             let mut cache = errors.lock().expect("error notification cache");
                             let text = error.error.message.chars().take(8192).collect::<String>();
-                            let key = format!(
-                                "{:x}",
-                                Sha256::digest(format!("{}:{}", error.will_retry, text).as_bytes())
-                            );
                             let item = TextItem {
                                 turn_id: error.turn_id,
-                                item_id: if error.will_retry {
-                                    format!("pp:notification-error:{key}")
-                                } else {
-                                    "pp:turn-error".into()
-                                },
+                                item_id: "pp:turn-error".into(),
                                 role: Role::Agent,
-                                phase: Some(
-                                    if error.will_retry {
-                                        "error_retry"
-                                    } else {
-                                        "error"
-                                    }
-                                    .into(),
-                                ),
+                                phase: Some("error".into()),
                                 text,
                                 complete: true,
                                 client_id: None,
@@ -154,8 +141,25 @@ mod tests {
         for _ in 0..2 {
             server.send(notification.to_owned()).await.unwrap();
         }
+        let marker = r#"{"method":"error","params":{"threadId":"marker","turnId":"done","willRetry":false,"error":{"message":"terminal marker"}}}"#;
+        server.send(marker.to_owned()).await.unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            while cache.lock().unwrap().is_empty() {
+            while merge(&cache, "marker", vec![]).is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            merge(&cache, "thread", vec![]).is_empty(),
+            "recoverable notifications must stay out of visible history"
+        );
+        let failure = r#"{"method":"error","params":{"threadId":"thread","turnId":"turn","willRetry":false,"error":{"message":"request failed","additionalDetails":"private diagnostics"}}}"#;
+        for _ in 0..2 {
+            server.send(failure.to_owned()).await.unwrap();
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while merge(&cache, "thread", vec![]).is_empty() {
                 tokio::task::yield_now().await;
             }
         })
@@ -163,8 +167,8 @@ mod tests {
         .unwrap();
         let merged = merge(&cache, "thread", vec![]);
         assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].phase.as_deref(), Some("error_retry"));
-        assert_eq!(merged[0].text, "network problem");
+        assert_eq!(merged[0].phase.as_deref(), Some("error"));
+        assert_eq!(merged[0].text, "request failed");
         assert_eq!(merge(&cache, "thread", merged).len(), 1);
         assert!(merge(&cache, "other-thread", vec![]).is_empty());
         drop(client);

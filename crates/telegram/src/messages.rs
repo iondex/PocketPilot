@@ -41,6 +41,9 @@ pub(super) fn user_text(item: &TextItem) -> String {
 }
 
 pub(super) fn error_text(item: &TextItem, locale: &str) -> String {
+    if item.is_transient_error() {
+        return String::new();
+    }
     let text = if item.text.trim().is_empty() {
         ::i18n::text(
             locale,
@@ -53,18 +56,13 @@ pub(super) fn error_text(item: &TextItem, locale: &str) -> String {
     } else {
         item.text.clone()
     };
-    if item.phase.as_deref() == Some("error_retry") {
-        format!(
-            "⚠️ {}\n{}",
-            ::i18n::text(locale, "tg.turn.retrying"),
-            escape_markdown(&text)
-        )
-    } else {
-        format!("❌ {}", escape_markdown(&text))
-    }
+    format!("❌ {}", escape_markdown(&text))
 }
 
 pub(super) fn render(item: &TextItem, locale: &str) -> String {
+    if item.is_transient_error() {
+        return String::new();
+    }
     if item.is_error() {
         return error_text(item, locale);
     }
@@ -102,6 +100,7 @@ pub(super) fn initial(
         .enumerate()
         .filter(|(index, item)| {
             item.role == Role::Agent
+                && !item.is_transient_error()
                 && Some(item.turn_id.as_str()) == turn
                 && last.is_none_or(|user| *index > user)
         })
@@ -115,9 +114,7 @@ pub(super) fn initial(
                 .then(|| candidates.iter().rev().find(|(_, item)| !item.is_error()))
                 .flatten()
         });
-    let error = candidates.iter().rev().find(|(_, item)| {
-        item.is_error() && (answer.is_none() || item.phase.as_deref() != Some("error_retry"))
-    });
+    let error = candidates.iter().rev().find(|(_, item)| item.is_error());
     let mut selected = Vec::new();
     if let Some(index) = last {
         let item = &history.items[index];
@@ -148,7 +145,9 @@ pub(super) fn initial(
         .items
         .iter()
         .filter(|item| {
-            item.role != Role::User || !item.client_id.as_ref().is_some_and(|id| own.contains(id))
+            !item.is_transient_error()
+                && (item.role != Role::User
+                    || !item.client_id.as_ref().is_some_and(|id| own.contains(id)))
         })
         .count();
     if clipped || visible > selected.len() {

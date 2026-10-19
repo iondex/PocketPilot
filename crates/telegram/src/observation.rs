@@ -123,26 +123,6 @@ impl Service {
         let snapshot = self.config.snapshot();
         let workspace = self.binding_workspace(&snapshot.config, &binding)?;
         tracing::debug!(thread_id=%binding.thread_id,%error,"session status unavailable");
-        let mut observed: BTreeMap<String, String> =
-            serde_json::from_str(&binding.observed_items).map_err(|_| StoreError::Database)?;
-        let message = ::i18n::LocalizedError::message(error);
-        if !observed.contains_key("@connection_error") {
-            observed.insert("@connection_error".into(), message.id.into());
-            let mut body = Outbound::text(format!(
-                "❌ {}",
-                message.render(&self.ui_locale(binding.chat_id).await)
-            ));
-            body.scope = Some(self.output_scope(&snapshot.config, workspace, &workspace.cwd)?);
-            body.binding_revision = Some(binding.revision);
-            self.store
-                .publish_notice(
-                    &binding,
-                    &observed,
-                    &format!("connection-error:{}", uuid::Uuid::new_v4()),
-                    &body,
-                )
-                .await?;
-        }
         self.presence.clear(&binding).await;
         let appearance = crate::presentation::Appearance {
             title: binding.topic_title.clone().unwrap_or_else(|| {
@@ -159,30 +139,9 @@ impl Service {
     pub(super) async fn history_unavailable(
         &self,
         binding: &Binding,
-        workspace: &Workspace,
-        cwd: &str,
         error: &Error,
-        snapshot: &Snapshot,
     ) -> Result<(), Error> {
-        tracing::warn!(%error,"session history unavailable; keeping independently observed runtime");
-        let mut body = Outbound::text(
-            self.ui_text(binding.chat_id, "tg.history.unavailable")
-                .await,
-        );
-        body.scope = Some(self.output_scope(&snapshot.config, workspace, cwd)?);
-        body.binding_revision = Some(binding.revision);
-        self.store
-            .enqueue(
-                self.bot,
-                binding.chat_id,
-                binding.topic_id,
-                &format!(
-                    "history-unavailable:{}:{}",
-                    binding.thread_id, binding.revision
-                ),
-                &body,
-            )
-            .await?;
+        tracing::warn!(thread_id=%binding.thread_id,%error,"session history unavailable; keeping independently observed runtime");
         Ok(())
     }
 
@@ -279,9 +238,7 @@ impl Service {
         let history = match history {
             Ok(history) => history,
             Err(error) => {
-                return self
-                    .history_unavailable(binding, workspace, &current.cwd, &error, &snapshot)
-                    .await;
+                return self.history_unavailable(binding, &error).await;
             }
         };
         if !binding.history_ready {
@@ -323,6 +280,9 @@ impl Service {
             .items
             .iter()
             .filter(|item| {
+                if item.is_transient_error() {
+                    return false;
+                }
                 let key = item_key(item);
                 let previous = old.get(&key);
                 if super::unchanged(item, previous) {

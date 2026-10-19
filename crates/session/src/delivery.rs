@@ -24,7 +24,11 @@ pub fn full_history(history: &History) -> String {
 
 pub fn full_history_in(history: &History, locale: &str) -> String {
     let mut result = format!("{}\n\n", i18n::text(locale, "common.history.heading"));
-    for item in &history.items {
+    for item in history
+        .items
+        .iter()
+        .filter(|item| !item.is_transient_error())
+    {
         let role = match item.role {
             Role::User => "common.role.user",
             Role::Agent => "common.role.agent",
@@ -122,7 +126,7 @@ pub fn agent_history_in(history: &History, locale: &str) -> String {
     let mut text = history
         .items
         .iter()
-        .filter(|i| i.role == Role::Agent)
+        .filter(|i| i.role == Role::Agent && !i.is_transient_error())
         .map(|i| i.text.as_str())
         .collect::<Vec<_>>()
         .join("\n\n");
@@ -194,6 +198,33 @@ impl Batcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recoverable_errors_are_hidden_from_history_but_final_results_remain_visible() {
+        let mut history = History {
+            all_pages_read: true,
+            items: vec![
+                item("t", Role::User, None, "question"),
+                item("t", Role::Agent, Some("commentary"), "working"),
+                item("t", Role::Agent, Some("error_retry"), "Reconnecting... 1/5"),
+                item("t", Role::Agent, Some("final_answer"), "done"),
+            ],
+        };
+        for text in [
+            full_history(&history),
+            agent_history(&history),
+            latest_interaction(&history),
+        ] {
+            assert!(!text.contains("Reconnecting"));
+            assert!(text.contains("done"));
+        }
+        history
+            .items
+            .push(item("t", Role::Agent, Some("error"), "terminal failure"));
+        assert_eq!(last_interaction(&history).unwrap().errors.len(), 1);
+        assert!(full_history(&history).contains("terminal failure"));
+        assert_eq!(history.without_transient_errors().items.len(), 4);
+    }
 
     fn item(turn: &str, role: Role, phase: Option<&str>, text: &str) -> TextItem {
         TextItem {

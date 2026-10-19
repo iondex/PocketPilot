@@ -236,17 +236,6 @@ impl Store {
             .await
     }
 
-    pub(crate) async fn publish_notice(
-        &self,
-        binding: &Binding,
-        items: &BTreeMap<String, String>,
-        source: &str,
-        body: &Outbound,
-    ) -> Result<(), Error> {
-        self.publish_cursor(binding, items, source, body, binding.history_ready)
-            .await
-    }
-
     async fn publish_cursor(
         &self,
         binding: &Binding,

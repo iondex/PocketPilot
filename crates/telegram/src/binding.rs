@@ -159,8 +159,7 @@ impl Service {
         let history = match history {
             Ok(history) => history,
             Err(error) => {
-                self.history_unavailable(&binding, workspace, &current.cwd, &error, snapshot)
-                    .await?;
+                self.history_unavailable(&binding, &error).await?;
                 self.refresh_status(&binding, workspace, &current, snapshot)
                     .await?;
                 return self.opened(input, snapshot, workspace, topic).await;
