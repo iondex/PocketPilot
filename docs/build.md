@@ -34,6 +34,6 @@ make package FEATURES=discord,slack
 make clean
 ```
 
-`make package` 构建并将 binary、SHA-256 和构建说明保存到 Git 忽略的 `dist/`；`make clean` 使用 `cargo clean` 清理 `target/`，保留已打包文件。默认 `make` 只构建 release；仓库的 VS Code Rust Analyzer 工作区设置也将构建脚本与编辑器检查指向 release，其他编辑器应使用同样参数。使用 `make release FEATURES=discord,slack` 可顺序完成检查、打包和清理。只需要 Telegram 时省略 FEATURES。
+`make package` 构建并将 binary、SHA-256 和构建说明保存到 Git 忽略的 `dist/`；`make clean` 使用 `cargo clean` 清理 `target/`，保留已打包文件。默认 `make` 只构建 release；仓库的 VS Code Rust Analyzer 工作区设置也将构建脚本与编辑器检查指向 release，其他编辑器应使用同样参数。工具链包含 rust-analyzer，VS Code 工作区使用 PATH 中的 rustup rust-analyzer，更新工具链后重启编辑器的语言服务。使用 `make release FEATURES=discord,slack` 可顺序完成检查、打包和清理。只需要 Telegram 时省略 FEATURES。
 
 每轮验证和打包完成后清理构建目录，避免长期积累。本任务生成的 `/tmp` 调研副本、临时输出和验证日志在对应任务结束、结果汇总后一起清理。检查与编译期间保持 `target/` 独占，不与清理并行。清理后的下次构建会重新生成依赖和协议；运行中的部署应引用 `dist/pocketpilot`，不要依赖将被清理的 target 路径。其他开发机所需的配置和账本见 [迁移指南](migration.md)。

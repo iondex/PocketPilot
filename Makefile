@@ -16,7 +16,8 @@ check:
 
 package: build
 	mkdir -p dist
-	cp target/release/pocketpilot dist/pocketpilot
+	cp target/release/pocketpilot dist/pocketpilot.new
+	mv -f dist/pocketpilot.new dist/pocketpilot
 	./dist/pocketpilot --version > dist/BUILD.txt
 	rustc -vV >> dist/BUILD.txt
 	@printf 'features: %s\n' '$(FEATURES)' >> dist/BUILD.txt
