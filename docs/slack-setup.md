@@ -151,4 +151,6 @@ cargo clean
 
 此版本不再读写旧的 `slack_channels` 项目频道映射。已有数据库中的旧表/字段不会自动删除，旧频道绑定也不会改绑到 DM；运行时只接受 Slack 返回的 owner DM，旧频道收发会被拒绝。保留数据备份，在 DM 中重新选择会话即可建立新的私聊绑定。
 
+短正文会显示粗体标题、强调、代码、引用和列表；Markdown 表格降级为“列名：值”，任务显示勾选框。菜单、项目名与状态保持字面文本，Unicode emoji 保留，自定义 shortcode 不自动映射。使用专用测试会话的短合成输出验收这些格式，并在桌面与移动端各查看一次；包含 `<@U000000001>`、`<!channel>` 的文本不应触发通知。完整历史和超限内容应收到原文 `session.md`，代码中的反引号、中文与组合 emoji 不应被截断。实现边界见 [Markdown 与 emoji](research/chat-formatting.md)。
+
 平台依据：[App Home / Messages](https://docs.slack.dev/surfaces/app-home/)、[message.im](https://docs.slack.dev/reference/events/message.im/)、[conversations.open](https://docs.slack.dev/reference/methods/conversations.open/)。

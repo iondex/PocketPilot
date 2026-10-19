@@ -333,3 +333,10 @@ Telegram 的 presentation/markdown/presence/i18n 是独立平铺模块。Appeara
 ## 公共导航
 
 聊天界面的 workspace 表示执行环境/主机（Host），project 表示该环境内的项目目录（持久化 Workspace），session 位于项目内。engine::navigation 是 Slack/Discord 的公共目录选择模块，集中处理归属校验、排序、歧义拒绝与分页；平台模块只生成原生控件或命令。session 查询、操作账本、会话 actor 和 provider 连接仍由现有 engine/session 模块共享。
+
+
+## 公共正文与平台显示
+
+session::markdown 以 pulldown-cmark 为语法解析器，集中提供有界文档结构、中文粗体兼容、安全链接、表格降级和纯文本 fallback；Telegram 复用输入解析，保留已有 HTML 渲染。Slack 把公共结构映射为 SDK 的普通 rich_text 元素，Discord 映射为其 Markdown 子集。平台菜单、状态和错误使用字面文本入口，不把动态标题作为正文语法。RuntimeStatus::text_in 提供共同的无图标状态文案，图标由平台入口决定。
+
+原始 Markdown 与显示文本分别保留；原文用于文件导出，显示超限或不能保真时整份降级为附件。UTF-16 长度与公共预览的 grapheme 边界分别处理。Slack 顶层 fallback 禁用标记解析，Discord 所有消息和编辑保留 allowed_mentions；格式优化不改变 outbox、未知结果、权限或原生操作语义。能力、验证范围和第三方库选型见 [Markdown 与 emoji](../research/chat-formatting.md)。

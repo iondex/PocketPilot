@@ -41,7 +41,7 @@ Socket 回调只做身份检查和有界持久化，收到业务事件后以 `(n
 
 worker 执行慢 SSH / agent 操作。交互和 modal 保持三秒预算；耗时执行不阻塞 ACK。消息编辑、删除、自身输出、bot 消息、空文字和未绑定 thread 均不构成任务。纯附件不启动任务；带 caption 时只处理文字，不读取文件内容。
 
-所有菜单、卡片、错误和正文在 DM 中以普通持久消息发送，不使用 chat.postEphemeral。过程和结果投递到相应 thread，根卡片仅在状态/标题变化时更新。短内容使用 plain_text block，fallback 转义 & / < / >，不触发任意 mention；长输出或完整历史通过新版三阶段文件上传保存为单个 Markdown 文件，预算 8 MiB。
+所有菜单、卡片、错误和正文在 DM 中以普通持久消息发送，不使用 chat.postEphemeral。过程和结果投递到相应 thread，根卡片仅在状态/标题变化时更新。菜单、状态和错误使用 plain_text block；短正文通过公共 Markdown 解析生成普通 rich_text block。fallback 是可读纯文本，转义 & / < / > 并显式关闭顶层 mrkdwn 与 link_names；不生成可执行 mention 元素。长输出或完整历史通过新版三阶段文件上传保存原文为单个 Markdown 文件，预算 8 MiB。Slack 正文保守限制为 2,800 个 UTF-16 单元或 50 个富文本元素，超限整份转附件，不任意截断代码。格式边界见 [Markdown 说明](../research/chat-formatting.md)。
 
 各 thread 共用该 DM 的两秒发送预算，429 依据 Retry-After 调度。发送、文件完成或原生写入的回执丢失时保留 OutcomeUnknown，不自动重发。恢复/过期输入成为待确认草稿，新的确认重新核对绑定和当前 turn；重启恢复只读观察，不自动 resume。
 

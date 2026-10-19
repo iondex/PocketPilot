@@ -1,12 +1,12 @@
 # Slack / Discord：Markdown 与 emoji
 
-核验日期：2026-10-19。本文区分平台能力、仓库当前行为与后续建议；只做调研，没有向真实聊天发送消息，也未修改运行配置。
+核验日期：2026-10-19。本文区分平台能力、仓库实现与待验收事项。格式验证使用合成样本，没有向真实聊天发送试验消息。
 
 ## 结论
 
 菜单的共享层应统一 workspace → 项目/目录 → session 的语义、状态和文案；展示层保留平台适配。Agent 正文应先解析为 Markdown 结构，再生成 Slack 或 Discord 内容，不能把同一份原始 Markdown 无差别发送给两端。Unicode emoji 可作为共同基础，但状态必须同时保留文字，不能仅靠圆点颜色区分。
 
-当前 Slack 菜单和短正文主要使用 `plain_text`；Discord 短正文直接交给客户端解析。因此两端即使收到相同原文，也不会有相同的排版效果。[代码：Slack 渲染](../../crates/slack/src/render.rs) · [代码：Discord 发送](../../crates/discord/src/api.rs)
+当前菜单和动态标签保持纯文本；Agent 正文共用 `session::markdown`，Slack 输出普通 `rich_text` blocks，Discord 输出支持的 Markdown 子集。两端共享语义，具体排版由客户端决定。[代码：Slack 渲染](../../crates/slack/src/render.rs) · [代码：Discord 发送](../../crates/discord/src/api.rs)
 
 ## 1. Slack：需要区分三种文本路径
 
@@ -75,31 +75,33 @@ Discord 文档说明其桌面/Android 与 iOS 采用不同 emoji 图形资源，
 
 以上为产品建议，并非平台强制规则。
 
-## 4. 当前仓库的具体差距
+## 4. 当前实现
 
-| 位置 | 当前行为 | 影响 |
-| --- | --- | --- |
-| Slack `render::message` | 非空短正文生成 section `plain_text`；超过 2,800 个 Rust `char` 标记为文件 | Agent 的粗体、链接、代码块短消息不会按 Markdown 排版；这是实现选择，并非 Slack 无此能力 |
-| Slack `Api::content` | 顶层 fallback 对 `& < >` 转义；post 设置 `parse=none`；未显式关闭顶层 `mrkdwn` | 可见正文与通知/阅读器的格式处理路径不同，需覆盖格式符号与 mention 场景；现有代码不足以认定“双重转义” |
-| Slack `menus` | header、context、行内按钮、项目下拉框，标题/选项主要是 `plain_text` | 菜单应继续使用结构化组件；正文排版不必连带把所有标签改成 `mrkdwn` |
-| Slack observation | 增量正文直接拼接；首次摘要最多取 1,200 个 Rust `char` | 未来启用格式渲染时，不能沿用任意字符位置截断，否则可能切断代码块或链接 |
-| Discord `send_in` / Gateway 响应 | 短正文原样作为 `content`；超过 1,800 个 Rust `char` 改为原文 `session.md`；超过 8 MiB 拒绝 | 常见 Markdown 多数可显示，但动态标题也可能触发格式；长文缺少内联摘要 |
-| Discord API / Gateway | 普通发送、编辑、interaction 响应均禁用用户、角色、everyone 和回复用户通知 | 应保留此防护；新增格式适配不能引入隐式 mention |
-| 共享 `RuntimeStatus::label_in` | 状态与 Unicode 彩色圆点绑定 | Slack session 菜单另有不带圆点的状态映射，根卡片仍走共享带圆点版本，策略分散 |
-| 共享 `session::delivery` | 组合角色、摘要与原文；未提供两平台正文格式适配 | 应共享语义与解析结果，由平台适配输出；不要共享已按某平台转义的字符串 |
+| 层次 | 行为 |
+| --- | --- |
+| 公共解析 | `session::markdown` 使用锁定的 `pulldown-cmark`；共享 Telegram 既有中文粗体与 phase label 兼容处理，不复用 Telegram HTML |
+| 公共边界 | 输入最多 8 MiB、深度 64、解析事件 8,192；过度结构降级为原文字面文本；仅接受无 URL 凭据的 http/https/mailto 链接 |
+| 表格与任务 | 表格转换为“列名：值”的行，保留单元格内的链接与强调；任务标记显示为 Unicode 勾选框 |
+| Slack 正文 | 标题显示粗体 section；强调、引用、代码和列表使用普通 `rich_text` 元素；不生成 User/Broadcast/Channel mention 元素 |
+| Slack fallback | 从文档生成可读纯文本，转义 `& < >`；post/update 显式 `mrkdwn=false`、`link_names=false`，post 禁用自动 URL 解析与 unfurl |
+| Discord 正文 | 生成标题、强调、引用、列表、链接和代码子集；原文中的 Discord 专属提及/剧透语法作为文字，所有发送、编辑和交互保留 `allowed_mentions` 禁用通知 |
+| 菜单与状态 | 动态标题、目录、选项保持字面意义；共享 `RuntimeStatus::text_in` 提供不带图标的状态，Telegram 原有带图标入口保留 |
+| 文件与长度 | Slack 保守预算 2,800、Discord 渲染后 1,800，按 UTF-16 计数；Slack 富文本元素过多或 Discord 无法保真表示嵌入反引号时，改为完整 `session.md`；导出不改写原文 |
+| 持久兼容 | 旧 Slack outbox 没有 format 字段时默认为纯文本；新正文明确标记 Markdown；发送与未知结果保护延用原账本 |
 
-代码依据：[Slack render](../../crates/slack/src/render.rs)、[Slack API](../../crates/slack/src/api.rs)、[Slack menus](../../crates/slack/src/menus.rs)、[Slack observation](../../crates/slack/src/observation.rs)、[Discord API](../../crates/discord/src/api.rs)、[Discord Gateway](../../crates/discord/src/gateway.rs)、[session model](../../crates/session/src/model.rs)、[session delivery](../../crates/session/src/delivery.rs)。2,800 / 1,800 是本项目保守阈值，**不是平台官方上限**；Rust `char` 数也不等于用户看到的字形数。
+代码依据：[公共解析](../../crates/session/src/markdown.rs)、[Slack 适配](../../crates/slack/src/markdown.rs)、[Slack API](../../crates/slack/src/api.rs)、[Discord 适配](../../crates/discord/src/render.rs)、[Discord Gateway](../../crates/discord/src/gateway.rs)。预算是项目自己的保守阈值，不是平台上限。Unicode emoji 保留原文，自定义 shortcode 不跨平台猜测转换，不增加 emoji 权限。
 
-## 5. 后续实施顺序
+## 5. 验证与后续范围
 
-1. **统一语义与状态。**共享层提供状态文案 ID、状态类别与菜单层级；平台只决定是否显示图标、使用哪个组件。保留 workspace → 项目/目录 → session，不把 Slack 的 workspace/team 与执行环境混为一谈。
-2. **正文走统一解析、分别渲染。**沿用仓库已有 `pulldown-cmark`，输出平台无关的段落、强调、代码、链接、列表结构；复用 Telegram 解析经验，但不把 Telegram HTML 当公共格式。Slack 生成合法 `mrkdwn` 或结构化 blocks；Discord 生成其 Markdown 子集。纯文本标签与 Agent 正文使用不同入口。
-3. **完整保留原文，改善长文阅读。**先展示简短摘要与关键结果，再附完整 `session.md`；按段落/代码结构处理长度与降级。Markdown 表格在窄屏可降级为逐项字段，复杂内容保留文件。不要截断后丢失正文，也不要为试用新 Markdown block 先扩大 Slack 权限。
-4. **验证实际阅读场景。**用合成样本检查标题中的 `* _ ~ < > &`、URL、中文、emoji/组合字符、列表、三反引号及嵌套格式；覆盖所有投递路径、编辑、通知 fallback、附件及桌面/移动端。确认看似 mention 的文本不会触发通知，且导出文件保持原文。代码测试与真实客户端视觉验收分别记录。
+本地测试覆盖中文标点粗体、嵌套强调、HTML 字面文本、安全链接、代码、任务清单、表格降级、emoji/组合字符、UTF-16 长度，以及 SDK 请求的通知保护和旧 outbox 默认值。Telegram 既有 HTML 渲染行为保留并纳入全 workspace 回归。Slack 的 `blocks.validate` 已接受覆盖 section、链接、有序列表、引用及带语言代码块的合成 payload；该只读校验不等同于桌面/移动端视觉验收。
+
+当前长文直接发完整附件；内联摘要、多个消息的结构化切分和图片预览不在本轮范围。不能在不扩展持久投递状态的情况下先发摘要再补附件，否则回执未知时可能重复输出。完整附件、桌面/移动端显示和实际通知仍需按 [Slack 操作指南](../slack-setup.md)、[Discord 测试指南](../testing-discord.md) 由用户触发验收。
+
+第三方库的维护、许可和适配范围见 [选型核验](markdown-libraries.md)。
 
 Discord 若后续需要更完整的结构化菜单，可单独评估 Components V2：Text Display 支持 Markdown、mentions 和 emoji，并受 `allowed_mentions` 控制。但启用消息 flag `IS_COMPONENTS_V2`（`1 << 15`）后不能撤销，该消息不再使用传统 `content` / `embeds`，附件也需要相应 File 组件。它不是给当前纯文字消息直接加一个开关的无成本升级，不应与本轮通用正文解析绑在一起。[D6]
 
-以上为待实施建议。本文没有新增权限、发送试验消息或声称客户端视觉验收已完成。
+Components V2 仍为后续选项；当前实现没有新增权限，客户端视觉验收应单独记录。
 
 ## 官方来源
 

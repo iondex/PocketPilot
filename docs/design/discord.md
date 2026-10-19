@@ -38,7 +38,7 @@ cargo clean
 
 用户先选 workspace（执行环境/主机），再选项目目录，最后选 session。目录选择、归属校验与排序复用 engine::navigation；平台只负责命令呈现。
 
-一个项目一个 PP category，一个 session 一个短名 channel；短名尾部保留 thread 标识。channel 内固定状态卡展示状态、短标题和 thread ID。进入 active 会话先投递一个完整历史集合，idle 显示最后用户输入与对应 final；超过 1800 字符发送单个 Markdown 附件，原型附件预算 8 MiB，超限明确报错、不截断冒充完整历史。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
+一个项目一个 PP category，一个 session 一个短名 channel；短名尾部保留 thread 标识。channel 内固定状态卡展示状态、短标题和 thread ID。进入 active 会话先投递一个完整历史集合，idle 显示最后用户输入与对应 final；正文通过公共 Markdown 解析输出 Discord 支持的子集，菜单和动态标题按字面转义。渲染后超过 1,800 个 UTF-16 单元或代码反引号无法保真表示时，发送保留原文的单个 Markdown 附件，原型附件预算 8 MiB，超限明确报错、不截断冒充完整历史。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
 
 ## 持久化与生命周期
 

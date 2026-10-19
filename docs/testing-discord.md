@@ -55,7 +55,7 @@ cargo clean
 /pp-rename title:discord-smoke
 ```
 
-核对原生 thread ID 与 cwd；确认原端没有新增 turn，也没有因 `/pp-open` 或查询自动 resume。idle 会话入场显示最后输入与对应 final；active 会话入场发送完整可读历史。`/pp-history` 返回完整可读 user/agent 文本，超过 1800 字符转为一个 Markdown 附件，原型预算为 8 MiB；不要用 Telegram 的“入场短预览”标准验收 Discord。
+核对原生 thread ID 与 cwd；确认原端没有新增 turn，也没有因 `/pp-open` 或查询自动 resume。idle 会话入场显示最后输入与对应 final；active 会话入场发送完整可读历史。`/pp-history` 返回完整可读 user/agent 文本，渲染后超过 1,800 个 UTF-16 单元或代码无法保真表示时转为一个原文 Markdown 附件，原型预算为 8 MiB；不要用 Telegram 的“入场短预览”标准验收 Discord。
 
 ## 第二轮：创建、续轮和 steer
 
@@ -81,8 +81,10 @@ NotLoaded 会话仅在明确 `/pp-ask` 时 resume。等待审批/用户输入的
 
 | 测试 | 通过条件 |
 | --- | --- |
-| 长输出 | 专用测试会话产生超过 1800 字符的合成文本，收到单个可读 `session.md`；中文、代码块完整 |
-| mentions | 合成输出包含 `@everyone`，不触发提及通知 |
+| Markdown | 短合成样本包含标题、粗斜体、引用、列表、代码和链接；表格显示为列名与值，任务显示勾选框；HTML 与剧透标记保持字面含义 |
+| 动态标题 | 项目/session 名包含 `* _ ~ < > &` 与 emoji；菜单和状态卡保持文字，不产生额外格式 |
+| 长输出 | 专用测试会话产生超过 1,800 个 UTF-16 单元的合成文本，收到原文 `session.md`；中文、代码块完整，含内嵌三反引号的代码也走附件 |
+| mentions | 合成输出包含 `@everyone`、`<@123>` 和 `<@&123>`，不触发用户、角色或全体通知 |
 | 非 owner | 普通成员看不到 PP category；非 owner 管理员即便能看见或调用命令，也不能操作会话 |
 | 错误上下文 | 私信、其他 guild、未绑定 channel 不得把输入发送到原会话 |
 | 桥接退出 | 测试任务运行期间正常退出 PocketPilot，原生任务继续；重启后观察恢复，不补发旧输入 |
