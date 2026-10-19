@@ -169,7 +169,7 @@ _version: 1
 "discord.unbound": "The channel is unbound; the session keeps running."
 "discord.renamed": "The channel display name was updated."
 "discord.input.accepted": "Sent. Replies will appear in this session."
-"discord.session.details": "%{title}\n%{state}\nProject: %{workspace}"
+"common.session.details": "💬 %{title}\n%{state}\n📁 Project: %{workspace}"
 "discord.session.added": "Session opened · %{state}\nGo to <#%{channel}> and use /pp-ask to send a task or file."
 "discord.card.pending": "Sending status card. Use /pp-status if the result is uncertain."
 "discord.card.offline": "Connection unknown · refresh /pp-status"

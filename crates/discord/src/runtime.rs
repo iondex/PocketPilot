@@ -2,7 +2,6 @@
 use crate::storage::Binding;
 use crate::{Api, Backend, Input, storage::Store};
 use engine::config::Workspace;
-use engine::digest;
 use engine::{connections::Connections, reload::ConfigFile, storage::Store as CoreStore};
 use session::History;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
@@ -181,7 +180,7 @@ fn hashes(history: &History) -> String {
         &history
             .items
             .iter()
-            .map(|i| (item_key(i), digest(&i.text)))
+            .map(|i| (item_key(i), engine::observation::visible_hash(i)))
             .collect::<BTreeMap<_, _>>(),
     )
     .unwrap_or_else(|_| "{}".into())

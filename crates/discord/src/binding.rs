@@ -121,7 +121,8 @@ impl Service {
             .map_err(error)?
             .ok_or("discord.error.binding_missing")?;
         if !b.history_ready {
-            let text = session::delivery::latest_interaction_in(&history, &locale);
+            let text = crate::render::Conversation::latest(&history, &locale)
+                .map_err(|_| i18n::Message::new("discord.history.too_large"))?;
             self.store
                 .discord_publish(&b, "initial-history", &text, &hashes(&history))
                 .await

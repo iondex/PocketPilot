@@ -60,3 +60,73 @@ fn ui_titles_are_literal_and_emoji_stay_unicode() {
         "\\*\\*title\\*\\* \\<\\#123\\> :custom: 👩‍💻\n1\\. name"
     );
 }
+
+#[test]
+fn each_conversation_part_starts_with_its_role_and_keeps_markdown_and_length_limits() {
+    let item = |role, text: String| session::TextItem {
+        turn_id: "turn".into(),
+        item_id: "item".into(),
+        role,
+        phase: None,
+        text,
+        complete: true,
+        client_id: None,
+        attachments: vec![],
+    };
+    let items = [
+        item(
+            session::Role::User,
+            "# Request\n\n**Question** <@123>".into(),
+        ),
+        item(
+            session::Role::Agent,
+            format!("```rust\n{}\n```", "let a = 1;\n".repeat(200)),
+        ),
+    ];
+    let output = Conversation::changes(items.iter(), "en").unwrap();
+    assert!(output.parts[0].starts_with("👤 **User**\n\n# Request"));
+    assert!(output.parts[0].contains("**Question** \\<@123\\>"));
+    assert!(output.parts.len() > 2);
+    for part in &output.parts[1..] {
+        assert!(part.starts_with("🤖 **Agent** · 💬\n\n```rust\n"));
+        assert!(part.ends_with("```"));
+    }
+    assert!(
+        output
+            .parts
+            .iter()
+            .all(|p| session::markdown::fits(p, 1800))
+    );
+}
+
+#[test]
+fn recent_interaction_uses_role_icons_and_only_confirmed_final_output() {
+    let item = |role, phase: Option<&str>, text: &str| session::TextItem {
+        turn_id: "turn".into(),
+        item_id: "item".into(),
+        role,
+        phase: phase.map(str::to_owned),
+        text: text.into(),
+        complete: true,
+        client_id: None,
+        attachments: vec![],
+    };
+    let mut history = session::History {
+        items: vec![
+            item(session::Role::User, None, "question"),
+            item(session::Role::Agent, Some("commentary"), "working"),
+            item(session::Role::Agent, Some("final_answer"), "**answer**"),
+        ],
+        all_pages_read: true,
+    };
+    let output = Conversation::latest(&history, "zh-CN").unwrap();
+    assert_eq!(
+        output.parts,
+        ["👤 **用户**\n\nquestion", "🤖 **Agent** · ✅\n\n**answer**"]
+    );
+    assert!(!output.text.contains("working"));
+    history.all_pages_read = false;
+    let output = Conversation::latest(&history, "en").unwrap();
+    assert!(output.parts[0].starts_with("ℹ️\n\n"));
+    assert!(!output.text.contains("question") && !output.text.contains("answer"));
+}

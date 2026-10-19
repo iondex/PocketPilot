@@ -248,19 +248,20 @@ impl Store {
         Ok(())
     }
 
-    pub async fn discord_publish(
+    pub(crate) async fn discord_publish(
         &self,
         b: &Binding,
         source: &str,
-        text: &str,
+        output: &crate::render::Conversation,
         observed: &str,
     ) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
         let n=sqlx::query("UPDATE discord_bindings SET observed_items=?,history_ready=1 WHERE bot=? AND guild=? AND channel=? AND revision=? AND active=1 AND observed_items=?")
             .bind(observed).bind(&b.bot).bind(&b.guild).bind(&b.channel).bind(b.revision).bind(&b.observed_items).execute(&mut *tx).await.map_err(|_|Error::Database)?.rows_affected();
-        if n == 1 && !text.is_empty() {
-            sqlx::query("INSERT INTO discord_deliveries(id,bot,guild,channel,source_key,revision,payload,state) VALUES(?,?,?,?,?,?,?,'pending') ON CONFLICT DO NOTHING")
-                .bind(uuid::Uuid::now_v7().to_string()).bind(&b.bot).bind(&b.guild).bind(&b.channel).bind(source).bind(b.revision).bind(text)
+        if n == 1 && !output.parts.is_empty() {
+            let parts = serde_json::to_string(&output.parts).map_err(|_| Error::Database)?;
+            sqlx::query("INSERT INTO discord_deliveries(id,bot,guild,channel,source_key,revision,payload,rendered_parts,state) VALUES(?,?,?,?,?,?,?,?,'pending') ON CONFLICT DO NOTHING")
+                .bind(uuid::Uuid::now_v7().to_string()).bind(&b.bot).bind(&b.guild).bind(&b.channel).bind(source).bind(b.revision).bind(&output.text).bind(parts)
                 .execute(&mut *tx).await.map_err(|_|Error::Database)?;
         }
         tx.commit().await.map_err(|_| Error::Database)
@@ -375,7 +376,15 @@ mod tests {
         };
         store.discord_bind(&b).await.unwrap();
         store
-            .discord_publish(&b, "history", "visible history", "{\"item\":\"hash\"}")
+            .discord_publish(
+                &b,
+                "history",
+                &crate::render::Conversation {
+                    text: "visible history".into(),
+                    parts: vec!["first".into(), "second".into()],
+                },
+                "{\"item\":\"hash\"}",
+            )
             .await
             .unwrap();
         let out = store.discord_pending(1, 2, 0).await.unwrap();
@@ -385,13 +394,11 @@ mod tests {
             .await
             .unwrap();
         let parts = vec!["first".to_string(), "second".to_string()];
-        // Freeze the exact layout before a send; completed prefixes survive recovery.
-        sqlx::query("UPDATE discord_deliveries SET rendered_parts=? WHERE id=?")
-            .bind(serde_json::to_string(&parts).unwrap())
-            .bind(&out[0].id)
-            .execute(&store.pool)
-            .await
-            .unwrap();
+        // Role headers and chunk layout are frozen atomically with publication.
+        assert_eq!(
+            out[0].rendered_parts.as_deref(),
+            Some(serde_json::to_string(&parts).unwrap().as_str()),
+        );
         store.acknowledge_part(&out[0], true).await.unwrap();
         store.discord_recover().await.unwrap();
         let remaining = store

@@ -112,42 +112,38 @@ impl Service {
                 let provider = self.context.connections.get(&snapshot.config, ws).await?;
                 let current = provider.read(&b.thread).await?;
                 engine::connections::require_workspace(&current.cwd, ws)?;
-                let text = if let Command::History { .. } = &r.command {
-                    let _permit = self
-                        .context
-                        .connections
-                        .history_limit(&b.instance)
-                        .await
-                        .acquire_owned()
-                        .await
-                        .map_err(|_| Error::Request)?;
-                    let history = provider
-                        .history(&b.thread)
-                        .await?
-                        .without_transient_errors();
-                    if !history.all_pages_read {
-                        return Err(Error::Ui("slack.error.history"));
-                    }
-                    session::delivery::latest_interaction_in(&history, &self.locale())
-                } else {
-                    format!(
-                        "{}\n{}\n{}",
-                        current.title,
-                        current.status.text_in(&self.locale()),
-                        b.thread
-                    )
-                };
-                self.fresh(r, hash)?;
-                self.bound(r).await?;
                 if matches!(r.command, Command::Status) {
+                    let text = i18n::t!(
+                        "common.session.details",
+                        locale = &self.locale(),
+                        title = session::delivery::short_title(&current.title, 80),
+                        state = render::state(&current.status, &self.locale()),
+                        workspace = &ws.name,
+                    );
+                    self.fresh(r, hash)?;
+                    self.bound(r).await?;
                     self.publish_card(&b, &text, hash, true).await?;
                     return Ok(());
                 }
-                let c = if matches!(r.command, Command::History { .. }) {
-                    render::markdown(text)
-                } else {
-                    render::message(text)
-                };
+                let _permit = self
+                    .context
+                    .connections
+                    .history_limit(&b.instance)
+                    .await
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| Error::Request)?;
+                let history = provider
+                    .history(&b.thread)
+                    .await?
+                    .without_transient_errors();
+                if !history.all_pages_read {
+                    return Err(Error::Ui("slack.error.history"));
+                }
+                let c =
+                    render::conversation(session::presentation::latest(&history, &self.locale()));
+                self.fresh(r, hash)?;
+                self.bound(r).await?;
                 self.store.output(r, &c, hash).await?;
             }
             Command::UnbindConfirm => {
@@ -282,11 +278,12 @@ impl Service {
             };
             self.store.reserve(&b).await?;
             self.fresh(r, hash)?;
-            let text = format!(
-                "{}\n{}\n{}",
-                session::delivery::short_title(&current.title, 80),
-                current.status.text_in(&self.locale()),
-                thread
+            let text = i18n::t!(
+                "common.session.details",
+                locale = &self.locale(),
+                title = session::delivery::short_title(&current.title, 80),
+                state = render::state(&current.status, &self.locale()),
+                workspace = &ws.name,
             );
             b.root = self
                 .api
@@ -299,12 +296,11 @@ impl Service {
         };
         self.fresh(r, hash)?;
         if !b.history_ready {
-            let preview = session::delivery::latest_interaction_in(&history, &self.locale());
-            let text = preview;
+            let sections = session::presentation::latest(&history, &self.locale());
             self.store
                 .publish(
                     &b,
-                    &render::markdown(text),
+                    &render::conversation(sections),
                     &super::observation::hashes(&history)?,
                     hash,
                 )

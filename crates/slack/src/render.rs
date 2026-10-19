@@ -72,7 +72,7 @@ pub fn compact_actions(content: &mut Content) {
 }
 
 pub fn state(status: &session::RuntimeStatus, locale: &str) -> String {
-    status.text_in(locale)
+    session::presentation::status(status, locale)
 }
 
 pub fn button(label: &str, nonce: &str) -> SlackBlock {
@@ -93,6 +93,7 @@ pub fn message(text: String) -> Content {
             vec![plain(&text)]
         },
         text,
+        sections: Vec::new(),
         format: session::markdown::Format::Plain,
         document: false,
         edit: false,
@@ -114,13 +115,52 @@ pub fn markdown(text: String) -> Content {
 }
 
 pub fn parts(content: &Content) -> crate::Result<Vec<Content>> {
+    if !content.sections.is_empty() {
+        if content.text.len() > session::markdown::MAX_BYTES {
+            return Err(crate::Error::Ui("slack.error.history"));
+        }
+        let mut result = Vec::new();
+        for section in &content.sections {
+            let heading = markdown(section.heading.clone());
+            let limit = 2800_usize
+                .checked_sub(section.heading.encode_utf16().count() + 2)
+                .filter(|limit| *limit >= 64)
+                .ok_or(crate::Error::Ui("slack.error.history"))?;
+            let plain_heading = session::markdown::Document::parse(&section.heading)
+                .map_err(|_| crate::Error::Ui("slack.error.history"))?
+                .plain();
+            for mut part in parts_with_limit(&markdown(section.body.clone()), limit)? {
+                part.text = format!("{plain_heading}\n\n{}", part.text);
+                part.blocks.splice(0..0, heading.blocks.clone());
+                result.push(part);
+            }
+        }
+        return Ok(result);
+    }
+    parts_with_limit(content, 2800)
+}
+
+pub fn conversation(sections: Vec<session::presentation::Section>) -> Content {
+    Content {
+        text: sections
+            .iter()
+            .map(|s| s.markdown())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        sections,
+        format: session::markdown::Format::Markdown,
+        ..Content::default()
+    }
+}
+
+fn parts_with_limit(content: &Content, limit: usize) -> crate::Result<Vec<Content>> {
     use session::markdown::{Document, Format, split_text};
-    if content.edit || (!content.blocks.is_empty() && session::markdown::fits(&content.text, 2800))
+    if content.edit || (!content.blocks.is_empty() && session::markdown::fits(&content.text, limit))
     {
         return Ok(vec![content.clone()]);
     }
     if content.format == Format::Plain {
-        return Ok(split_text(&content.text, 2800)
+        return Ok(split_text(&content.text, limit)
             .into_iter()
             .map(message)
             .collect());
@@ -128,7 +168,7 @@ pub fn parts(content: &Content) -> crate::Result<Vec<Content>> {
     let doc =
         Document::parse(&content.text).map_err(|_| crate::Error::Ui("slack.error.history"))?;
     Ok(doc
-        .chunks(1400, 64)
+        .chunks(limit / 2, 64)
         .into_iter()
         .map(|part| Content {
             text: part.plain(),

@@ -11,7 +11,7 @@ pub(super) fn hashes(history: &History) -> Result<String> {
             .map(|i| {
                 (
                     format!("{}:{}:{}", i.turn_id.len(), i.turn_id, i.item_id),
-                    engine::digest(&i.text),
+                    engine::observation::visible_hash(i),
                 )
             })
             .collect::<BTreeMap<_, _>>(),
@@ -92,8 +92,10 @@ impl Service {
                 .items
                 .iter()
                 .filter(|i| {
-                    old.get(&format!("{}:{}:{}", i.turn_id.len(), i.turn_id, i.item_id))
-                        != Some(&engine::digest(&i.text))
+                    !engine::observation::unchanged(
+                        i,
+                        old.get(&format!("{}:{}:{}", i.turn_id.len(), i.turn_id, i.item_id)),
+                    )
                 })
                 .filter(|i| {
                     !(i.role == Role::User
@@ -101,33 +103,20 @@ impl Service {
                             id.starts_with(&format!("pp:slack:{}:", self.store.namespace))
                         }))
                 })
-                .map(|i| {
-                    format!(
-                        "{}\n{}",
-                        i18n::text(
-                            &self.locale(),
-                            if i.role == Role::User {
-                                "common.role.user"
-                            } else {
-                                "common.role.agent"
-                            }
-                        ),
-                        session::content::display(i)
-                    )
-                })
+                .map(|i| session::presentation::Section::item(i, &self.locale()))
                 .collect::<Vec<_>>()
-                .join("\n\n────────\n\n")
         } else {
-            session::delivery::latest_interaction_in(&history, &self.locale())
+            session::presentation::latest(&history, &self.locale())
         };
         self.store
-            .publish(b, &render::markdown(text), &observed, &snapshot.hash)
+            .publish(b, &render::conversation(text), &observed, &snapshot.hash)
             .await?;
-        let text = format!(
-            "{}\n{}\n{}",
-            session::delivery::short_title(&current.title, 80),
-            current.status.text_in(&self.locale()),
-            b.thread
+        let text = i18n::t!(
+            "common.session.details",
+            locale = &self.locale(),
+            title = session::delivery::short_title(&current.title, 80),
+            state = render::state(&current.status, &self.locale()),
+            workspace = &ws.name,
         );
         self.publish_card(b, &text, &snapshot.hash, false).await
     }

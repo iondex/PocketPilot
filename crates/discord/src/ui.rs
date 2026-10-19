@@ -84,28 +84,7 @@ pub fn quoted(text: &str) -> String {
     crate::render::literal(&short(text, 120))
 }
 
-pub fn status(status: &session::RuntimeStatus, locale: &str) -> String {
-    format!("{} {}", status_icon(status), status.text_in(locale))
-}
-
-pub fn status_icon(status: &session::RuntimeStatus) -> &'static str {
-    use session::RuntimeStatus::*;
-    match status {
-        Idle => "🟢",
-        Active {
-            waiting_on_approval: true,
-            ..
-        }
-        | Active {
-            waiting_on_user_input: true,
-            ..
-        } => "🟠",
-        Active { .. } => "🔵",
-        NotLoaded => "💤",
-        SystemError => "🔴",
-        Unknown => "⚪",
-    }
-}
+pub use session::presentation::{status, status_icon};
 
 pub fn updated(time: Option<i64>, locale: &str) -> String {
     let Some(time) = time else {

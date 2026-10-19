@@ -66,6 +66,8 @@ pub struct Request {
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Content {
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<session::presentation::Section>,
     #[serde(default)]
     pub format: session::markdown::Format,
     #[serde(default)]

@@ -17,6 +17,8 @@ pub mod navigation;
 
 pub mod operations;
 
+pub mod observation;
+
 pub mod reload;
 
 pub mod storage;

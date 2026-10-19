@@ -1050,11 +1050,15 @@ async fn session_messages_are_quiet_and_own_inputs_are_not_echoed() {
     let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
     fixture.service.refresh_binding(&binding).await.unwrap();
     let before = fixture.outputs().await;
-    assert!(before.iter().any(|b| b.text.contains("✅ original answer")));
     assert!(
         before
             .iter()
-            .any(|b| b.text.contains("🧑‍💻 original question"))
+            .any(|b| b.text.contains("🤖 **Agent** · ✅\n\noriginal answer"))
+    );
+    assert!(
+        before
+            .iter()
+            .any(|b| b.text.contains("👤 **用户**\n\noriginal question"))
     );
     assert!(before.iter().all(|b| !b.text.contains("thread：")
         && !b.text.contains("用户\n")
@@ -1078,7 +1082,10 @@ async fn session_messages_are_quiet_and_own_inputs_are_not_echoed() {
     fixture.state.lock().await.items.push(serde_json::from_str::<p::ThreadItem>(r#"{"type":"agentMessage","id":"new-answer","text":"Only this reply","phase":"final_answer"}"#).unwrap());
     fixture.service.refresh_binding(&binding).await.unwrap();
     let outputs = fixture.outputs().await;
-    assert_eq!(outputs.last().unwrap().text, "✅ Only this reply");
+    assert_eq!(
+        outputs.last().unwrap().text,
+        "🤖 **Agent** · ✅\n\nOnly this reply"
+    );
     assert!(outputs.iter().all(|b| !b.text.contains("do not echo")
         && !b.text.contains("已追加")
         && !b.text.contains("已开始")));
@@ -1825,11 +1832,13 @@ async fn private_pairing_topic_history_and_steer_form_a_durable_workflow() {
     let bodies = fixture.outputs().await;
     let history = bodies
         .iter()
-        .find(|b| b.text.contains("✅ original answer"))
+        .find(|b| b.text.contains("🤖 **Agent** · ✅\n\noriginal answer"))
         .unwrap();
     assert!(
-        history.text.contains("✅ original answer")
-            && history.text.contains("🧑‍💻 original question")
+        history
+            .text
+            .contains("🤖 **Agent** · ✅\n\noriginal answer")
+            && history.text.contains("👤 **用户**\n\noriginal question")
     );
     assert!(!history.text.contains("must never appear"));
     assert!(
@@ -2031,7 +2040,7 @@ async fn display_and_rate_changes_preserve_authorized_live_outputs() {
     let before = fixture.outputs().await;
     let history = before
         .iter()
-        .find(|b| b.text.contains("✅ original answer"))
+        .find(|b| b.text.contains("🤖 **Agent** · ✅\n\noriginal answer"))
         .unwrap();
     let scope = history.scope.as_ref().unwrap();
     let path = fixture.service.config.path.clone();
@@ -3575,7 +3584,7 @@ async fn native_topic_icons_replace_automatic_status_bubbles_and_agent_markdown_
     let sent = &session_messages[0];
     assert_eq!(sent.parse_mode.as_deref(), Some("HTML"));
     assert!(sent.text.contains("<b>推荐</b>"));
-    assert!(sent.text.starts_with("✅ <b>推荐</b>"));
+    assert!(sent.text.starts_with("🤖 <b>Agent</b> · ✅\n\n<b>推荐</b>"));
     assert!(sent.text.contains("<b>字段说明：</b> 示例。"));
     assert!(sent.text.contains("<b>结论。</b>后续中文。"));
     assert!(sent.text.contains("<b>平台</b>: Android"));
@@ -3756,9 +3765,9 @@ async fn external_inputs_and_phase_changes_are_visible_once_and_keep_original_at
     assert_eq!(outputs.len(), count + 1);
     let body = &outputs.last().unwrap().text;
     assert!(
-        body.contains("🧑‍💻 补充截图")
+        body.contains("👤 **用户**\n\n补充截图")
             && body.contains("📎 image\\.jpg")
-            && body.contains("💭 same text")
+            && body.contains("🤖 **Agent** · 💭\n\nsame text")
     );
     assert!(
         !body.contains("/private/")
@@ -3781,7 +3790,7 @@ async fn external_inputs_and_phase_changes_are_visible_once_and_keep_original_at
             .last()
             .unwrap()
             .text
-            .contains("✅ same text")
+            .contains("🤖 **Agent** · ✅\n\nsame text")
     );
     let count = fixture.outputs().await.len();
     fixture.service.refresh_binding(&binding).await.unwrap();
@@ -3851,7 +3860,7 @@ async fn errors_survive_reopening_storage_and_history_keeps_turn_attribution() {
         fixture
             .service
             .history_summary(&input(2202, 11, "/history"), &latest)
-            .contains("❌ latest failed")
+            .contains("🤖 **Agent** · ❌\n\nlatest failed")
     );
     let isolated = reopened
         .retain_errors(
@@ -3900,8 +3909,8 @@ async fn legacy_cursors_upgrade_without_replaying_old_text_or_sending_transient_
     let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
     fixture.service.refresh_binding(&binding).await.unwrap();
     let old: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::from([
-        ("4:turnu".into(), super::digest("original question")),
-        ("4:turna".into(), super::digest("original answer")),
+        ("4:turnu".into(), engine::digest("original question")),
+        ("4:turna".into(), engine::digest("original answer")),
     ]);
     sqlx::query(
         "UPDATE bindings SET observed_items=? WHERE bot_id=1 AND chat_id=10 AND topic_id=11",
@@ -3929,7 +3938,7 @@ async fn legacy_cursors_upgrade_without_replaying_old_text_or_sending_transient_
         .outputs()
         .await
         .iter()
-        .filter(|b| b.text.starts_with("❌"))
+        .filter(|b| b.text.starts_with("🤖 **Agent** · ❌"))
         .count();
     assert_eq!(count, 0);
     fixture.service.refresh_binding(&binding).await.unwrap();
@@ -3943,7 +3952,7 @@ async fn legacy_cursors_upgrade_without_replaying_old_text_or_sending_transient_
             .outputs()
             .await
             .iter()
-            .filter(|b| b.text.starts_with("❌"))
+            .filter(|b| b.text.starts_with("🤖 **Agent** · ❌"))
             .count(),
         0
     );
@@ -4113,7 +4122,7 @@ async fn native_turn_errors_reach_the_live_outbox_and_explicit_history_without_r
             .last()
             .unwrap()
             .text
-            .contains("❌ upstream service failed")
+            .contains("🤖 **Agent** · ❌\n\nupstream service failed")
     );
     let count = fixture.outputs().await.len();
     fixture.service.refresh_binding(&binding).await.unwrap();
@@ -4178,7 +4187,7 @@ async fn completing_a_turn_does_not_replay_unchanged_commentary_in_the_final_del
     assert_eq!(outputs.len(), before + 1);
     assert_eq!(
         outputs.last().unwrap().text,
-        "✅ final result only",
+        "🤖 **Agent** · ✅\n\nfinal result only",
         "turn completion must not replay already observed progress"
     );
 }
@@ -4195,7 +4204,7 @@ fn visible_cursor_upgrade_ignores_completion_flags_but_preserves_content_and_pha
     item.complete = false;
     let legacy = format!(
         "v2:{}",
-        super::digest(&serde_json::to_string(&item).unwrap())
+        engine::digest(&serde_json::to_string(&item).unwrap())
     );
     let visible = super::visible_hash(&item);
     item.complete = true;

@@ -54,15 +54,15 @@ impl Service {
                 .join("\n\n")
         };
         let mut text = format!(
-            "**{}**\n\n{}\n\n**{}**\n\n{}",
-            i18n::tr(input, "tg.history.user"),
+            "{}\n\n{}\n\n{}\n\n{}",
+            session::presentation::role_heading(session::Role::User, crate::i18n::lang(input)),
             super::messages::user_text(interaction.user),
-            i18n::tr(input, "tg.history.final"),
-            if interaction.answers.is_empty() {
-                answer
-            } else {
-                format!("✅ {answer}")
-            }
+            session::presentation::message_heading(
+                session::Role::Agent,
+                (!interaction.answers.is_empty()).then_some("final_answer"),
+                crate::i18n::lang(input),
+            ),
+            answer
         );
         for error in interaction.errors {
             text.push_str(&format!(

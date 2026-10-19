@@ -54,37 +54,25 @@ impl Service {
             .map_err(|_| i18n::Message::new("error.discord.backend"))?;
         let fresh = hashes(&history);
         let text = if !b.history_ready {
-            session::delivery::latest_interaction_in(&history, locale)
+            crate::render::Conversation::latest(&history, locale)
         } else {
-            history
-                .items
-                .iter()
-                .filter(|i| old.get(&item_key(i)) != Some(&digest(&i.text)))
-                .map(|i| {
-                    format!(
-                        "{}\n{}",
-                        i18n::text(
-                            locale,
-                            if i.role == session::Role::User {
-                                "common.role.user"
-                            } else {
-                                "common.role.agent"
-                            }
-                        ),
-                        session::content::display(i)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n────────\n\n")
-        };
-        if !b.history_ready || !text.is_empty() {
+            crate::render::Conversation::changes(
+                history
+                    .items
+                    .iter()
+                    .filter(|i| !engine::observation::unchanged(i, old.get(&item_key(i)))),
+                locale,
+            )
+        }
+        .map_err(|_| i18n::Message::new("discord.history.too_large"))?;
+        if !b.history_ready || fresh != b.observed_items {
             self.store
                 .discord_publish(b, &format!("items:{}", digest(&fresh)), &text, &fresh)
                 .await
                 .map_err(error)?;
         }
         let card = i18n::t!(
-            "discord.session.details",
+            "common.session.details",
             locale = locale,
             title = session::delivery::short_title(&current.title, 80),
             state = crate::ui::status(&current.status, locale),

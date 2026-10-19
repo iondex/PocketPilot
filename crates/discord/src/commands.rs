@@ -215,7 +215,8 @@ impl Service {
                 connections::require_workspace(&current.cwd, ws).map_err(error)?;
                 if matches!(input.command, Command::Recent) {
                     let history = self.history(provider.as_ref(), ws, &b.thread).await?;
-                    let text = session::delivery::latest_interaction_in(&history, &locale);
+                    let text = crate::render::Conversation::latest(&history, &locale)
+                        .map_err(|_| i18n::Message::new("discord.history.too_large"))?;
                     self.store
                         .discord_publish(
                             &b,
@@ -228,7 +229,7 @@ impl Service {
                     Ok(i18n::text(&locale, "discord.recent.sent"))
                 } else {
                     Ok(i18n::t!(
-                        "discord.session.details",
+                        "common.session.details",
                         locale = &locale,
                         title = current.title,
                         state = crate::ui::status(&current.status, &locale),

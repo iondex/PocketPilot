@@ -1,6 +1,6 @@
-# Slack / Discord：Markdown 与 emoji
+# Slack / Discord / Telegram：Markdown 与 emoji
 
-核验日期：2026-10-19。本文区分平台能力、仓库实现与待验收事项。格式验证使用合成样本，没有向真实聊天发送试验消息。
+核验日期：2026-10-20（UTC+8）。本文区分平台能力、仓库实现与待验收事项。格式验证使用合成样本，没有向真实聊天发送试验消息。平台文档会持续更新，尤其不能将普通消息的限制推及平台另设的富消息 API。
 
 ## 结论
 
@@ -8,7 +8,21 @@
 
 当前菜单和动态标签保持纯文本；Agent 正文共用 `session::markdown`，Slack 输出普通 `rich_text` blocks，Discord 输出支持的 Markdown 子集。两端共享语义，具体排版由客户端决定。[代码：Slack 渲染](../../crates/slack/src/render.rs) · [代码：Discord 发送](../../crates/discord/src/api.rs)
 
-## 1. Slack：需要区分三种文本路径
+### 三端能力与当前使用路径
+
+| 平台与 API 路径 | 常用格式 | 表格 | PocketPilot 当前使用 |
+| --- | --- | --- | --- |
+| Slack `text` / `mrkdwn` | 强调、代码、链接、引用；不是标准 Markdown | 没有 GFM 管道表格语法 | 纯文本 fallback 与少量界面文字 |
+| Slack `rich_text` block | 结构化强调、代码、链接、引用、嵌套列表 | `rich_text` 本身不包含 table 类型 | Agent 正文 |
+| Slack `table` block | 行列、对齐、换行、富文本单元格 | 原生结构化表格，普通 app 可经 `chat.postMessage` 发布 | 尚未使用；当前按列名和值展开 |
+| Slack `markdown` block / `markdown_text` | 标准 Markdown 标题、列表、代码、任务等 | 官方列出标准 Markdown 表格转换 | 尚未使用；两种入口的条件和字段互斥需分别处理 |
+| Discord bot `content` | 标题、强调、代码、链接、列表、引用、剧透等子集 | 无原生 GFM 表格布局；继续转成可读的列名和值 | Agent 正文；不直接发送管道表格 |
+| Telegram `sendMessage` + HTML / MarkdownV2 | 强调、链接、代码、引用、剧透；须专门转义 | 无表格、标准标题或列表结构 | 既有 HTML 渲染；表格按列名和值展开 |
+| Telegram `sendRichMessage` + Rich Markdown / Rich HTML / blocks | 标题、列表、任务、折叠、脚注、公式等结构 | 原生表格，最多 20 列 | 尚未使用；需要独立发送、编辑与分段适配 |
+
+依据 Slack [S1][S3][S4][S7][S8]、Discord [D1][D2]、Telegram [T1][T2][T3]。Discord 官方将正文定义为 Markdown 子集，未将 GFM 表格列为受支持的排版；不能因为文档网页自身使用了表格就推断消息也支持表格。
+
+## 1. Slack：需要区分普通文本、结构化 blocks 与标准 Markdown
 
 ### 普通 Block Kit：`plain_text` 与 `mrkdwn`
 
@@ -36,6 +50,14 @@ Slack 链接例子：`<https://example.com|查看说明>`。直接发送 `[查�
 
 `chat.postMessage` 也列出 `markdown_text`，上限 12,000 字符，与 `text` / `blocks` 互斥。这说明 Slack 已有标准 Markdown API 路径，不能再概括成“Slack 完全不支持标准 Markdown”；但是否适合当前菜单与按钮组合，仍需独立核验，不能把该字段混入现有 `text + blocks` 请求。[S4]
 
+### 普通 bot 可用的结构化文本与原生表格
+
+`rich_text` 是结构化 Block Kit 数据，不接收一段 Markdown 源码。官方优先推荐其用于用户定义的格式化文本；元素包括 section、list、preformatted 和 quote，表格不属于其中一种元素。当前按 Markdown AST 生成 `rich_text` 的路径适合保留，并可精确控制链接和 mention 元素。[S8]
+
+`table` 是另一个独立 block。官方明确普通 app 可在 `chat.postMessage` 的 `blocks` 或 `attachments` 中提供 table；该页没有要求 platform AI features 或专属 AI app 身份。单元格可为 `raw_text`、`raw_number` 或 `rich_text`，后者支持强调、emoji、超链接等。上限为 100 行、每行 20 格；一张表的所有单元格累计不超过 10,000 字符，一条消息中全部表格单元格的累计值也不超过 10,000 字符。可配置列对齐和自动换行。当前文档没有说明“一条消息只能有一张表”，不能沿用旧限制替代现行规则。[S7]
+
+因此，Slack 表格可通过普通 `rich_text` 加独立 `table` blocks 实现，不必先切换到标准 Markdown API。实现时需要在公共解析层保留表格、表头与对齐信息，让 Slack 选择原生表格，Discord 和 Telegram 普通消息选择行式降级；同时重新核对 SDK 类型、分段预算、fallback、消息更新及持久投递 payload，不能仅把展开后的文本重新拼回表格。[S7][S8]
+
 ### 转义、通知与长度
 
 - Slack 使用 `&`、`<`、`>` 作为控制字符；作为普通内容时分别转义为 `&amp;`、`&lt;`、`&gt;`。不要把整段内容做通用 HTML 实体编码。[S1]
@@ -51,7 +73,17 @@ Discord 官方将正文描述为 Markdown 子集。除了上表列出的格式�
 
 `allowed_mentions` 控制哪些用户、角色或 everyone 提及产生通知；官方给出 `parse: []` 作为不解析提及的方式。它解决通知问题，并不把消息正文变成纯文本，也不会阻止星号、链接、引用等 Markdown 被渲染。项目名、目录、session 标题仍需上下文相关的转义。[D3]
 
-## 3. Emoji：Unicode 为默认，平台自定义能力分开处理
+## 3. Telegram：普通消息有限制，新的 Rich Messages 是独立路径
+
+当前使用的普通 `sendMessage` 支持 `parse_mode=HTML`、MarkdownV2 或显式 entities，文字上限为解析后 4,096 字符。官方格式列表包括粗体、斜体、下划线、删除线、剧透、引用、链接、行内代码和代码块；HTML 是白名单标签而非浏览器 HTML，不能发送 `<table>`、`<h1>` 或 `<ul>` 期望获得对应结构。标题可降级为粗体，列表和表格用可读文本表达。[T1]
+
+MarkdownV2 不是 CommonMark：普通文本中 `` _ * [ ] ( ) ~ ` > # + - = | { } . ! `` 等字符必须按官方规则转义，code/pre 和 URL 还有各自规则。继续从解析结构输出 HTML，可避免将 Agent 原文直接当作可信 HTML 或 MarkdownV2。[T1]
+
+但 Telegram 已在 Bot API 10.1（2026-06-11）引入 Rich Messages，10.2 又补充显式输入 blocks。`sendRichMessage` 使用 `InputRichMessage`，其中 `markdown`、`html`、`blocks` 必须三选一；Rich Markdown 与 Rich HTML 支持标题、列表、表格、任务、折叠内容、脚注和公式，不能与普通 `sendMessage.parse_mode` 混为一谈。当前文档限制为文本 32,768 个 UTF-8 字符、500 blocks、嵌套深度 16、表格最多 20 列。`skip_entity_detection=true` 可关闭自动检测 URL、username mention、hashtag 等实体。[T2][T3][T4]
+
+普通 bot 可调用 `sendRichMessage`；文档另述代表 business account 发送时，账号本身也必须能发 rich messages，含媒体的 block 还要求聊天媒体权限。当前仓库尚未采用该 API。升级需要独立处理发送、编辑、SDK DTO、客户端验收、链接/实体策略、分段和持久投递，不应把 Rich HTML 白名单扩展直接套在当前 `parse_mode=HTML` 上。[T2][T3]
+
+## 4. Emoji：Unicode 为默认，平台自定义能力分开处理
 
 | 类型 | Slack | Discord | PocketPilot 建议 |
 | --- | --- | --- | --- |
@@ -68,21 +100,21 @@ Discord 文档说明其桌面/Android 与 iOS 采用不同 emoji 图形资源，
 
 推荐规则：
 
-- workspace、项目和 session 标题保持干净；不自动给每行加装饰 emoji，也不改写用户自带的 emoji。
+- workspace、项目和 session 标题保持干净；消息首行可用一个角色图标辅助分辨来源，正文不自动给每行加装饰 emoji，也不改写用户自带的 emoji。
 - 状态最多一个图标，后接明确文字，例如 `运行中`、`等待确认`、`等待输入`、`连接异常`；`未加载`、`未知` 不应被误解成成功或失败。
 - 操作按钮优先使用动词，如“选择”“打开”“返回项目”；避免连续彩色图标挤占 Slack 按钮和移动端空间。
 - Slack 读取到的 Unicode emoji 可能已经是 shortcode；跨平台转发时可对普通文本节点做受控归一化，未知/自定义 shortcode 保留。不给 code、URL、用户原文执行全局替换；不为展示 Unicode emoji 新增 Slack `emoji:read` 或 Discord 外部 emoji 权限。只有未来确实需要列举自定义 emoji 时，再单独评估最小权限。[S1][S6][D5]
 
 以上为产品建议，并非平台强制规则。
 
-## 4. 当前实现
+## 5. 当前实现
 
 | 层次 | 行为 |
 | --- | --- |
 | 公共解析 | `session::markdown` 使用锁定的 `pulldown-cmark`；共享 Telegram 既有中文粗体与 phase label 兼容处理，不复用 Telegram HTML |
 | 公共边界 | 输入最多 8 MiB、深度 64、解析事件 8,192；过度结构降级为原文字面文本；仅接受无 URL 凭据的 http/https/mailto 链接 |
 | 表格与任务 | 表格转换为“列名：值”的行，保留单元格内的链接与强调；任务标记显示为 Unicode 勾选框 |
-| Slack 正文 | 标题显示粗体 section；强调、引用、代码和列表使用普通 `rich_text` 元素；不生成 User/Broadcast/Channel mention 元素 |
+| Slack 正文 | 标题显示粗体 `rich_text_section`；强调、引用、代码和列表使用普通 `rich_text` 元素；不生成 User/Broadcast/Channel mention 元素；尚未使用原生 table block |
 | Slack fallback | 从文档生成可读纯文本，转义 `& < >`；post/update 显式 `mrkdwn=false`、`link_names=false`，post 禁用自动 URL 解析与 unfurl |
 | Discord 正文 | 生成标题、强调、引用、列表、链接和代码子集；原文中的 Discord 专属提及/剧透语法作为文字，所有发送、编辑和交互保留 `allowed_mentions` 禁用通知 |
 | 菜单与状态 | 动态标题、目录、选项保持字面意义；共享 `RuntimeStatus::text_in` 提供不带图标的状态，Telegram 原有带图标入口保留 |
@@ -92,13 +124,15 @@ Discord 文档说明其桌面/Android 与 iOS 采用不同 emoji 图形资源，
 
 代码依据：[公共解析](../../crates/session/src/markdown.rs)、[Slack 适配](../../crates/slack/src/markdown.rs)、[Slack API](../../crates/slack/src/api.rs)、[Discord 适配](../../crates/discord/src/render.rs)、[Discord Gateway](../../crates/discord/src/gateway.rs)。预算是项目自己的保守阈值，不是平台上限。Unicode emoji 保留原文，自定义 shortcode 不跨平台猜测转换，不增加 emoji 权限。
 
-## 5. 验证与后续范围
+## 6. 验证与后续范围
 
 本地测试覆盖中文标点粗体、嵌套强调、HTML 字面文本、安全链接、代码、任务清单、表格降级、emoji/组合字符、UTF-16 长度，附件下载预算、原生文件写入，以及 SDK 请求的通知保护、旧 outbox 默认值和分段恢复。Telegram 既有 HTML 渲染行为保留并纳入全 workspace 回归。Slack 的 `blocks.validate` 已接受覆盖 section、链接、有序列表、引用及带语言代码块的合成 payload；该只读校验不等同于桌面/移动端视觉验收。
 
 长文字以多个普通消息连续显示。投递前固定各段内容并持久保存；每段回执后记录下一个段号，重启从未发送段继续。当前段回执未知则停留在 outcome_unknown，不重发已确认段或未知段。段间复用原平台的发送预算和绑定/权限检查。桌面/移动端显示和实际通知仍需按 [Slack 操作指南](../slack-setup.md)、[Discord 测试指南](../testing-discord.md) 由用户触发验收。
 
 第三方库的维护、许可和适配范围见 [选型核验](markdown-libraries.md)。
+
+本次已重新读取 Slack Markdown、Table、Rich text、`chat.postMessage`，Discord API Reference / Message Resource，以及 Telegram Bot API 当前官方页面。Discord 的帮助中心格式指南 [D2] 本次复取返回 403，保留既有官方引用；不把“官方没有列出表格”写成“本次实机测试过所有客户端均不支持”。原生 Slack 表格与 Telegram Rich Messages 尚未通过当前 app 的请求或客户端验收，本文核验的是官方接口能力。
 
 Discord 若后续需要更完整的结构化菜单，可单独评估 Components V2：Text Display 支持 Markdown、mentions 和 emoji，并受 `allowed_mentions` 控制。但启用消息 flag `IS_COMPONENTS_V2`（`1 << 15`）后不能撤销，该消息不再使用传统 `content` / `embeds`，附件也需要相应 File 组件。它不是给当前纯文字消息直接加一个开关的无成本升级，不应与本轮通用正文解析绑在一起。[D6]
 
@@ -112,9 +146,15 @@ Components V2 仍为后续选项；当前实现没有新增权限，客户端视
 - [S4：Slack chat.postMessage](https://docs.slack.dev/reference/methods/chat.postMessage/)
 - [S5：Slack Section block](https://docs.slack.dev/reference/block-kit/blocks/section-block/)
 - [S6：Slack emoji.list](https://docs.slack.dev/reference/methods/emoji.list/)
+- [S7：Slack Table block](https://docs.slack.dev/reference/block-kit/blocks/table-block/)
+- [S8：Slack Rich text block](https://docs.slack.dev/reference/block-kit/blocks/rich-text-block/)
 - [D1：Discord Reference — Message Formatting](https://docs.discord.com/developers/reference#message-formatting)
 - [D2：Discord Markdown Text 101](https://support.discord.com/hc/en-us/articles/210298617-Markdown-Text-101-Chat-Formatting-Bold-Italic-Underline)
 - [D3：Discord Message Resource](https://docs.discord.com/developers/resources/message)
 - [D4：Discord Emoji Resource](https://docs.discord.com/developers/resources/emoji)
 - [D5：Discord Permissions](https://docs.discord.com/developers/topics/permissions)
 - [D6：Discord Components Reference](https://docs.discord.com/developers/components/reference)
+- [T1：Telegram Bot API — Formatting options](https://core.telegram.org/bots/api#formatting-options)
+- [T2：Telegram Bot API — Rich Message Formatting Options](https://core.telegram.org/bots/api#rich-message-formatting-options)
+- [T3：Telegram Bot API — InputRichMessage / sendRichMessage](https://core.telegram.org/bots/api#inputrichmessage)
+- [T4：Telegram Bot API — Recent changes](https://core.telegram.org/bots/api#recent-changes)

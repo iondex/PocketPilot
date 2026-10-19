@@ -169,7 +169,7 @@ _version: 1
 "discord.unbound": "已解除 channel 映射，会话继续运行。"
 "discord.renamed": "channel 显示名已更新。"
 "discord.input.accepted": "已发送，回复会显示在当前会话。"
-"discord.session.details": "%{title}\n%{state}\n项目：%{workspace}"
+"common.session.details": "💬 %{title}\n%{state}\n📁 项目：%{workspace}"
 "discord.session.added": "会话已打开 · %{state}\n进入 <#%{channel}>，使用 /pp-ask 发送任务或上传文件。"
 "discord.card.pending": "状态卡发送中；若结果未知请使用 /pp-status"
 "discord.card.offline": "连接未知 · 请刷新 /pp-status"

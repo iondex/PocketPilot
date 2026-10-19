@@ -945,3 +945,49 @@ async fn recovery_waits_for_socket_readiness_and_rearms_confirmation_after_recon
     stop.send(true).unwrap();
     work.await.unwrap().unwrap();
 }
+
+#[test]
+fn conversation_parts_repeat_roles_keep_rich_text_and_fit_mobile_message_budgets() {
+    let content = crate::render::conversation(vec![
+        session::presentation::Section {
+            heading: session::presentation::role_heading(session::Role::User, "en"),
+            body: "**Question** <@123>".into(),
+        },
+        session::presentation::Section {
+            heading: session::presentation::message_heading(
+                session::Role::Agent,
+                Some("final_answer"),
+                "en",
+            ),
+            body: format!(
+                "| Name | Value |\n|---|---|\n| **Alpha** | [docs](https://example.com) |\n\n```rust\n{}\n```",
+                "let a = 1;\n".repeat(400)
+            ),
+        },
+    ]);
+    let parts = crate::render::parts(&content).unwrap();
+    assert!(parts.len() > 2);
+    assert!(parts[0].text.starts_with("👤 User\n\n"));
+    assert!(
+        parts[1..]
+            .iter()
+            .all(|part| part.text.starts_with("🤖 Agent · ✅\n\n"))
+    );
+    assert!(
+        parts
+            .iter()
+            .all(|part| session::markdown::fits(&part.text, 2800))
+    );
+    let wire = serde_json::to_string(&parts[1].blocks).unwrap();
+    assert!(wire.contains("Alpha") && wire.contains("https://example.com"));
+    assert!(parts.iter().any(|part| {
+        serde_json::to_string(&part.blocks)
+            .unwrap()
+            .contains("rich_text_preformatted")
+    }));
+    assert!(
+        !serde_json::to_string(&parts[0].blocks)
+            .unwrap()
+            .contains("\"type\":\"user\"")
+    );
+}

@@ -56,7 +56,11 @@ pub(super) fn error_text(item: &TextItem, locale: &str) -> String {
     } else {
         item.text.clone()
     };
-    format!("❌ {}", escape_markdown(&text))
+    format!(
+        "{}\n\n{}",
+        session::presentation::message_heading(item.role, item.phase.as_deref(), locale),
+        escape_markdown(&text),
+    )
 }
 
 pub(super) fn render(item: &TextItem, locale: &str) -> String {
@@ -66,15 +70,15 @@ pub(super) fn render(item: &TextItem, locale: &str) -> String {
     if item.is_error() {
         return error_text(item, locale);
     }
-    if item.role == Role::User {
-        return format!("🧑‍💻 {}", user_text(item));
-    }
-    let icon = match item.phase.as_deref() {
-        Some("final_answer") => "✅",
-        Some("commentary" | "partial_answer" | "plan") => "💭",
-        _ => "💬",
+    let body = if item.role == Role::User {
+        user_text(item)
+    } else {
+        item.text.trim_start_matches(['\r', '\n']).to_owned()
     };
-    format!("{icon} {}", item.text.trim_start_matches(['\r', '\n']))
+    format!(
+        "{}\n\n{body}",
+        session::presentation::message_heading(item.role, item.phase.as_deref(), locale),
+    )
 }
 
 pub(super) fn initial(
@@ -250,7 +254,10 @@ mod tests {
             ],
         };
         let preview = initial(&history, true, &HashSet::new(), "en", 1200);
-        assert!(preview.contains("Current request") && preview.contains("💭 Current progress"));
+        assert!(
+            preview.contains("Current request")
+                && preview.contains("🤖 **Agent** · 💭\n\nCurrent progress")
+        );
         assert!(!preview.contains("Earlier"));
     }
 }
