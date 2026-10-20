@@ -20,8 +20,16 @@ enum Discovery {
     ),
 }
 
-pub async fn watch(context: Context, mut stop: watch::Receiver<bool>) {
+pub async fn watch(context: Context, stop: watch::Receiver<bool>) {
     let catalog = Catalog::new(context.store.pool().clone());
+    watch_catalog(context, catalog, stop).await;
+}
+
+pub(crate) async fn watch_catalog(
+    context: Context,
+    catalog: Catalog,
+    mut stop: watch::Receiver<bool>,
+) {
     let mut next = HashMap::<String, Instant>::new();
     let mut busy = HashSet::<String>::new();
     let mut jobs = JoinSet::new();

@@ -15,6 +15,9 @@ mod listing;
 #[path = "mutations.rs"]
 mod mutations;
 
+#[path = "retry.rs"]
+mod retry;
+
 pub use mapping::runtime;
 
 #[derive(Clone)]
@@ -23,16 +26,19 @@ pub struct Codex {
     client: Client,
     control: bool,
     errors: crate::errors::Errors,
+    changes: tokio::sync::watch::Receiver<()>,
 }
 
 impl Codex {
     pub fn new(instance: String, client: Client) -> Self {
-        let errors = crate::errors::listen(&client);
+        let (sender, changes) = tokio::sync::watch::channel(());
+        let errors = crate::errors::listen(&client, sender);
         Self {
             instance,
             client,
             control: false,
             errors,
+            changes,
         }
     }
 
@@ -62,6 +68,17 @@ impl From<Error> for ProviderError {
 
 #[async_trait::async_trait]
 impl AgentProvider for Codex {
+    fn session_changes(&self) -> Option<tokio::sync::watch::Receiver<()>> {
+        Some(self.changes.clone())
+    }
+
+    async fn retryable_failure(
+        &self,
+        thread: &str,
+    ) -> Result<Option<session::retry::RetryableFailure>, ProviderError> {
+        self.latest_retryable_failure(thread).await
+    }
+
     fn capabilities(&self) -> Capabilities {
         // A schema match alone does not certify live observation or lifecycle safety.
         Capabilities {

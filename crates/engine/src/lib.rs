@@ -21,6 +21,8 @@ pub mod observation;
 
 pub mod reload;
 
+pub mod retry;
+
 pub mod storage;
 
 pub fn digest(text: &str) -> String {

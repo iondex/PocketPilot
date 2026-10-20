@@ -46,8 +46,9 @@ cargo build --release --workspace --locked
 
 ## 约定
 
+- 独立 [retry 工具](docs/retry.md)：`./dist/pocketpilot retry` 监控全部允许的会话，对并发限制、服务过载等最终失败等待 60 秒后发送“继续”，自动发现会话并跟踪启停。与 `serve` 分开运行，账本和进程锁独立。
 - 业务写入仅创建、用户发起的 resume、续轮和带 expectedTurnId 的 steer；没有停止、取消、审批代答或 agent 服务管理接口。
-- 启停、崩溃、重连和配置 reload 只改变桥接连接，不自动恢复或重发 agent 输入；结果未知时先核对。
+- `serve` 的启停、崩溃、重连和配置 reload 只改变桥接连接；自动续轮由独立 retry 工具负责，结果未知的输入始终不重发。
 - 默认只读。provider 的 control_verified 是针对该共享执行实例的部署确认；doctor --connect 本身只检查连接。
 - SSH 使用系统 OpenSSH 的有效配置、known_hosts、心跳和认证链；TOTP seed 保留在根 TOML，通过受限 askpass responder 回答已配置的挑战。ProxyJump 和 ProxyCommand 都继承原生配置。
 - host/认证/速率由根配置热更新；provider 和 workspace 由 SQLite catalog 动态管理，支持在线新增/移除。Codex binary/socket 自动探测；原容器不能换绑其他 session。

@@ -8,14 +8,30 @@ use std::{
 
 pub(crate) type Errors = Arc<Mutex<VecDeque<(String, TextItem)>>>;
 
-pub(crate) fn listen(client: &Client) -> Errors {
+pub(crate) fn listen(client: &Client, changes: tokio::sync::watch::Sender<()>) -> Errors {
     let cache: Errors = Arc::new(Mutex::new(VecDeque::new()));
     let errors = cache.clone();
     let mut events = client.subscribe();
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
         runtime.spawn(async move {
             loop {
-                match events.recv().await {
+                let event = events.recv().await;
+                if let Ok(event) = &event
+                    && matches!(
+                        event.method.as_str(),
+                        "thread/started"
+                            | "thread/closed"
+                            | "thread/archived"
+                            | "thread/unarchived"
+                            | "thread/status/changed"
+                            | "turn/started"
+                            | "turn/completed"
+                            | "error"
+                    )
+                {
+                    changes.send_replace(());
+                }
+                match event {
                     Ok(event) if event.method == "error" && event.request_id.is_none() => {
                         let Some(raw) = event.params else {
                             continue;
@@ -135,7 +151,7 @@ mod tests {
             Box::new(crate::transport::JsonLines::new(read, write, None)),
             std::time::Duration::from_secs(1),
         );
-        let cache = listen(&client);
+        let cache = listen(&client, tokio::sync::watch::channel(()).0);
         let mut server = Framed::new(remote, LinesCodec::new());
         let notification = r#"{"method":"error","params":{"threadId":"thread","turnId":"turn","willRetry":true,"error":{"message":"network problem","additionalDetails":"private diagnostics"}}}"#;
         for _ in 0..2 {

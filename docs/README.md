@@ -22,6 +22,7 @@
 | 查事实与限制 | [Codex 探索](research/codex-app-server.md)、[资料](research/sources.md) | 静态观察、来源、版本差异和未验证能力 |
 | 更换开发机 | [迁移指南](migration.md) | 私有配置、SQLite 账本、SSH、共享实例、切换与验收 |
 | 构建和体积 | [构建说明](build.md) | release profile、体积评估、保留的运行能力 |
+| 自动重试 | [retry 工具](retry.md) | 错误分类、全会话发现、60 秒等待、去重和启动方式 |
 | 后期扩展 | [Lark 与 Claude](future/integrations.md) | 可行性与候选实现，不构成首版已支持能力 |
 
 公开的 [配置示例](../pocketpilot.example.toml) 是字段和默认值的唯一示例来源；设计文档不再维护另一份大段 TOML。当前程序可验证并读取该配置；示例 SSH alias、允许的项目根路径和 token 需填写；bin/socket 自动探测，provider/workspace 动态保存；不设置 chat/user 允许列表。

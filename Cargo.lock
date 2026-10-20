@@ -3045,6 +3045,7 @@ dependencies = [
  "pulldown-cmark",
  "serde",
  "thiserror 2.0.21",
+ "tokio",
  "unicode-segmentation",
  "url",
 ]

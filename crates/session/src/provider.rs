@@ -1,7 +1,7 @@
 use crate::{Capabilities, History, Page, Session, SessionQuery};
 use serde::{Deserialize, Serialize};
 
-/// The complete mutation vocabulary. Background observers have no lifecycle actions.
+/// The complete mutation vocabulary. Ordinary background observers have no lifecycle actions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Mutation {
@@ -98,7 +98,20 @@ pub trait AgentProvider: Send + Sync {
 
     async fn history(&self, thread: &str) -> Result<History, ProviderError>;
 
-    /// Called only for a durably recorded, freshly authorized user action.
+    /// Wake observers on lifecycle changes; polling remains necessary after event loss.
+    fn session_changes(&self) -> Option<tokio::sync::watch::Receiver<()>> {
+        None
+    }
+
+    /// Inspect only the latest terminal turn, never an error quoted in message text.
+    async fn retryable_failure(
+        &self,
+        _thread: &str,
+    ) -> Result<Option<crate::retry::RetryableFailure>, ProviderError> {
+        Err(ProviderError::Unsupported)
+    }
+
+    /// Called only for a durably recorded user action or an explicitly enabled retry policy.
     async fn execute(&self, _mutation: Mutation) -> Result<Receipt, ProviderError> {
         Err(ProviderError::Unsupported)
     }

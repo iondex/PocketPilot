@@ -12,6 +12,7 @@ i18n.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 unicode-segmentation.workspace = true
 
 [lints]

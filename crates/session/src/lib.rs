@@ -14,5 +14,7 @@ pub mod presentation;
 
 pub mod provider;
 
+pub mod retry;
+
 pub use model::*;
 pub use provider::{AgentProvider, ProviderError};

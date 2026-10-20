@@ -33,6 +33,8 @@ enum Command {
     },
     /// Run configured integrations until Ctrl-C or SIGTERM.
     Serve,
+    /// Monitor all permitted Codex sessions and retry terminal service failures after 60 seconds.
+    Retry,
     /// Validate configuration and diagnose capabilities. Network probes require explicit flags.
     Doctor(crate::doctor::Options),
     /// List configured hosts or discover candidate SSH aliases without logging in.
@@ -123,6 +125,8 @@ pub enum Error {
     #[error(transparent)]
     Service(#[from] app::runtime::Error),
     #[error(transparent)]
+    Retry(#[from] app::retry::Error),
+    #[error(transparent)]
     Config(#[from] config::ConfigError),
     #[error(transparent)]
     Rpc(#[from] codex::Error),
@@ -157,6 +161,7 @@ impl ::i18n::LocalizedError for Error {
             Self::SSH(error) => ::i18n::LocalizedError::message(error),
             Self::TOTP(error) => ::i18n::LocalizedError::message(error),
             Self::Service(error) => ::i18n::LocalizedError::message(error),
+            Self::Retry(error) => ::i18n::LocalizedError::message(error),
             Self::Config(error) => ::i18n::LocalizedError::message(error),
             Self::Rpc(error) => ::i18n::LocalizedError::message(error),
             Self::Provider(error) => ::i18n::LocalizedError::message(error),
@@ -233,6 +238,7 @@ async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Re
     match args.command {
         Command::SSHAskpass { .. } => unreachable!(),
         Command::Serve => app::runtime::run(args.config).await?,
+        Command::Retry => app::retry::run(args.config).await?,
         Command::Doctor(options) => print(&crate::doctor::inspect(&config, &options).await?)?,
         Command::Pair { command } => {
             let store = telegram::pairing::Registry::open(&config.service.data_dir).await?;
@@ -360,6 +366,23 @@ fn transport_name(kind: TransportKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_is_explicit_and_can_run_without_chat_integrations() {
+        assert!(matches!(
+            Arguments::try_parse_from(["pocketpilot", "retry"])
+                .unwrap()
+                .command,
+            Command::Retry
+        ));
+        assert!(matches!(
+            Arguments::try_parse_from(["pocketpilot", "serve"])
+                .unwrap()
+                .command,
+            Command::Serve
+        ));
+        assert!(Arguments::try_parse_from(["pocketpilot", "serve", "--retry"]).is_err());
+    }
 
     #[test]
     fn doctor_combines_offline_checks_with_explicit_network_flags() {

@@ -118,7 +118,7 @@ pub async fn run(path: PathBuf) -> Result<(), Error> {
     result
 }
 
-async fn shutdown_signal() {
+pub(crate) async fn shutdown_signal() {
     #[cfg(unix)]
     {
         if let Ok(mut signal) =
