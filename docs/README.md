@@ -17,7 +17,7 @@
 | 接入 Slack | [安装与测试](slack-setup.md)、[Slack 方案](design/slack.md)、[平台边界](research/slack-platform-boundaries.md) | Socket Mode、owner 私聊/thread、权限、ACK 与去重 |
 | 接入本地 Desktop | [本地会话说明](design/local-desktop.md) | 当前限制、已确认入口与后续共享部署验证 |
 | 做配置和连接 | [连接与配置](design/connections-and-config.md) | 根目录单一 TOML、内联 token、CLI 私聊配对、SSH config、OTP、热更新、生命周期 |
-| 处理 Markdown 与 emoji | [两端格式核对](research/chat-formatting.md) | 平台语法、正文渲染、状态图标、mention 与当前实现差距 |
+| 处理 Markdown 与 emoji | [三端格式核对](research/chat-formatting.md)、[Slack 富消息](research/slack-rich-messages.md)、[Discord 富消息](research/discord-rich-messages.md)、[Telegram 富消息](research/telegram-rich-messages.md) | 平台语法、结构化消息、正文渲染、状态图标、mention 与当前实现差距 |
 | 做历史与投递 | [历史与消息](design/history-and-delivery.md) | 最后输入/最终输出、单条历史集合、合并、附件与限速 |
 | 查事实与限制 | [Codex 探索](research/codex-app-server.md)、[资料](research/sources.md) | 静态观察、来源、版本差异和未验证能力 |
 | 更换开发机 | [迁移指南](migration.md) | 私有配置、SQLite 账本、SSH、共享实例、切换与验收 |

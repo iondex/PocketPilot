@@ -8,6 +8,22 @@
 
 当前菜单和动态标签保持纯文本；Agent 正文共用 `session::markdown`，Slack 输出普通 `rich_text` blocks，Discord 输出支持的 Markdown 子集。两端共享语义，具体排版由客户端决定。[代码：Slack 渲染](../../crates/slack/src/render.rs) · [代码：Discord 发送](../../crates/discord/src/api.rs)
 
+### 富消息的能力上限与选择
+
+Telegram 的 `markdown`、`html`、`blocks` 是同一富消息模型的三种输入编码，不能简单按样式数量排成三档。纯 Markdown 标记便于书写；Rich HTML 提供对应块类型的白名单标签，Rich Markdown 又允许嵌入这些标签。`blocks` 的优势是精确、类型化地控制结构和字段，而不是所有高级块都只接受 JSON。逐字段、客户端呈现的完全等价不能仅凭有对应标签就认定。详见 [Telegram 三种输入比较](telegram-rich-messages.md)。
+
+跨平台应追求共同语义和各端最充分的展示能力，而不是把所有端都限制到最小 Markdown 子集。平台能力、适合 PocketPilot 的选择和当前是否实现应分开记录：
+
+| 平台 | 建议探索的完整展示路径 | 当前实现到目标的主要差距 |
+| --- | --- | --- |
+| Slack | 结构化 Block Kit：正文 `rich_text`，原生 `table` / `data_table`、图表 `data_visualization`、任务 `plan` / `task_card`，以及可折叠容器和卡片轮播 | 当前只生成普通正文和菜单块；锁定 SDK 已有多种新块 DTO，但公共解析会提前将表格展开为行，须先保留结构 |
+| Discord | Components V2 原生布局加 Discord Markdown；传统 embeds / content 按消息用途另行选择 | 当前仍是传统 content/components；锁定 Serenity 0.12.5 未包含 V2 builders，须补齐类型化支持及新消息布局版本 |
+| Telegram | `sendRichMessage` + `blocks` 作为程序生成目标；简单正文可用 Rich Markdown，复杂文本也可使用受支持 HTML 标签 | 当前仍用 `sendMessage` HTML；锁定 teloxide-core 0.13.0 未包含 RichMessage DTO，须补齐发送、编辑、topic 和分段适配 |
+
+平台官方能力和消息限制分别见 [Slack 富消息](slack-rich-messages.md)、[Discord 富消息](discord-rich-messages.md)、[Telegram 富消息](telegram-rich-messages.md)。这里的“完整”指各平台可表达的消息结构，不代表任意 HTML/CSS、任意组件可混合，或当前 app 已实机验证全部能力。
+
+接入顺序建议先做 Slack 原生表格，再接 Telegram 富消息，最后评估 Discord V2 布局。公共 Markdown 文档保留表格、单元格格式和对齐等信息，在平台渲染时再选择原生结构或行式降级；不直接信任 Agent 生成的平台 HTML/组件 JSON。角色和阶段提示继续来自 `session::presentation`。每端在入队/首次投递前固定其布局版本和分段结果，继续保留作用域验证、mentions 控制及未知结果不重发的约束。平台允许媒体展示不改变当前附件“用户上传给 Codex”和不导出历史的产品范围。
+
 ### 三端能力与当前使用路径
 
 | 平台与 API 路径 | 常用格式 | 表格 | PocketPilot 当前使用 |
@@ -69,7 +85,7 @@ Slack 链接例子：`<https://example.com|查看说明>`。直接发送 `[查�
 
 Discord 官方将正文描述为 Markdown 子集。除了上表列出的格式，官方帮助还列出下划线、块引用、较小字号的 subtext，以及 `||剧透||`；这些都不是 Slack `mrkdwn` 的通用能力。代码块的语言高亮与各客户端的具体呈现需独立验收。[D1][D2]
 
-普通 Create Message 的 `content` 上限为 2,000 字符；不能把用户端某些订阅权益视为 bot API 的更大额度。Embed 可以用于结构化展示，但也有独立字段限制及总计 6,000 字符限制，并非无限长 Markdown 容器。[D3]
+Message 正文文档将 `content` 上限列为 2,000 字符，但本次读取的官方 OpenAPI 将 `MessageCreateRequest.content` 列为 4,000，webhook 仍为 2,000。主源存在差异，PocketPilot 继续保持渲染后 1,800 的保守预算，不据此扩大投递长度；不能把用户订阅权益直接当作 bot API 额度。Embed 有独立字段限制及总计 6,000 字符限制。Components V2 的单组件、整消息布局和互斥规则见 [Discord 专项研究](discord-rich-messages.md)。[D3]
 
 `allowed_mentions` 控制哪些用户、角色或 everyone 提及产生通知；官方给出 `parse: []` 作为不解析提及的方式。它解决通知问题，并不把消息正文变成纯文本，也不会阻止星号、链接、引用等 Markdown 被渲染。项目名、目录、session 标题仍需上下文相关的转义。[D3]
 
