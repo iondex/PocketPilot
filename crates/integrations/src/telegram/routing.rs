@@ -17,29 +17,13 @@ impl Service {
         config: &'a Config,
         id: &str,
     ) -> Result<&'a Workspace, Error> {
-        if let Some(workspace) = config.workspaces.iter().find(|w| w.id == id) {
-            return Ok(workspace);
-        }
-        let (host, name) = id.split_once('/').map_or((None, id), |(h, w)| (Some(h), w));
-        let mut matches = config.workspaces.iter().filter(|w| {
-            (w.id == name || w.short_name == name || w.name == name)
-                && host.is_none_or(|selected| {
-                    config.providers.iter().any(|p| {
-                        p.id == w.provider_id
-                            && config.hosts.iter().any(|h| {
-                                h.id == p.host_id
-                                    && (h.id == selected
-                                        || h.name == selected
-                                        || h.ssh_alias.as_deref() == Some(selected))
-                            })
-                    })
-                })
-        });
-        let workspace = matches.next().ok_or(runtimes::Error::Selection)?;
-        if matches.next().is_some() {
-            return Err(Error::AmbiguousWorkspace);
-        }
-        Ok(workspace)
+        crate::navigation::Navigator::new(config)
+            .parent(id)
+            .map(|selected| selected.project)
+            .map_err(|error| match error {
+                crate::navigation::Error::Ambiguous => Error::AmbiguousWorkspace,
+                crate::navigation::Error::Selection => runtimes::Error::Selection.into(),
+            })
     }
 
     pub(super) fn binding_workspace<'a>(

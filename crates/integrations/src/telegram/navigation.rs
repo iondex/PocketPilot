@@ -17,20 +17,14 @@ mod topics;
 #[path = "new_session.rs"]
 mod new_session;
 
-#[path = "workspace_picker.rs"]
-mod workspace_picker;
+#[path = "catalog.rs"]
+mod catalog;
+
+const HOST_PAGE_SIZE: usize = 8;
+
+const PROJECT_PAGE_SIZE: usize = 8;
 
 impl Service {
-    async fn refresh_catalog_snapshot(
-        &self,
-        catalog: &engine::catalog::Catalog,
-    ) -> Result<Arc<Snapshot>, Error> {
-        let mut config = self.config.snapshot().config.clone();
-        catalog.load(&mut config).await?;
-        self.config.publish_catalog(config)?;
-        Ok(self.config.snapshot())
-    }
-
     async fn show_navigation(
         &self,
         input: &Input,
@@ -71,43 +65,83 @@ impl Service {
     }
 
     pub(super) async fn workspaces(&self, input: &Input, snapshot: &Snapshot) -> Result<(), Error> {
-        let mut choices: Vec<_> = snapshot
-            .config
-            .hosts
+        self.host_page(input, snapshot, 0, false).await
+    }
+
+    pub(super) async fn host_page(
+        &self,
+        input: &Input,
+        snapshot: &Snapshot,
+        offset: usize,
+        creating: bool,
+    ) -> Result<(), Error> {
+        let page = crate::navigation::Navigator::new(&snapshot.config)
+            .workspaces_page(offset, HOST_PAGE_SIZE);
+        let mut choices: Vec<_> = page
+            .items
             .iter()
-            .map(|host| Choice {
-                label: format!(
-                    "{} {}",
-                    if matches!(host.transport, engine::config::TransportKind::SSHProxy) {
-                        "🌐"
+            .map(|view| {
+                let host = view.host;
+                Choice {
+                    label: format!(
+                        "{} {}",
+                        if matches!(host.transport, engine::config::TransportKind::SSHProxy) {
+                            "🌐"
+                        } else {
+                            "💻"
+                        },
+                        host.name
+                    )
+                    .into(),
+                    action: if creating {
+                        Action::NewHost {
+                            id: host.id.clone(),
+                        }
                     } else {
-                        "💻"
+                        Action::Host {
+                            id: host.id.clone(),
+                        }
                     },
-                    host.name
-                )
-                .into(),
-                action: Action::Host {
-                    id: host.id.clone(),
-                },
+                }
             })
             .collect();
-        choices.push(Choice {
-            label: UiText::id("tg.new.heading"),
-            action: Action::NewSession,
-        });
-        choices.push(Choice {
-            label: UiText::id("tg.topics.heading"),
-            action: Action::Topics { after: 0 },
-        });
+        if let Some(offset) = page.next {
+            choices.push(Choice {
+                label: UiText::id("nav.next"),
+                action: host_page_action(offset, creating),
+            });
+        }
+        if !creating {
+            choices.extend([
+                Choice {
+                    label: UiText::id("tg.new.heading"),
+                    action: Action::NewSession,
+                },
+                Choice {
+                    label: UiText::id("tg.topics.heading"),
+                    action: Action::Topics { after: 0 },
+                },
+            ]);
+        }
         self.show_navigation(
             input,
             snapshot,
             Menu {
-                heading: UiText::id("tg.nav.hosts_heading"),
-                note: UiText::id("tg.nav.hosts_note"),
+                heading: UiText::id(if creating {
+                    "tg.new.heading"
+                } else {
+                    "tg.nav.hosts_heading"
+                }),
+                note: UiText::id(if creating {
+                    "tg.new.choose_host"
+                } else {
+                    "tg.nav.hosts_note"
+                }),
                 choices,
-                back: Action::Home,
-                refresh: Action::Home,
+                back: page
+                    .previous
+                    .map_or(Action::Home, |offset| host_page_action(offset, creating)),
+                refresh: host_page_action(page.offset, creating),
                 scope: None,
             },
         )
@@ -131,12 +165,17 @@ impl Service {
         offset: usize,
     ) -> Result<(), Error> {
         let (snapshot, incomplete) = self.workspace_snapshot(input, snapshot, id).await?;
-        let Some(host) = snapshot.config.hosts.iter().find(|h| h.id == id) else {
+        let Ok(view) = crate::navigation::Navigator::new(&snapshot.config).projects_page(
+            id,
+            offset,
+            PROJECT_PAGE_SIZE,
+        ) else {
             return self.workspaces(input, &snapshot).await;
         };
-        let page = workspace_picker::page(&snapshot.config, id, offset);
+        let host = view.host;
+        let page = view.projects;
         let mut choices: Vec<_> = page
-            .entries
+            .items
             .iter()
             .map(|w| Choice {
                 label: format!("📁 {}", w.name).into(),
@@ -156,7 +195,10 @@ impl Service {
             });
         }
         let mut note = crate::telegram::i18n::tr(input, "tg.nav.workspace_actions");
-        note.push_str(&format!("\n\n{}", page.counter(input)));
+        note.push_str(&format!(
+            "\n\n{}",
+            navigation_model::page_counter(&page, crate::telegram::i18n::lang(input))
+        ));
         if incomplete {
             note.push_str(&format!(
                 "\n{}",
@@ -175,14 +217,12 @@ impl Service {
                 .into(),
                 note: note.into(),
                 choices,
-                back: if page.offset > 0 {
-                    Action::HostPage {
+                back: page
+                    .previous
+                    .map_or(Action::Home, |offset| Action::HostPage {
                         id: id.into(),
-                        offset: page.offset.saturating_sub(workspace_picker::PAGE_SIZE),
-                    }
-                } else {
-                    Action::Home
-                },
+                        offset,
+                    }),
                 refresh: Action::HostPage {
                     id: id.into(),
                     offset: page.offset,
@@ -200,13 +240,19 @@ impl Service {
         id: &str,
         cursor: Option<String>,
     ) -> Result<(), Error> {
-        let Ok(workspace) = self.workspace(&snapshot.config, id) else {
-            return self.workspaces(input, snapshot).await;
+        let loaded = match crate::navigation::Navigator::new(&snapshot.config)
+            .sessions_page(&self.store, &self.runtimes, id, cursor.clone(), 6)
+            .await
+        {
+            Err(runtimes::Error::Selection) => return self.workspaces(input, snapshot).await,
+            result => result?,
         };
-        let provider = self.runtimes.get(&snapshot.config, workspace).await?;
-        let page =
-            runtimes::list_picker(&self.store, provider.as_ref(), workspace, cursor.clone(), 6)
-                .await?;
+        let workspace = loaded.selection.project;
+        let host = loaded.selection.host.id.clone();
+        let project_offset = crate::navigation::Navigator::new(&snapshot.config)
+            .project_offset(&workspace.id, PROJECT_PAGE_SIZE)
+            .map_err(|_| runtimes::Error::Selection)?;
+        let page = loaded.sessions;
         let mut choices = page
             .data
             .into_iter()
@@ -238,13 +284,6 @@ impl Service {
                 },
             });
         }
-        let host = snapshot
-            .config
-            .providers
-            .iter()
-            .find(|p| p.id == workspace.provider_id)
-            .map(|p| p.host_id.clone())
-            .ok_or(runtimes::Error::Selection)?;
         self.show_navigation(
             input,
             snapshot,
@@ -257,7 +296,10 @@ impl Service {
                 .into(),
                 note: String::new().into(),
                 choices,
-                back: Action::Host { id: host },
+                back: Action::HostPage {
+                    id: host,
+                    offset: project_offset,
+                },
                 refresh: Action::Workspace {
                     id: workspace.id.clone(),
                     cursor,
@@ -351,6 +393,8 @@ impl Service {
     ) -> Result<(), Error> {
         match action {
             Action::Home => self.workspaces(input, snapshot).await,
+            Action::HomePage { offset } => self.host_page(input, snapshot, offset, false).await,
+            Action::NewHostsPage { offset } => self.host_page(input, snapshot, offset, true).await,
             Action::NewSession => self.new_hosts(input, snapshot).await,
             Action::NewHost { id } => self.new_workspaces(input, snapshot, &id).await,
             Action::NewHostPage { id, offset } => {
@@ -692,5 +736,14 @@ impl Service {
         let mut routed = input.clone();
         routed.config_hash = Some(next.hash.clone());
         self.workspaces(&routed, &next).await
+    }
+}
+
+fn host_page_action(offset: usize, creating: bool) -> Action {
+    match (creating, offset) {
+        (false, 0) => Action::Home,
+        (true, 0) => Action::NewSession,
+        (false, offset) => Action::HomePage { offset },
+        (true, offset) => Action::NewHostsPage { offset },
     }
 }

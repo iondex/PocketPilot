@@ -149,7 +149,7 @@ impl Service {
         snapshot: &'a Snapshot,
         id: &str,
     ) -> Result<&'a engine::config::Workspace> {
-        engine::navigation::Navigator::new(&snapshot.config)
+        crate::navigation::Navigator::new(&snapshot.config)
             .parent(id)
             .map(|selection| selection.project)
             .map_err(|_| Error::Ui("error.navigation.selection"))

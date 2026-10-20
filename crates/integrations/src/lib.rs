@@ -3,6 +3,8 @@ mod contracts;
 
 pub use contracts::{AttachmentSource, Context, Integration, IntegrationError, Platform};
 
+pub mod navigation;
+
 pub mod rendering;
 
 pub mod network;

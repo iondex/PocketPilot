@@ -69,6 +69,8 @@ impl Menu {
         let compact = matches!(
             self.refresh,
             Action::Home
+                | Action::HomePage { .. }
+                | Action::NewHostsPage { .. }
                 | Action::Host { .. }
                 | Action::HostPage { .. }
                 | Action::NewSession
@@ -85,7 +87,9 @@ impl Menu {
             );
             let paging = matches!(
                 choice.action,
-                Action::HostPage { .. }
+                Action::HomePage { .. }
+                    | Action::NewHostsPage { .. }
+                    | Action::HostPage { .. }
                     | Action::NewHostPage { .. }
                     | Action::Workspace {
                         cursor: Some(_),
@@ -121,4 +125,15 @@ impl Menu {
         );
         rows
     }
+}
+
+/// Native counter text uses the same bounded page used to generate the choices.
+pub(super) fn page_counter<T>(page: &crate::navigation::Page<T>, locale: &str) -> String {
+    ::i18n::t!(
+        "tg.workspace.page",
+        locale = locale,
+        start = if page.total == 0 { 0 } else { page.offset + 1 },
+        end = page.offset + page.items.len(),
+        total = page.total
+    )
 }

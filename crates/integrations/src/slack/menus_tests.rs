@@ -30,6 +30,13 @@ async fn workspace_then_project_menus_filter_scope_and_update_the_existing_scree
                     updated_at: None,
                 });
             }
+            let mut recent = config.workspaces[0].clone();
+            recent.id = "recent-alpha".into();
+            recent.name = "ZZ recent project".into();
+            recent.short_name = "recent".into();
+            recent.cwd = "/projects/alpha-recent".into();
+            recent.updated_at = Some(500);
+            config.workspaces.push(recent);
             config.validate()?;
             Ok(engine::reload::ParsedConfig {
                 config,
@@ -117,8 +124,12 @@ async fn workspace_then_project_menus_filter_scope_and_update_the_existing_scree
     assert_eq!(groups.len(), 1);
     assert_eq!(
         groups[0].options.len(),
-        1,
+        2,
         "projects from Beta must not appear under Alpha"
+    );
+    assert_eq!(
+        serde_json::to_value(&groups[0].options[0].text).unwrap()["text"],
+        "ZZ recent project"
     );
     let nonce = &groups[0].options[0].value;
     let (selected, _) = service
@@ -138,7 +149,7 @@ async fn workspace_then_project_menus_filter_scope_and_update_the_existing_scree
         .unwrap()
         .unwrap();
     assert!(
-        matches!(selected.command, Command::Sessions { workspace, .. } if workspace == "project-alpha")
+        matches!(selected.command, Command::Sessions { workspace, .. } if workspace == "recent-alpha")
     );
     assert_eq!(selected.menu_message.as_deref(), Some("100.000001"));
     assert!(

@@ -87,6 +87,12 @@ impl ::i18n::LocalizedError for Error {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Action {
     Home,
+    HomePage {
+        offset: usize,
+    },
+    NewHostsPage {
+        offset: usize,
+    },
     Host {
         id: String,
     },

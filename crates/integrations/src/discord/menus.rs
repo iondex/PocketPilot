@@ -3,10 +3,8 @@ use crate::discord::{
     Api, Command, Input,
     ui::{self, Screen, View},
 };
-use engine::{
-    navigation::{self, Navigator},
-    reload::Snapshot,
-};
+use crate::navigation::Navigator;
+use engine::reload::Snapshot;
 
 #[path = "menu_model.rs"]
 mod model;
@@ -115,11 +113,7 @@ impl Service {
 
     fn workspace_screen(&self, input: &Input, snapshot: &Snapshot, offset: usize) -> Menu {
         let locale = self.locale(input);
-        let page = navigation::page(
-            Navigator::new(&snapshot.config).workspaces(),
-            offset,
-            PAGE_SIZE,
-        );
+        let page = Navigator::new(&snapshot.config).workspaces_page(offset, PAGE_SIZE);
         let mut menu = Menu::new(
             format!(
                 "**🌐 {}**\n{}",
@@ -168,9 +162,9 @@ impl Service {
     ) -> Result<Menu> {
         let locale = self.locale(input);
         let view = Navigator::new(&snapshot.config)
-            .workspace(workspace)
+            .projects_page(workspace, offset, PAGE_SIZE)
             .map_err(error)?;
-        let page = navigation::page(view.projects, offset, PAGE_SIZE);
+        let page = view.projects;
         let mut menu = Menu::new(
             format!(
                 "**📁 {}**\n{}",
@@ -241,27 +235,22 @@ impl Service {
         mut cursors: Vec<Option<String>>,
     ) -> Result<Menu> {
         let locale = self.locale(input);
-        let selected = Navigator::new(&snapshot.config)
-            .parent(project)
-            .map_err(error)?;
-        let ws = selected.project;
         if cursors.is_empty() {
             cursors.push(None);
         }
-        let provider = self
-            .runtimes
-            .get(&snapshot.config, ws)
+        let loaded = Navigator::new(&snapshot.config)
+            .sessions_page(
+                &self.store,
+                &self.runtimes,
+                project,
+                cursors.last().cloned().flatten(),
+                8,
+            )
             .await
             .map_err(error)?;
-        let page = engine::runtimes::list_picker(
-            &self.store,
-            provider.as_ref(),
-            ws,
-            cursors.last().cloned().flatten(),
-            8,
-        )
-        .await
-        .map_err(error)?;
+        let selected = loaded.selection;
+        let ws = selected.project;
+        let page = loaded.sessions;
         let mut menu = Menu::new(
             format!(
                 "**💬 {}**\n{} › {}\n{}",
@@ -311,14 +300,8 @@ impl Service {
         }
         menu.empty_hint(&locale, "discord.sessions.empty");
         let project_offset = Navigator::new(&snapshot.config)
-            .workspace(&selected.host.id)
-            .map_err(error)?
-            .projects
-            .iter()
-            .position(|p| p.id == project)
-            .unwrap_or(0)
-            / PAGE_SIZE
-            * PAGE_SIZE;
+            .project_offset(&ws.id, PAGE_SIZE)
+            .map_err(error)?;
         menu.button(
             "discord.ui.back_projects",
             View::Projects {

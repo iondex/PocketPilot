@@ -11,8 +11,6 @@ pub mod uploads;
 
 pub mod model;
 
-pub mod navigation;
-
 pub mod operations;
 
 pub mod observation;

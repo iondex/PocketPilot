@@ -2,6 +2,8 @@ use super::*;
 use crate::slack::render;
 use slack_morphism::prelude::*;
 
+const PROJECT_PAGE_SIZE: usize = 80;
+
 impl Service {
     pub(super) async fn workspace_menu(
         &self,
@@ -11,11 +13,7 @@ impl Service {
         offset: usize,
     ) -> Result<()> {
         let locale = self.locale();
-        let page = engine::navigation::page(
-            engine::navigation::Navigator::new(&snapshot.config).workspaces(),
-            offset,
-            8,
-        );
+        let page = crate::navigation::Navigator::new(&snapshot.config).workspaces_page(offset, 8);
         let mut c = render::message(i18n::text(&locale, "slack.workspaces"));
         c.blocks = vec![
             render::header(&i18n::text(&locale, "slack.workspaces.choose")),
@@ -100,11 +98,11 @@ impl Service {
             return self.workspace_menu(r, hash, snapshot, 0).await;
         }
         let locale = self.locale();
-        let view = engine::navigation::Navigator::new(&snapshot.config)
-            .workspace(host)
+        let view = crate::navigation::Navigator::new(&snapshot.config)
+            .projects_page(host, offset, PROJECT_PAGE_SIZE)
             .map_err(|_| Error::Ui("error.navigation.selection"))?;
         let host = view.host;
-        let page = engine::navigation::page(view.projects, offset, 80);
+        let page = view.projects;
         let mut options = Vec::new();
         for ws in page.items {
             let nonce = self
@@ -192,20 +190,21 @@ impl Service {
         cursor: Option<String>,
     ) -> Result<()> {
         let locale = self.locale();
-        let selected = engine::navigation::Navigator::new(&snapshot.config)
-            .parent(workspace)
+        let loaded = crate::navigation::Navigator::new(&snapshot.config)
+            .sessions_page(
+                &self.store.core,
+                &self.context.runtimes,
+                workspace,
+                cursor.clone(),
+                8,
+            )
+            .await?;
+        let ws = loaded.selection.project;
+        let host = loaded.selection.host;
+        let page = loaded.sessions;
+        let project_offset = crate::navigation::Navigator::new(&snapshot.config)
+            .project_offset(&ws.id, PROJECT_PAGE_SIZE)
             .map_err(|_| Error::Ui("error.navigation.selection"))?;
-        let ws = selected.project;
-        let host = selected.host;
-        let provider = self.context.runtimes.get(&snapshot.config, ws).await?;
-        let page = engine::runtimes::list_picker(
-            &self.store.core,
-            provider.as_ref(),
-            ws,
-            cursor.clone(),
-            8,
-        )
-        .await?;
         self.fresh(r, hash)?;
         let mut c = render::message(ws.name.clone());
         let mut summary = Vec::new();
@@ -288,7 +287,7 @@ impl Service {
                 "slack.menu.back",
                 Action::Run(Command::Projects {
                     host: host.id.clone(),
-                    offset: 0,
+                    offset: project_offset,
                 }),
             )
             .await?,

@@ -137,12 +137,16 @@ impl Service {
             let action: Action = serde_json::from_str(&body).map_err(|_| Error::Expired)?;
             return match action {
                 Action::Home => self.workspaces(input, &snapshot).await,
+                Action::HomePage { offset } => {
+                    self.host_page(input, &snapshot, offset, false).await
+                }
                 Action::Host { id } => self.host_workspaces(input, &snapshot, &id).await,
                 Action::HostPage { id, offset } => {
                     self.host_workspace_page(input, &snapshot, &id, offset)
                         .await
                 }
                 Action::NewSession
+                | Action::NewHostsPage { .. }
                 | Action::NewHost { .. }
                 | Action::NewHostPage { .. }
                 | Action::NewPrompt { .. }

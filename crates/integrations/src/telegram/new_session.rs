@@ -7,30 +7,7 @@ impl Service {
         input: &Input,
         snapshot: &Snapshot,
     ) -> Result<(), Error> {
-        let choices = snapshot
-            .config
-            .hosts
-            .iter()
-            .map(|host| Choice {
-                label: format!("🌐 {}", host.name).into(),
-                action: Action::NewHost {
-                    id: host.id.clone(),
-                },
-            })
-            .collect();
-        self.show_navigation(
-            input,
-            snapshot,
-            Menu {
-                heading: UiText::id("tg.new.heading"),
-                note: UiText::id("tg.new.choose_host"),
-                choices,
-                back: Action::Home,
-                refresh: Action::NewSession,
-                scope: None,
-            },
-        )
-        .await
+        self.host_page(input, snapshot, 0, true).await
     }
 
     pub(super) async fn new_workspaces(
@@ -50,12 +27,17 @@ impl Service {
         offset: usize,
     ) -> Result<(), Error> {
         let (snapshot, incomplete) = self.workspace_snapshot(input, snapshot, host_id).await?;
-        let Some(host) = snapshot.config.hosts.iter().find(|h| h.id == host_id) else {
+        let Ok(view) = crate::navigation::Navigator::new(&snapshot.config).projects_page(
+            host_id,
+            offset,
+            PROJECT_PAGE_SIZE,
+        ) else {
             return self.new_hosts(input, &snapshot).await;
         };
-        let page = super::workspace_picker::page(&snapshot.config, host_id, offset);
+        let host = view.host;
+        let page = view.projects;
         let mut choices: Vec<_> = page
-            .entries
+            .items
             .iter()
             .map(|w| Choice {
                 label: format!("📁 {}", w.name).into(),
@@ -76,7 +58,7 @@ impl Service {
         let mut note = format!(
             "{}\n\n{}",
             crate::telegram::i18n::tr(input, "tg.new.choose_workspace"),
-            page.counter(input)
+            navigation_model::page_counter(&page, crate::telegram::i18n::lang(input))
         );
         if incomplete {
             note.push_str(&format!(
@@ -96,16 +78,12 @@ impl Service {
                 .into(),
                 note: note.into(),
                 choices,
-                back: if page.offset > 0 {
-                    Action::NewHostPage {
+                back: page
+                    .previous
+                    .map_or(Action::NewSession, |offset| Action::NewHostPage {
                         id: host_id.into(),
-                        offset: page
-                            .offset
-                            .saturating_sub(super::workspace_picker::PAGE_SIZE),
-                    }
-                } else {
-                    Action::NewSession
-                },
+                        offset,
+                    }),
                 refresh: Action::NewHostPage {
                     id: host.id.clone(),
                     offset: page.offset,
@@ -121,12 +99,10 @@ impl Service {
         config: &engine::config::Config,
         workspace: &Workspace,
     ) -> Result<String, Error> {
-        let host = config
-            .providers
-            .iter()
-            .find(|p| p.id == workspace.provider_id)
-            .and_then(|p| config.hosts.iter().find(|h| h.id == p.host_id))
-            .ok_or(runtimes::Error::Selection)?;
+        let host = crate::navigation::Navigator::new(config)
+            .parent(&workspace.id)
+            .map_err(|_| runtimes::Error::Selection)?
+            .host;
         Ok(format!("{} › {}", host.name, workspace.name))
     }
 

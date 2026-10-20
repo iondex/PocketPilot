@@ -1,4 +1,4 @@
-//! Native Discord navigation payloads. Catalog rules remain in engine::navigation.
+//! Native Discord navigation payloads. Catalog rules remain in integrations::navigation.
 use serde::{Deserialize, Serialize};
 use twilight_model::channel::message::{
     Component,

@@ -15,14 +15,14 @@ impl Service {
         environment: &str,
         project: &str,
     ) -> Result<&'a Workspace> {
-        engine::navigation::Navigator::new(config)
+        crate::navigation::Navigator::new(config)
             .project(environment, project)
             .map(|selection| selection.project)
             .map_err(error)
     }
 
     pub(super) fn workspace<'a>(&self, config: &'a Config, id: &str) -> Result<&'a Workspace> {
-        engine::navigation::Navigator::new(config)
+        crate::navigation::Navigator::new(config)
             .parent(id)
             .map(|selection| selection.project)
             .map_err(error)

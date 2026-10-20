@@ -4881,3 +4881,38 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
         p::ThreadStatus::Active(_)
     ));
 }
+
+#[tokio::test]
+async fn host_pages_are_bounded_in_both_browsing_and_creation_without_agent_requests() {
+    let fixture = Fixture::new().await;
+    fixture.pair().await;
+    let file = &fixture.service.config.path;
+    let mut text = std::fs::read_to_string(file).unwrap();
+    for index in 0..9 {
+        text.push_str(&format!("\n[[hosts]]\nid='host-{index}'\nname='ZZ host {index:02}'\ntransport='local_proxy'\nallowed_workspace_roots=['/workspace']\n"));
+    }
+    std::fs::write(file, text).unwrap();
+    fixture.service.config.reload().unwrap();
+    fixture
+        .service
+        .handle(&input(2400, 0, "/start"))
+        .await
+        .unwrap();
+    let first = fixture.outputs().await.pop().unwrap();
+    assert!(menu_labels(&first).contains("下一页"));
+    assert!(!menu_labels(&first).contains("ZZ host 08"));
+    fixture.choose(2401, "9").await;
+    let second = fixture.outputs().await.pop().unwrap();
+    assert!(menu_labels(&second).contains("ZZ host 08"));
+    assert!(!menu_labels(&second).contains("下一页"));
+    fixture
+        .service
+        .handle(&input(2402, 9, "/new"))
+        .await
+        .unwrap();
+    fixture.choose(2403, "9").await;
+    let second = fixture.outputs().await.pop().unwrap();
+    assert!(menu_labels(&second).contains("ZZ host 08"));
+    assert!(!menu_labels(&second).contains("下一页"));
+    assert!(fixture.state.lock().await.requests.is_empty());
+}

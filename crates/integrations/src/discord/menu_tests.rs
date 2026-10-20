@@ -30,13 +30,14 @@ fn parse(
                 id: format!("raw-project-{host}-{index}"),
                 provider_id: id.clone(),
                 name: format!("Project {index:02}"),
-                short_name: format!("project-{index}"),
+                short_name: format!("project-{host}-{index}"),
                 cwd: format!("/projects/{host}/{index}"),
                 additional_cwds: vec![],
                 updated_at: None,
             });
         }
     }
+    config.validate()?;
     Ok(engine::reload::ParsedConfig {
         config,
         restart_key: String::new(),
@@ -283,4 +284,26 @@ fn labels_and_paths_fit_native_mobile_controls_with_emoji_and_literal_titles() {
         )
         .contains("🟠")
     );
+}
+
+#[tokio::test]
+async fn project_controls_follow_the_shared_activity_order() {
+    let (_dir, _server, service, api) = fixture().await;
+    let mut config = service.config.snapshot().config.clone();
+    let recent = config
+        .workspaces
+        .iter_mut()
+        .find(|p| p.name == "Project 22")
+        .unwrap();
+    recent.updated_at = Some(500);
+    service.config.publish_catalog(config).unwrap();
+    let mut request = input();
+    request.command = Command::Projects {
+        workspace: "environment-alpha".into(),
+    };
+    let screen = service
+        .menu_screen(&api, request, None, None)
+        .await
+        .unwrap();
+    assert_eq!(selector(&screen).1[0]["label"], "Project 22");
 }
