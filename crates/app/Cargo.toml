@@ -11,12 +11,12 @@ name = "pocketpilot"
 path = "src/main.rs"
 
 [dependencies]
+connections = { path = "../connections" }
+adapters = { path = "../adapters" }
 i18n.workspace = true
 integrations = { path = "../integrations" }
 engine = { path = "../engine" }
-ssh = { path = "../ssh" }
 session = { path = "../session" }
-codex = { path = "../codex" }
 clap.workspace = true
 secrecy.workspace = true
 serde.workspace = true

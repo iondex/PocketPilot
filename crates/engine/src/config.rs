@@ -167,7 +167,7 @@ impl Default for Timeouts {
     }
 }
 
-pub use ssh::config::{Authentication, TOTP};
+pub use connections::ssh::config::{Authentication, TOTP};
 
 pub use crate::model::{Provider, Workspace};
 
@@ -284,7 +284,8 @@ impl Config {
             return Err(ConfigError::Duplicate);
         }
         for host in &self.hosts {
-            ssh::auth::validate(&host.authentication).map_err(|_| ConfigError::Invalid)?;
+            connections::ssh::auth::validate(&host.authentication)
+                .map_err(|_| ConfigError::Invalid)?;
             let t = &host.timeouts;
             if [
                 t.connect_seconds,
@@ -316,7 +317,7 @@ impl Config {
                     if !host
                         .ssh_alias
                         .as_deref()
-                        .is_some_and(ssh::resolve::valid_alias)
+                        .is_some_and(connections::ssh::resolve::valid_alias)
                     {
                         return Err(ConfigError::Invalid);
                     }

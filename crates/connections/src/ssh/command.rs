@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::ssh::Error;
 use std::{path::PathBuf, time::Duration};
 use tokio::process::Command;
 
@@ -15,7 +15,7 @@ pub struct Options {
 }
 
 pub fn command(options: Options, remote: String) -> Result<Command, Error> {
-    if !crate::resolve::valid_alias(&options.alias) {
+    if !crate::ssh::resolve::valid_alias(&options.alias) {
         return Err(Error::Endpoint);
     }
     let mut command = Command::new("ssh");

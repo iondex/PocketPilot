@@ -1,6 +1,7 @@
 //! Uses the installed Codex binary with an isolated home and a local model fixture.
 //! Never connects to a user daemon, reads user credentials or calls a paid model.
-use crate::{Client, Codex, Connection};
+use crate::codex::{Client, Codex};
+use connections::{Endpoint, Host, Program};
 use session::{AgentProvider, RuntimeStatus, SessionQuery, provider::Mutation};
 use std::{process::Stdio, time::Duration};
 use tokio::process::Command;
@@ -15,7 +16,7 @@ const SSE: &str = concat!(
     "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"fixture-response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
 );
 
-async fn connect(connection: &Connection) -> Result<Client, crate::Error> {
+async fn connect(connection: &Endpoint) -> Result<Client, crate::codex::Error> {
     Client::connect(
         connection.clone(),
         Duration::from_secs(2),
@@ -83,12 +84,20 @@ supports_websockets = false
     drop(reservation);
     let socket = home.path().join("control.sock");
     let connection = if proxy {
-        Connection::LocalProxy {
-            binary: binary.clone(),
-            socket: socket.clone(),
+        Endpoint::Proxy {
+            host: Host::Local,
+            program: Program {
+                binary: binary.clone(),
+                arguments: vec![
+                    "app-server".into(),
+                    "proxy".into(),
+                    "--sock".into(),
+                    socket.to_string_lossy().into_owned(),
+                ],
+            },
         }
     } else {
-        Connection::Websocket {
+        Endpoint::Websocket {
             endpoint: endpoint.clone(),
         }
     };
@@ -182,7 +191,7 @@ supports_websockets = false
     let observer = Codex::new("fixture".into(), connect(&connection).await.unwrap());
     let metadata = observer
         .client()
-        .call(&crate::protocol::ThreadReadParams {
+        .call(&crate::codex::protocol::ThreadReadParams {
             thread_id: thread.clone(),
             include_turns: Some(false),
         })
@@ -220,7 +229,7 @@ supports_websockets = false
     if !list.data.iter().any(|t| t.reference.thread == thread) {
         let raw = observer
             .client()
-            .call(&crate::protocol::ThreadReadParams {
+            .call(&crate::codex::protocol::ThreadReadParams {
                 thread_id: thread.clone(),
                 include_turns: Some(false),
             })
@@ -228,7 +237,7 @@ supports_websockets = false
             .unwrap();
         let all = observer
             .client()
-            .call(&crate::protocol::ThreadListParams {
+            .call(&crate::codex::protocol::ThreadListParams {
                 limit: Some(10),
                 use_state_db_only: Some(false),
                 ..Default::default()
@@ -276,12 +285,12 @@ supports_websockets = false
         if state.status == RuntimeStatus::SystemError {
             let turns = reconnected
                 .client()
-                .call(&crate::protocol::ThreadTurnsListParams {
+                .call(&crate::codex::protocol::ThreadTurnsListParams {
                     thread_id: thread.clone(),
                     cursor: None,
                     limit: Some(10),
                     sort_direction: None,
-                    items_view: Some(crate::protocol::TurnItemsView::Full),
+                    items_view: Some(crate::codex::protocol::TurnItemsView::Full),
                 })
                 .await
                 .unwrap();

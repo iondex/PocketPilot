@@ -38,7 +38,7 @@ twilight-util = { version = "=0.17.0", default-features = false, features = ["bu
 serenity = { version = "0.12", default-features = false, features = ["builder", "client", "gateway", "http", "model", "rustls_backend"] }
 
 [dev-dependencies]
-codex = { path = "../codex" }
+adapters = { path = "../adapters" }
 tempfile.workspace = true
 toml.workspace = true
 wiremock = "0.6"

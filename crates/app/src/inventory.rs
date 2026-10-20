@@ -10,7 +10,7 @@ use tokio::{sync::watch, task::JoinSet, time::Instant};
 enum Discovery {
     Endpoints(
         String,
-        Result<Vec<codex::discovery::Endpoint>, codex::Error>,
+        Result<Vec<adapters::ServerEndpoint>, adapters::codex::Error>,
     ),
     Workspaces(String, Result<WorkspaceDiscovery, engine::runtimes::Error>),
 }

@@ -6,12 +6,33 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-codex = { path = "../codex" }
-session = { path = "../session" }
-serde.workspace = true
 async-trait.workspace = true
+base64.workspace = true
+connections = { path = "../connections" }
+futures-util.workspace = true
+i18n.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_path_to_error = "0.1"
+session = { path = "../session" }
 thiserror.workspace = true
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+wiremock = "0.6"
 
 [lints]
 workspace = true
+
+[build-dependencies]
+prettyplease = "0.2"
+schemars = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+syn = "2"
+typify = "0.5"

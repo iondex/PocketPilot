@@ -1,5 +1,5 @@
 //! Codex provider capabilities and read-only session observation.
-use crate::{Client, Error, protocol as p};
+use crate::codex::{Client, Error, protocol as p};
 use mapping::{summary, turn_items};
 use session::provider::{Mutation, Receipt};
 use session::{
@@ -22,12 +22,12 @@ pub struct Codex {
     instance: String,
     client: Client,
     control: bool,
-    errors: crate::errors::Errors,
+    errors: crate::codex::errors::Errors,
 }
 
 impl Codex {
     pub fn new(instance: String, client: Client) -> Self {
-        let errors = crate::errors::listen(&client);
+        let errors = crate::codex::errors::listen(&client);
         Self {
             instance,
             client,
@@ -178,7 +178,7 @@ impl AgentProvider for Codex {
                 }
             }
             return Ok(History {
-                items: crate::errors::merge(&self.errors, thread, items),
+                items: crate::codex::errors::merge(&self.errors, thread, items),
                 all_pages_read: true,
             });
         }
@@ -227,7 +227,7 @@ impl AgentProvider for Codex {
             }
         }
         Ok(History {
-            items: crate::errors::merge(&self.errors, thread, items),
+            items: crate::codex::errors::merge(&self.errors, thread, items),
             all_pages_read,
         })
     }

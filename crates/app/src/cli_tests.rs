@@ -1,0 +1,49 @@
+use super::*;
+
+#[test]
+fn doctor_combines_offline_checks_with_explicit_network_flags() {
+    let args = Arguments::try_parse_from([
+        "pocketpilot",
+        "doctor",
+        "--credentials",
+        "--connect",
+        "--telegram",
+        "--discord",
+    ])
+    .unwrap();
+    assert!(matches!(
+        args.command,
+        Command::Doctor(crate::doctor::Options {
+            credentials: true,
+            connect: true,
+            telegram: true,
+            discord: true,
+        })
+    ));
+    let args = Arguments::try_parse_from(["pocketpilot", "doctor"]).unwrap();
+    assert!(matches!(
+        args.command,
+        Command::Doctor(crate::doctor::Options {
+            credentials: false,
+            connect: false,
+            telegram: false,
+            discord: false,
+        })
+    ));
+    assert!(Arguments::try_parse_from(["pocketpilot", "config-check"]).is_err());
+}
+
+#[test]
+fn cli_errors_keep_their_type_and_render_the_selected_language() {
+    let english = Failure {
+        error: Error::Provider(session::ProviderError::Rejected(-32600)),
+        locale: "en".into(),
+    };
+    let chinese = Failure {
+        error: Error::Provider(session::ProviderError::Rejected(-32600)),
+        locale: "zh-CN".into(),
+    };
+    assert!(english.to_string().contains("provider rejected"));
+    assert!(chinese.to_string().contains("执行服务拒绝"));
+    assert!(english.to_string().contains("-32600") && chinese.to_string().contains("-32600"));
+}

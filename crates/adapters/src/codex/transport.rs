@@ -1,7 +1,8 @@
-use crate::rpc::Error;
+use crate::codex::rpc::Error;
 use async_trait::async_trait;
+use connections::{Connection as _, Endpoint};
 use futures_util::{SinkExt, StreamExt};
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::process::Stdio;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite},
     process::{Child, Command},
@@ -16,27 +17,6 @@ use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 
 pub const MAX_FRAME: usize = 64 * 1024 * 1024;
 
-#[derive(Clone, Debug)]
-pub enum Connection {
-    LocalProxy { binary: String, socket: PathBuf },
-    SSHProxy(SSHOptions),
-    Websocket { endpoint: String },
-}
-
-#[derive(Clone, Debug)]
-pub struct SSHOptions {
-    pub alias: String,
-    pub config: Option<PathBuf>,
-    pub binary: String,
-    pub socket: Option<String>,
-    pub connect_timeout: Duration,
-    pub keepalive_seconds: u64,
-    pub keepalive_missed: u32,
-    pub askpass: Option<PathBuf>,
-    pub max_auth_attempts: u32,
-    pub authentication_methods: Vec<String>,
-}
-
 #[async_trait]
 pub(crate) trait Wire: Send {
     async fn send(&mut self, text: String) -> Result<(), Error>;
@@ -44,42 +24,14 @@ pub(crate) trait Wire: Send {
     async fn receive(&mut self) -> Result<Option<String>, Error>;
 }
 
-pub(crate) async fn connect(connection: Connection) -> Result<Box<dyn Wire>, Error> {
-    match connection {
-        Connection::LocalProxy { binary, socket } => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::FileTypeExt;
-                if !std::fs::metadata(&socket).is_ok_and(|m| m.file_type().is_socket()) {
-                    return Err(Error::Endpoint);
-                }
-            }
-            let mut command = Command::new(binary);
-            command.args(["app-server", "proxy", "--sock"]).arg(socket);
+/// Host access is shared; the WebSocket handshake and frame limits are Codex-specific.
+pub(crate) async fn connect(endpoint: Endpoint) -> Result<Box<dyn Wire>, Error> {
+    match endpoint {
+        Endpoint::Proxy { host, program } => {
+            let command = host.command(&program).map_err(|_| Error::Endpoint)?;
             spawn_proxy(command).await
         }
-        Connection::SSHProxy(options) => {
-            let mut remote = format!("{} app-server proxy", quote(&options.binary)?);
-            if let Some(socket) = options.socket {
-                remote.push_str(&format!(" --sock {}", quote(&socket)?));
-            }
-            let command = ssh::command(
-                ssh::Options {
-                    alias: options.alias,
-                    config: options.config,
-                    connect_timeout: options.connect_timeout,
-                    keepalive_seconds: options.keepalive_seconds,
-                    keepalive_missed: options.keepalive_missed,
-                    askpass: options.askpass,
-                    max_auth_attempts: options.max_auth_attempts,
-                    authentication_methods: options.authentication_methods,
-                },
-                remote,
-            )
-            .map_err(|_| Error::Endpoint)?;
-            spawn_proxy(command).await
-        }
-        Connection::Websocket { endpoint } => {
+        Endpoint::Websocket { endpoint } => {
             let parsed = url::Url::parse(&endpoint).map_err(|_| Error::Endpoint)?;
             let local = parsed.host_str().is_some_and(|h| {
                 h == "localhost"
@@ -108,14 +60,7 @@ pub(crate) async fn connect(connection: Connection) -> Result<Box<dyn Wire>, Err
     }
 }
 
-fn quote(value: &str) -> Result<String, Error> {
-    if value.is_empty() || value.contains(['\0', '\n', '\r']) {
-        return Err(Error::Endpoint);
-    }
-    Ok(format!("'{}'", value.replace('\'', "'\\''")))
-}
-
-async fn spawn_proxy(mut command: Command) -> Result<Box<dyn Wire>, Error> {
+pub(super) async fn spawn_proxy(mut command: Command) -> Result<Box<dyn Wire>, Error> {
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -236,23 +181,5 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Wire for Websocket<S> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn remote_arguments_are_shell_quoted() {
-        assert_eq!(quote("/a b/c'd").unwrap(), "'/a b/c'\\''d'");
-        assert!(quote("a\nb").is_err());
-    }
-
-    #[tokio::test]
-    async fn refuses_non_loopback_plain_websockets_before_connecting() {
-        assert!(matches!(
-            connect(Connection::Websocket {
-                endpoint: "ws://192.0.2.1:1234".into()
-            })
-            .await,
-            Err(Error::Endpoint)
-        ));
-    }
-}
+#[path = "transport_tests.rs"]
+mod tests;

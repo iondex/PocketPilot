@@ -1,6 +1,6 @@
 //! Read loaded sessions before stored sessions, preserving scoped pagination.
 use super::{Codex, mapping::summary};
-use crate::{Error, protocol as p};
+use crate::codex::{Error, protocol as p};
 use session::{Page, ProviderError, Session, SessionQuery};
 
 #[derive(serde::Serialize, serde::Deserialize)]

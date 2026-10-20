@@ -1,14 +1,8 @@
 //! Discover existing Codex installations and control sockets without starting a server.
-use serde::{Deserialize, Serialize};
+use crate::ServerEndpoint;
+use connections::{Connection as _, Host, Program};
 use std::{process::Stdio, time::Duration};
-use tokio::{io::AsyncReadExt, process::Command};
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Endpoint {
-    pub binary: String,
-    pub socket: String,
-}
+use tokio::io::AsyncReadExt;
 
 // Fixed read-only shell program: no configured/user text is interpolated into it.
 // Prefer a native executable: non-interactive shells may not load Node/NVM.
@@ -25,65 +19,68 @@ if [ -d "$root" ]; then find -H "$root" -maxdepth 4 -type s -name '*control*.soc
 "#;
 
 pub async fn discover(
-    options: Option<ssh::Options>,
+    options: Option<connections::ssh::Options>,
     timeout: Duration,
-) -> Result<Vec<Endpoint>, crate::Error> {
-    let mut command = match options {
-        Some(options) => ssh::command(options, format!("sh -c '{}'", SCAN.replace('\'', "'\\''")))
-            .map_err(|_| crate::Error::Endpoint)?,
-        None => {
-            let mut command = Command::new("sh");
-            command.args(["-c", SCAN]);
-            command
-        }
-    };
+) -> Result<Vec<ServerEndpoint>, crate::codex::Error> {
+    let host = options.map_or(Host::Local, Host::SSH);
+    let mut command = host
+        .command(&Program {
+            binary: "sh".into(),
+            arguments: vec!["-c".into(), SCAN.into()],
+        })
+        .map_err(|_| crate::codex::Error::Endpoint)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
     tracing::debug!("discovering existing Codex control endpoints");
-    let mut child = command.spawn().map_err(|_| crate::Error::Disconnected)?;
-    let stdout = child.stdout.take().ok_or(crate::Error::Disconnected)?;
+    let mut child = command
+        .spawn()
+        .map_err(|_| crate::codex::Error::Disconnected)?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or(crate::codex::Error::Disconnected)?;
     let scan = async {
         let mut bytes = Vec::new();
         stdout
             .take(1024 * 1024 + 1)
             .read_to_end(&mut bytes)
             .await
-            .map_err(|_| crate::Error::Disconnected)?;
+            .map_err(|_| crate::codex::Error::Disconnected)?;
         if bytes.len() > 1024 * 1024 {
-            return Err(crate::Error::Protocol);
+            return Err(crate::codex::Error::Protocol);
         }
         if !child
             .wait()
             .await
-            .map_err(|_| crate::Error::Disconnected)?
+            .map_err(|_| crate::codex::Error::Disconnected)?
             .success()
         {
-            return Err(crate::Error::Endpoint);
+            return Err(crate::codex::Error::Endpoint);
         }
-        parse(std::str::from_utf8(&bytes).map_err(|_| crate::Error::Protocol)?)
+        parse(std::str::from_utf8(&bytes).map_err(|_| crate::codex::Error::Protocol)?)
     };
     tokio::time::timeout(timeout, scan)
         .await
-        .map_err(|_| crate::Error::Timeout)?
+        .map_err(|_| crate::codex::Error::Timeout)?
 }
 
-fn parse(output: &str) -> Result<Vec<Endpoint>, crate::Error> {
+fn parse(output: &str) -> Result<Vec<ServerEndpoint>, crate::codex::Error> {
     let mut binaries = Vec::new();
     let mut sockets = std::collections::BTreeSet::new();
     for line in output.lines() {
-        let (kind, path) = line.split_once('\t').ok_or(crate::Error::Protocol)?;
+        let (kind, path) = line.split_once('\t').ok_or(crate::codex::Error::Protocol)?;
         if !path.starts_with('/') || path.chars().any(char::is_control) {
-            return Err(crate::Error::Protocol);
+            return Err(crate::codex::Error::Protocol);
         }
         match kind {
             "B" => binaries.push(path.to_owned()),
             "S" => {
                 sockets.insert(path.to_owned());
             }
-            _ => return Err(crate::Error::Protocol),
+            _ => return Err(crate::codex::Error::Protocol),
         }
     }
     let Some(binary) = binaries.first() else {
@@ -91,7 +88,7 @@ fn parse(output: &str) -> Result<Vec<Endpoint>, crate::Error> {
     };
     Ok(sockets
         .into_iter()
-        .map(|socket| Endpoint {
+        .map(|socket| ServerEndpoint {
             binary: binary.clone(),
             socket,
         })
@@ -99,16 +96,5 @@ fn parse(output: &str) -> Result<Vec<Endpoint>, crate::Error> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn discovers_only_existing_sockets_and_rejects_shell_noise() {
-        assert!(parse("B\t/usr/bin/codex\n").unwrap().is_empty());
-        let found = parse("B\t/native/codex\nB\t/wrapper/codex\nS\t/home/.codex/control.sock\nS\t/home/.codex/control.sock\n").unwrap();
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].binary, "/native/codex");
-        assert!(parse("welcome to server\n").is_err());
-        assert!(parse("B\trelative\n").is_err());
-    }
-}
+#[path = "discovery_tests.rs"]
+mod tests;

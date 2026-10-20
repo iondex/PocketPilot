@@ -12,7 +12,7 @@ const MARKER: &str = "POCKETPILOT_SHARED_OK";
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Rpc(#[from] codex::Error),
+    Rpc(#[from] adapters::codex::Error),
     #[error(transparent)]
     Store(#[from] crate::storage::StoreError),
     #[error(transparent)]
@@ -70,12 +70,12 @@ pub async fn verify(
     if projects.next().is_some() {
         return Err(Error::Check);
     }
-    let writer = codex::Codex::new(
+    let writer = adapters::codex::Codex::new(
         id.into(),
         crate::runtimes::connect(host, provider, config).await?,
     )
     .with_control(true);
-    let observer = codex::Codex::new(
+    let observer = adapters::codex::Codex::new(
         id.into(),
         crate::runtimes::connect(host, provider, config).await?,
     );
@@ -138,7 +138,7 @@ pub async fn verify(
     drop(writer);
     drop(observer);
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let observer = codex::Codex::new(
+    let observer = adapters::codex::Codex::new(
         id.into(),
         crate::runtimes::connect(host, provider, config).await?,
     );
