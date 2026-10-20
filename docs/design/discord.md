@@ -1,6 +1,6 @@
 # Discord 原型
 
-此版本是可运行的可选原型，尚未完成真实 guild 验收。它复用 Codex provider、连接缓存、每会话锁和操作账本；Telegram 和 Discord 同时控制同一会话时，在同一进程内共享锁，原生服务端仍负责跨 Desktop/CLI 的并发条件检查。已有 bot 和测试服务器时，按 [Discord 验收](../testing-discord.md) 从只读到写入逐步测试。
+此版本提供默认编译、按配置启用的 Discord 接入，尚未完成真实 guild 验收。它复用 Codex provider、连接缓存、每会话锁和操作账本；Telegram 和 Discord 同时控制同一会话时，在同一进程内共享锁，原生服务端仍负责跨 Desktop/CLI 的并发条件检查。已有 bot 和测试服务器时，按 [Discord 验收](../testing-discord.md) 从只读到写入逐步测试。
 
 ## 配置和启动
 
@@ -9,7 +9,7 @@
 在根 pocketpilot.toml 中填写 [discord].token、guild_id 和可选 proxy，token 不进入 .env、日志或示例。然后运行：
 
 ```sh
-make package FEATURES=discord,slack
+make package
 cargo clean
 ./dist/pocketpilot doctor --credentials --discord
 ./dist/pocketpilot serve
@@ -38,7 +38,7 @@ cargo clean
 
 用户先选 workspace（执行环境/主机），再选项目目录，最后选 session。目录选择、归属校验与排序复用 engine::navigation；平台只负责原生 select/buttons 呈现。菜单默认对调用者私有，使用传统消息组件，不启用 Components V2。工作空间和项目每页最多 20 项，会话每页 8 项。选择、返回、分页与刷新更新同一条菜单消息，不追加长列表。项目目录在 option description 中显示，过长保留末尾；会话标题是 option label，状态与相对更新时间是说明，emoji 只辅助状态文字；当前页存在重名标题时增加可读序号。UUID、turn ID、分页 cursor 不作为可见信息。
 
-一个项目一个 PP category，一个 session 一个短名 channel；短名只使用标题，不附加 thread ID。Discord 允许同名 channel，实际绑定仍由唯一 ID 和账本区分。channel 内状态卡展示标题、状态与项目，操作回执不显示原始 turn ID。进入会话显示最后用户输入与对应 final；正文通过公共 Markdown 解析输出 Discord 支持的子集，菜单和动态标题按字面转义。渲染后超过 1,800 个 UTF-16 单元时按结构分段；不能保真的语法保留为文字，不生成 `session.md`，也不提供完整历史导出。三端共用 session::presentation；每条会话消息首行用 👤 用户或 🤖 Agent 标识角色，并用 💭 / ✅ / ❌ 区分 Agent 过程、最终结果与错误，长消息的每一段重复角色标题，并为标题预留长度；提示信息使用 ℹ️。角色标题与分段正文在入队时一起保存，已确认段号持久保存。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
+一个项目一个 PP category，一个 session 一个短名 channel；短名只使用标题，不附加 thread ID。Discord 允许同名 channel，实际绑定仍由唯一 ID 和账本区分。channel 内状态卡展示标题、状态与项目，操作回执不显示原始 turn ID。进入会话显示最后用户输入与对应 final；正文通过公共 Markdown 解析，在 Components V2 的 Text Display 中输出 Discord 支持的子集，菜单和动态标题按字面转义。渲染后超过 1,800 个 UTF-16 单元时按结构分段；不能保真的语法保留为文字，不生成 `session.md`，也不提供完整历史导出。三端共用 session::presentation；每条会话消息首行用 👤 用户或 🤖 Agent 标识角色，并用 💭 / ✅ / ❌ 区分 Agent 过程、最终结果与错误，长消息的每一段重复角色标题，并为标题预留长度；提示信息使用 ℹ️。角色标题与分段正文在入队时一起保存，已确认段号持久保存。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
 
 ## 持久化与生命周期
 

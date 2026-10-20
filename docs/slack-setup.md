@@ -126,14 +126,14 @@ App ID 来自 Basic Information；team ID 来自 workspace 地址；owner ID 在
 
 ```sh
 make check
-make package FEATURES=discord,slack
+make package
 cargo clean
 ./dist/pocketpilot doctor --credentials
 ./dist/pocketpilot doctor --connect
 ./dist/pocketpilot --config /absolute/path/PocketPilot/pocketpilot.toml serve
 ```
 
-只需要 Telegram 和 Slack 时可使用 `FEATURES=slack`。多平台共用一个 `serve` 进程和执行账本。不要同时启动两份桥接。需要长期运行时，将服务管理器的可执行文件指向 `dist/pocketpilot`，不要引用会被清理的 `target/`。
+三端始终包含在默认构建中，按运行配置启用账号。多平台共用一个 `serve` 进程和执行账本。不要同时启动两份桥接。需要长期运行时，将服务管理器的可执行文件指向 `dist/pocketpilot`，不要引用会被清理的 `target/`。
 
 `doctor --credentials` 只做离线格式检查；`doctor --connect` 诊断 Codex 主机连接。Slack token、owner DM 与 Socket Mode 身份在 `serve` 启动时验证；失败提示不包含 token 或完整响应。成功后才处理消息和投递输出。
 

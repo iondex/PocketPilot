@@ -5,16 +5,16 @@ Git 保存源码、公共示例和安装文档。私有配置、平台绑定与�
 ## 1. 在新机器准备源码与运行条件
 
 1. 拉取最新提交，使用仓库指定的 Rust stable 工具链、系统 OpenSSH 和受测 Codex CLI；协议生成版本与 `CODEX_SCHEMA_BIN` 说明见 [协议文档](design/protocol-generation.md)。
-2. 在目标操作系统和架构上构建。默认只启用 Telegram；还使用 Discord/Slack 时执行：
+2. 在目标操作系统和架构上构建；默认包含 Telegram、Discord、Slack，按运行配置启用账号：
 
    ```sh
-   make package FEATURES=discord,slack
+   make package
    ```
 
 3. 可运行文件在 `dist/pocketpilot`，旁边的 `BUILD.txt` 记录工具链与功能，`pocketpilot.sha256` 保存校验值。其他操作系统/架构应独立构建，不直接搬用旧机器的 binary。
 4. 检查新机器的 OpenSSH alias、密钥/agent 和 known_hosts。私钥与信任记录通过自己的受控方式配置；不要关闭 host-key 校验。确认远端项目路径和原生 app-server 控制入口仍然有效。
 
-`make release FEATURES=discord,slack` 可以顺序执行完整 release 验证、打包和 `target/` 清理。构建说明见 [build.md](build.md)。
+`make release` 可以顺序执行完整 release 验证、打包和 `target/` 清理。构建说明见 [build.md](build.md)。
 
 ## 2. 停止旧桥接后转移私有数据
 

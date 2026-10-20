@@ -1,6 +1,6 @@
 # PocketPilot
 
-Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 topic 管理本地/SSH app-server 会话。提供可选 Discord 和 Slack 原型；Lark 和 Claude shim 保留后续规划。
+Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 topic 管理本地/SSH app-server 会话。同时支持 Discord 和 Slack；Claude Code 与 Pi runtime server 保留后续规划。
 
 **当前主要支持 Telegram + Codex，完整部署验收仍需按目标环境执行。** 包括 CLI 配对、工作区与会话菜单、topic 绑定、历史集合、创建/续轮/steer、topic emoji、持久收发与消息合并、OpenSSH/TOTP 和根配置热更新。使用步骤与验证边界见 [测试入口](docs/testing.md) 和 [验证记录](docs/research/implementation-checks.md)。
 
@@ -58,7 +58,7 @@ cargo build --release --workspace --locked
 ## Discord 原型
 
 ```sh
-cargo build --release -p app --features discord --locked
+cargo build --release -p app --locked
 ./target/release/pocketpilot serve
 ```
 
@@ -68,7 +68,7 @@ cargo build --release -p app --features discord --locked
 
 从 [安装指南](docs/slack-setup.md) 更新或导入 [App Manifest](docs/slack-manifest.json)，准备 xapp / xoxb token 和 app/team/owner ID，填写根配置。仅支持与授权 owner 私聊，无需频道、channel ID 或 `/pp`。在 Apps → PocketPilot → Messages 发送文字依次选择 workspace（执行环境）→ 项目/目录 → session；导航更新原菜单，一个 DM 管理多个项目，每个会话使用独立根卡片/thread，任务在对应 thread 内发送。新建只创建命名空会话，首条任务另发。
 
-使用 slack-morphism 2.31.0、显式代理和出站 Socket Mode，无需公网服务；菜单、历史、状态和确认通过 DM 消息及卡片按钮呈现。编译启用 `--features slack` 后运行同一个 `serve`。现有 App 的网页/Slack CLI 升级步骤、重新安装要求及验收见安装指南；设计与边界见 [Slack](docs/design/slack.md)。
+使用 slack-morphism 2.31.0、显式代理和出站 Socket Mode，无需公网服务；菜单、历史、状态和确认通过 DM 消息及卡片按钮呈现。三端始终编译，按配置运行同一个 `serve`。现有 App 的网页/Slack CLI 升级步骤、重新安装要求及验收见安装指南；设计与边界见 [Slack](docs/design/slack.md)。
 
 ## 动态目录与日志
 
@@ -86,7 +86,7 @@ provider 是一个现有 agent 执行实例，workspace 是它的项目目录。
 tracing 可同时输出到终端和日志文件，支持 daily/hourly 轮转与 retained_files 数量上限。稳定 0.1 前直接维护 [schema.sql](schema.sql)。开发风格见 [CONTRIBUTING.md](CONTRIBUTING.md)，构建体积分析见 [构建说明](docs/build.md)；更换开发机见 [迁移指南](docs/migration.md)。
 
 ```sh
-cargo build -p app --release --no-default-features --locked
+cargo build -p app --release --locked
 ./target/release/pocketpilot serve
 ```
 
@@ -94,7 +94,7 @@ cargo build -p app --release --no-default-features --locked
 
 菜单状态只显示 emoji。topic 使用原生 emoji icon：⚡️ 运行、💬 空闲、👀 等待审批、❓ 等待输入、💬 未加载、❗️ 异常、⁉️ 未知。仅状态变化时更新，并由投递队列合并、限速。topic 标题仅显示最多 40 个可见字符的原始标题，不拼主机/路径/ID；详细身份信息由 /status 返回。
 
-新建时填写的内容只作为标题，不发送给 agent，也不启动一轮。原生标题为空时，通过官方 thread/name/set 补写；已有原生标题不覆盖，后台观察/重连不补写。Agent Markdown 使用 pulldown-cmark 解析后转换为 Telegram HTML，表格转为逐项内容；超长仍发送原始 Markdown 附件。
+新建时填写的内容只作为标题，不发送给 agent，也不启动一轮。原生标题为空时，通过官方 thread/name/set 补写；已有原生标题不覆盖，后台观察/重连不补写。Agent Markdown 使用 pulldown-cmark 解析后转换为 Telegram RichMessage，保留原生表格、标题、代码、公式和脚注；长消息按结构分段，不生成历史附件。
 
 中英文 UI 使用 rust-i18n，偏好按 bot/user 独立持久化。/language zh-CN 切换中文，/language en 切换英文；默认中文，telegram.default_locale 可选 zh-CN、en 或 auto。语言资源编译进 binary，运行时仍只读取根 TOML。
 

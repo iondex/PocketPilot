@@ -40,7 +40,7 @@
 - SSH 挑战只回答已配置的类型；TOTP 使用成熟实现、窗口去重和尝试限制，认证信息不写入日志或公开资料。
 - 同一私聊各 topics 共享限速；批次、typing、状态图标和删除操作遵守各自的恢复边界。
 
-当前开发检查包括 workspace/all-features 测试、全 target Clippy、rustfmt、最小发布配置检查及 release 构建。测试数量和构建大小随版本变化，不在本文追加每次运行的流水记录。
+当前开发检查包括 workspace 测试、全 target Clippy、rustfmt 及默认包含三端的 release 构建。测试数量和构建大小随版本变化，不在本文追加每次运行的流水记录。
 
 ## 尚未完整证明的范围
 
