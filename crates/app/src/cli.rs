@@ -118,10 +118,10 @@ pub enum Error {
     Control(#[from] engine::control::Error),
     #[error(transparent)]
     #[allow(clippy::upper_case_acronyms)] // Project convention keeps SSH uppercase.
-    SSH(#[from] ssh::Error),
+    SSH(#[from] connections::ssh::Error),
     #[error(transparent)]
     #[allow(clippy::upper_case_acronyms)] // Project convention keeps TOTP uppercase.
-    TOTP(#[from] ssh::auth::Error),
+    TOTP(#[from] connections::ssh::auth::Error),
     #[error(transparent)]
     Service(#[from] app::runtime::Error),
     #[error(transparent)]
@@ -129,7 +129,7 @@ pub enum Error {
     #[error(transparent)]
     Config(#[from] config::ConfigError),
     #[error(transparent)]
-    Rpc(#[from] codex::Error),
+    Rpc(#[from] adapters::codex::Error),
     #[error(transparent)]
     Provider(#[from] session::ProviderError),
     #[error(transparent)]
@@ -215,12 +215,12 @@ async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Re
             .iter()
             .find(|h| h.id == *host)
             .ok_or(Error::Selection)?;
-        let context = ssh::auth::AuthContext {
+        let context = connections::ssh::auth::AuthContext {
             data_dir: config.service.data_dir.clone(),
             source: config.source().to_owned(),
             source_hash: config.source_hash().into(),
         };
-        let answer = ssh::auth::answer(
+        let answer = connections::ssh::auth::answer(
             &selected.authentication,
             &context,
             attempt,
@@ -284,7 +284,7 @@ async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Re
                     None => PathBuf::from(std::env::var_os("HOME").ok_or(Error::Selection)?)
                         .join(".ssh/config"),
                 };
-                print(&ssh::discover(&path)?)?;
+                print(&connections::ssh::discover(&path)?)?;
             }
             Hosts::Resolve { id } => {
                 let host = config
@@ -294,7 +294,7 @@ async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Re
                     .ok_or(Error::Selection)?;
                 let alias = host.ssh_alias.as_deref().ok_or(Error::Selection)?;
                 print(
-                    &ssh::resolve(
+                    &connections::ssh::resolve(
                         alias,
                         host.ssh_config.as_ref(),
                         Duration::from_secs(host.timeouts.connect_seconds),
@@ -365,71 +365,5 @@ fn transport_name(kind: TransportKind) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn retry_is_explicit_and_can_run_without_chat_integrations() {
-        assert!(matches!(
-            Arguments::try_parse_from(["pocketpilot", "retry"])
-                .unwrap()
-                .command,
-            Command::Retry
-        ));
-        assert!(matches!(
-            Arguments::try_parse_from(["pocketpilot", "serve"])
-                .unwrap()
-                .command,
-            Command::Serve
-        ));
-        assert!(Arguments::try_parse_from(["pocketpilot", "serve", "--retry"]).is_err());
-    }
-
-    #[test]
-    fn doctor_combines_offline_checks_with_explicit_network_flags() {
-        let args = Arguments::try_parse_from([
-            "pocketpilot",
-            "doctor",
-            "--credentials",
-            "--connect",
-            "--telegram",
-            "--discord",
-        ])
-        .unwrap();
-        assert!(matches!(
-            args.command,
-            Command::Doctor(crate::doctor::Options {
-                credentials: true,
-                connect: true,
-                telegram: true,
-                discord: true,
-            })
-        ));
-        let args = Arguments::try_parse_from(["pocketpilot", "doctor"]).unwrap();
-        assert!(matches!(
-            args.command,
-            Command::Doctor(crate::doctor::Options {
-                credentials: false,
-                connect: false,
-                telegram: false,
-                discord: false,
-            })
-        ));
-        assert!(Arguments::try_parse_from(["pocketpilot", "config-check"]).is_err());
-    }
-
-    #[test]
-    fn cli_errors_keep_their_type_and_render_the_selected_language() {
-        let english = Failure {
-            error: Error::Provider(session::ProviderError::Rejected(-32600)),
-            locale: "en".into(),
-        };
-        let chinese = Failure {
-            error: Error::Provider(session::ProviderError::Rejected(-32600)),
-            locale: "zh-CN".into(),
-        };
-        assert!(english.to_string().contains("provider rejected"));
-        assert!(chinese.to_string().contains("执行服务拒绝"));
-        assert!(english.to_string().contains("-32600") && chinese.to_string().contains("-32600"));
-    }
-}
+#[path = "cli_tests.rs"]
+mod tests;

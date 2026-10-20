@@ -6,7 +6,7 @@ use crate::discord;
 use crate::slack;
 use crate::telegram::api::Api;
 use crate::telegram::ledger::Outbound;
-use codex::protocol as p;
+use adapters::codex::protocol as p;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use session::provider::Receipt;
@@ -3219,8 +3219,21 @@ async fn explicit_history_reads_native_changes_and_shows_only_the_latest_input_a
         .unwrap();
     let first = fixture.outputs().await.pop().unwrap();
     assert!(first.agent_markdown && first.text.contains("native final one"));
-    let rendered = crate::telegram::markdown::render(&first.text);
-    assert!(rendered.html.contains("What is **bold**?"));
+    let rendered = crate::rendering::Renderer::render(
+        &crate::telegram::rich::RichRenderer,
+        crate::rendering::RenderRequest {
+            source: &first.text,
+            format: session::markdown::Format::Markdown,
+            heading: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        rendered.parts[0]
+            .message
+            .plain()
+            .contains("What is **bold**?")
+    );
     assert!(
         !first.text.contains("original question")
             && !first.text.contains("original answer")

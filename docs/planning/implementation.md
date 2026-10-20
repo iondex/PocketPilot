@@ -1,6 +1,6 @@
 # MVP 实施计划
 
-状态：Telegram MVP 的消息、控制、持久化、OTP helper 和热更新已落地；完整验收仍按目标部署进行，缺少共享入口的 Desktop 活跃实例无法直接接入。Discord 和 Slack 可选原型已加入，见 [Discord](../design/discord.md) 与 [Slack 安装](../slack-setup.md)。真实平台继续单独验收。
+状态：Telegram MVP 的消息、控制、持久化、OTP helper 和热更新已落地；完整验收仍按目标部署进行，缺少共享入口的 Desktop 活跃实例无法直接接入。Discord 和 Slack 已加入默认构建，见 [Discord](../design/discord.md) 与 [Slack 安装](../slack-setup.md)。真实平台继续单独验收。
 
 下文 W00–W17 保留为设计工作包；描述中的目标接口不全部与当前源码名称一一对应。当前行为与边界以 [验证记录](../research/implementation-checks.md)、[配置实现](../design/connections-and-config.md) 和源码为准。
 
@@ -36,7 +36,7 @@
 | secrets | secrecy | 0.10.3 | 1.79 亿 | token 不意外 Debug 输出 |
 | Discord 后续 | serenity | 0.12.5 | 756 万 | Gateway、HTTP 与生态整合 |
 
-补充依赖按需加入 tokio-util、futures、toml、uuid、time、tracing-appender、directories、fs2、tempfile；没有实际使用就不引入。锁定 Rust 工具链和 Cargo.lock，确认 MSRV、TLS feature、依赖版本冲突后再固定具体版本。Telegram 不需要 Discord/Claude 的 feature 和依赖随 MVP 一起编译。
+补充依赖按需加入 tokio-util、futures、toml、uuid、time、tracing-appender、directories、fs2、tempfile；没有实际使用就不引入。锁定 Rust 工具链和 Cargo.lock，确认 MSRV、TLS feature、依赖版本冲突后再固定具体版本。三端共享 integrations crate 并始终编译；Claude Code 与 Pi runtime server 仅规划，不引入未使用的依赖。
 
 SSH 统一使用系统 OpenSSH，复用 key/agent 和复杂 ssh_config；OTP 使用原生 keyboard-interactive + totp-rs，不能仅依赖 BatchMode。直接读取本机 SSH config/Include 发现 alias，受控 ssh -G 获取有效参数；实际认证链由服务端协商。慢 host 的超时、心跳和认证退避逐台配置，详细规则见 [部署与配置](../design/connections-and-config.md)。
 
@@ -44,24 +44,28 @@ JSON-RPC 不直接套标准 jsonrpsee server/client：Codex wire 省略 jsonrpc 
 
 ## 3. crate 与文件边界
 
-当前采用九个简短本地 package：i18n、ssh、session、codex、engine、telegram、discord、slack、app，全部 publish=false。app 的 binary 仍叫 pocketpilot。确切职责和依赖方向见 [架构](../design/architecture.md)。
+当前采用七个本地 package：i18n、session、connections、adapters、engine、integrations、app，全部 publish=false。app 的 binary 仍叫 pocketpilot。职责和依赖方向见 [架构](../design/architecture.md)。
 
 ```text
 crates/
-  i18n/src/       共享文案 ID、语言和类型化错误展示
-  ssh/src/        连接、有效配置、认证与 TOTP 导出
-  session/src/    统一领域模型、provider 接口与文本规则
-  codex/src/      协议、RPC、transport、provider、自动发现
-  engine/src/     配置快照、共享连接、操作账本、catalog、integrations
-  telegram/src/   API、配对、管理、收发、观察及平台 SQL
-  discord/src/    可选平台 API、gateway、收发、观察及 SQL
-  slack/src/      可选 Socket Mode、频道/thread、持久收发及 SQL
-  app/src/        根配置、CLI、装配、inventory、tracing
-schema.sql        原型数据库定义；稳定 0.1 前直接修改
-crates/codex/build.rs  官方 schema/DTO 只生成到 Cargo OUT_DIR
+  i18n/src/                  共享文案 ID、语言和类型化错误展示
+  session/src/               统一领域模型、provider 接口与 Markdown；文件平铺
+  connections/src/           通用主机、命令、endpoint 与超时
+    ssh/                     有效 OpenSSH 配置、认证与 TOTP 导出
+  adapters/src/              通用运行时接口与建连工厂
+    codex/                   Codex 协议、RPC、framing、provider、自动发现
+  engine/src/                配置快照、共享运行时、操作账本与 catalog
+  integrations/src/          公共集成、附件与渲染契约
+    telegram/                Telegram API、配对、topic、收发、观察及 SQL
+    discord/                 Discord API、Gateway、V2、收发、观察及 SQL
+    slack/                   Slack Socket Mode、DM/thread、收发及 SQL
+    network/                 集成端共享的代理与受限下载
+  app/src/                   根配置、CLI、装配、inventory、tracing
+schema.sql                   原型数据库定义；稳定 0.1 前直接修改
+crates/adapters/build.rs     官方 schema/DTO 只生成到 Cargo OUT_DIR
 ```
 
-源码不使用多层文件目录。provider/workspace 从根配置移入 SQLite catalog，bin/socket 自动发现，现有 ID 和绑定继续有效。SSH 单独成库并保持 native OpenSSH 后端；接入更多 provider 不要求复制认证代码。日常 CLI 保留 serve/doctor/hosts/pair/providers/workspaces，离线配置检查并入 doctor，删除测试专用会话探针和重复诊断命令。
+各实现目录内按职责拆文件，测试使用独立源码文件；session/src 不建立子目录。provider/workspace 保存在 SQLite catalog，bin/socket 自动发现，现有 ID 和绑定继续有效。SSH 归入 connections 并保持 native OpenSSH 后端，Codex 归入 adapters；旧独立 crate 不保留兼容 facade。日常 CLI 保留 serve/doctor/hosts/pair/providers/workspaces，离线配置检查并入 doctor。
 
 ## 4. 顺序与阶段门禁
 

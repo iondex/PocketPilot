@@ -7,11 +7,26 @@ name = "adapters"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "codex",
+ "base64 0.22.1",
+ "connections",
+ "futures-util",
+ "i18n",
+ "prettyplease",
+ "schemars 0.8.22",
  "serde",
+ "serde_json",
+ "serde_path_to_error",
  "session",
+ "syn 2.0.119",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tokio-util",
+ "tracing",
+ "typify",
+ "url",
+ "wiremock",
 ]
 
 [[package]]
@@ -115,8 +130,9 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 name = "app"
 version = "0.1.0"
 dependencies = [
+ "adapters",
  "clap",
- "codex",
+ "connections",
  "engine",
  "i18n",
  "integrations",
@@ -124,7 +140,6 @@ dependencies = [
  "serde",
  "serde_json",
  "session",
- "ssh",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -423,33 +438,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
-name = "codex"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "futures-util",
- "i18n",
- "prettyplease",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "session",
- "ssh",
- "syn 2.0.119",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tokio-util",
- "tracing",
- "typify",
- "url",
- "wiremock",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -468,10 +456,21 @@ dependencies = [
 name = "connections"
 version = "0.1.0"
 dependencies = [
- "codex",
- "ssh",
+ "base64 0.22.1",
+ "fs2",
+ "glob",
+ "i18n",
+ "prost",
+ "regex",
+ "secrecy 0.10.3",
+ "serde",
+ "ssh2-config",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "totp-rs",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -879,7 +878,6 @@ dependencies = [
  "adapters",
  "arc-swap",
  "async-trait",
- "codex",
  "connections",
  "fs2",
  "i18n",
@@ -889,7 +887,6 @@ dependencies = [
  "session",
  "sha2 0.10.9",
  "sqlx",
- "ssh",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -1643,8 +1640,8 @@ dependencies = [
 name = "integrations"
 version = "0.1.0"
 dependencies = [
+ "adapters",
  "async-trait",
- "codex",
  "engine",
  "futures-util",
  "http",
@@ -3396,27 +3393,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "ssh"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "fs2",
- "glob",
- "i18n",
- "prost",
- "regex",
- "secrecy 0.10.3",
- "serde",
- "ssh2-config",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "totp-rs",
- "url",
- "uuid",
 ]
 
 [[package]]

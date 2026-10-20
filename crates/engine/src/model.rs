@@ -13,7 +13,7 @@ pub struct Provider {
     #[serde(default)]
     pub control_verified: bool,
     #[serde(default)]
-    pub endpoint: Option<codex::discovery::Endpoint>,
+    pub endpoint: Option<adapters::ServerEndpoint>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

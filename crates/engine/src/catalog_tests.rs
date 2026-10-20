@@ -95,7 +95,7 @@ async fn discovers_projects_beyond_first_session_page_and_preserves_explicit_rem
     let provider = catalog
         .discover(
             "host",
-            codex::discovery::Endpoint {
+            adapters::ServerEndpoint {
                 binary: "/bin/codex".into(),
                 socket: "/tmp/control.sock".into(),
             },
@@ -186,7 +186,7 @@ async fn catalog_administration_coexists_with_the_bridge_and_keeps_stable_ids() 
     let dir = tempfile::tempdir().unwrap();
     let catalog = Catalog::open(dir.path()).await.unwrap();
     let service = crate::storage::Store::open(dir.path()).await.unwrap();
-    let endpoint = codex::discovery::Endpoint {
+    let endpoint = adapters::ServerEndpoint {
         binary: "/bin/codex".into(),
         socket: "/tmp/control.sock".into(),
     };
@@ -232,7 +232,7 @@ async fn changed_endpoints_do_not_inherit_control_or_retarget_old_providers() {
     let mut original = catalog
         .discover(
             "host",
-            codex::discovery::Endpoint {
+            adapters::ServerEndpoint {
                 binary: "/bin/codex".into(),
                 socket: "/tmp/old.sock".into(),
             },
@@ -244,7 +244,7 @@ async fn changed_endpoints_do_not_inherit_control_or_retarget_old_providers() {
     let new = catalog
         .discover(
             "host",
-            codex::discovery::Endpoint {
+            adapters::ServerEndpoint {
                 binary: "/bin/codex".into(),
                 socket: "/tmp/new.sock".into(),
             },
@@ -283,7 +283,7 @@ async fn catalog_refresh_cannot_restore_a_host_removed_by_config_reload() {
     catalog
         .discover(
             "host",
-            codex::discovery::Endpoint {
+            adapters::ServerEndpoint {
                 binary: "/bin/codex".into(),
                 socket: "/tmp/old.sock".into(),
             },

@@ -14,13 +14,13 @@
 ## 构建与启动
 
 ```sh
-cargo build -p app --release --no-default-features --locked
+cargo build -p app --release --locked
 ./target/release/pocketpilot doctor --credentials
 ./target/release/pocketpilot doctor --connect --telegram
 ./target/release/pocketpilot serve
 ```
 
-`doctor` 默认离线检查根配置和 catalog，并在 `configuration` 中报告平台配置及 Discord 编译功能；`--credentials` 额外检查已配置的凭据，Telegram 检查 token 格式，Discord 的非空 token 与非零 guild ID 由配置加载检查。离线检查不能证明 token 有效或权限足够；`--connect` 才连接 agent，`--telegram` 才探测 Telegram。Discord 暂无专项联网诊断，真实测试见 [Discord 验收](testing-discord.md)。
+`doctor` 默认离线检查根配置和 catalog，并在 `configuration` 中报告平台配置及启用状态；`--credentials` 额外检查已配置的凭据，Telegram 检查 token 格式，Discord 的非空 token 与非零 guild ID 由配置加载检查。离线检查不能证明 token 有效或权限足够；`--connect` 才连接 agent，`--telegram` 才探测 Telegram。Discord 使用 `--discord` 只读探测安装和权限，真实测试见 [Discord 验收](testing-discord.md)。
 
 诊断成功只证明对应探测可用，不自动授予控制权限。新 provider 默认只读；验证同一 active turn、多客户端输入和断线后继续运行后，再用 CLI 为该实例确认控制权限。诊断输出可能包含本地部署信息，分享前应脱敏。
 
@@ -50,9 +50,9 @@ SSH 使用有效 OpenSSH config，支持 ProxyJump、ProxyCommand、agent 和 kn
 | 历史 | 进入长会话只显示短预览，不导出文件；再次打开不重播。`/history` 查看最近输入和同轮 final；`/history errors` 列近期错误；历史导出不提供，长文字分段显示 |
 | 输入来源 | 同一原生会话的外部输入以 🧑‍💻 展示；Telegram 自身输入精确去重；其他会话内容不得串入 |
 | 阶段与格式 | 💭 过程、✅ final、💬 阶段未知、❌ 最终失败；可恢复重试不发消息；emoji 后空格接首行；粗体、链接、代码及表格正常显示 |
-| 附件 | 标准附件包装缩为正文与文件名，不显示绝对路径或图片；Telegram 上传只转发 caption 文字并提示限制，纯附件不启动任务 |
+| 附件 | 标准附件包装缩为正文与文件名，不显示绝对路径或图片；三端接收用户附件并转交 Codex；仅在已授权绑定中处理文件，纯附件也须经过同一确认与账本 |
 | 标题与状态 | topic 仅保留截短原始标题，管理 icon 为 📁，空闲/未加载为 💬；状态变化更新 icon，运行中持续 typing |
-| 限速 | 短时输出持久合并，同一私聊的全部 topics 共享预算；429 遵守 retry_after；普通长输出或主动历史查询可用单个 Markdown 附件，入场预览不产生文件 |
+| 限速 | 短时输出持久合并，同一私聊的全部 topics 共享预算；429 遵守 retry_after；长输出和历史查询均分段渲染，任何情况下不生成 session.md 或历史导出文件 |
 | 语言 | 中英文菜单和类型化错误按用户偏好显示；标题、路径、用户输入及 agent 正文不翻译 |
 | 话题管理 | `/topics` 单项删除或批量确认；只影响已记录的 Telegram topics，保留管理入口和全部原生会话 |
 

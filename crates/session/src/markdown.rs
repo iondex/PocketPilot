@@ -1,21 +1,21 @@
 //! Platform-independent Markdown structure, safe links and plain-text previews.
 use pulldown_cmark::{CodeBlockKind, Event, Tag};
 
-#[path = "markdown_input.rs"]
-pub mod input;
+#[path = "syntax.rs"]
+mod syntax;
 
-#[path = "markdown_chunks.rs"]
-mod chunks;
+#[path = "segmentation.rs"]
+mod segmentation;
 
-pub use chunks::split_text;
+pub use segmentation::split_text;
 
-#[path = "markdown_output.rs"]
-mod output;
+#[path = "formatting.rs"]
+mod formatting;
 
-#[path = "markdown_html.rs"]
+#[path = "html.rs"]
 mod html;
 
-pub use output::{Dialect, literal};
+pub use formatting::{Dialect, literal};
 
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 
@@ -106,8 +106,8 @@ impl Document {
         if markdown.len() > MAX_BYTES {
             return Err(TooLarge);
         }
-        let source = input::source(markdown);
-        let Some(events) = input::bounded_events(&source, MAX_NODES) else {
+        let source = syntax::source(markdown);
+        let Some(events) = syntax::bounded_events(&source, MAX_NODES) else {
             return Ok(Self {
                 nodes: vec![Node::Text(markdown.into())],
             });
@@ -206,7 +206,7 @@ impl Document {
 
     /// Independent message fragments retain block and inline structure.
     pub fn chunks(&self, units: usize, nodes: usize) -> Vec<Self> {
-        chunks::documents(&self.nodes, units.max(32), nodes.max(8))
+        segmentation::documents(&self.nodes, units.max(32), nodes.max(8))
     }
 
     pub fn plain(&self) -> String {
@@ -214,7 +214,7 @@ impl Document {
     }
 
     pub fn markdown(&self, dialect: Dialect) -> Option<String> {
-        output::render(&self.nodes, dialect).map(|s| s.trim_end().to_owned())
+        formatting::render(&self.nodes, dialect).map(|s| s.trim_end().to_owned())
     }
 
     pub fn preview(&self, limit: usize) -> String {

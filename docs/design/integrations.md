@@ -22,15 +22,16 @@ crates/integrations/src/
 ```
 
 ```text
-crates/connections/   local / SSH proxy / websocket endpoint and Codex transport seam
-crates/adapters/      agent runtime seam and Codex adapter; Claude Code / Pi are planned
+crates/connections/   Connection、Host、Program、Endpoint 与超时；src/ssh 内实现 OpenSSH
+crates/adapters/      Adapter、AdapterFactory、ConnectOptions 与 ServerEndpoint
+  src/codex/          Codex DTO、发现、RPC、framing 和 AgentProvider 实现
 ```
 
 三端始终编译并默认可用，由运行配置决定启用哪些账号，不再使用项目 Cargo features。第三方依赖仍按所需 SDK 功能选择其自身 Cargo features。
 
-依赖为 app → integrations → engine → adapters → session，adapters 的 Codex 实现可引用 codex；engine 通过 connections 取得已配置 endpoint，connections 负责 transport，ssh 负责认证。engine 不依赖 integrations；公共 Integration Context 由 integrations 持有并引用 engine。Claude Code / Pi 的 runtime server 和 driver 仍按研究文档规划，本轮只落 Codex adapter 与 connections seam。
+主要依赖为 app → integrations → engine → adapters → session，adapters → connections；engine 也直接引用 connections 解析部署配置。Connection 构造本地或 SSH 命令，调用方持有进程生命周期；AdapterFactory 通过通用 ConnectOptions 建连，Adapter 继承 AgentProvider，并提供连接存活与控制能力快照。Codex 的协议帧、握手和 CLI 参数属于 adapters::codex。engine 不依赖 integrations；公共 Integration Context 由 integrations 持有并引用 engine。Claude Code / Pi 的 runtime server 和 driver 仍在规划。
 
-network 只有 integrations 这一类使用方，因此作为其内部公共网络模块。它不是业务词汇中的 Connection。ssh 仍是独立、可被 runtime 连接复用的 OpenSSH 配置与认证模块；本轮不将其搬入聊天集成。
+network 只有 integrations 这一类使用方，因此作为其内部公共网络模块。它不是业务词汇中的 Connection。OpenSSH 配置、命令和认证由 connections::ssh 持有；Codex 原生实现由 adapters::codex 持有。原 ssh 与 codex crate 已删除，不保留兼容 facade。
 
 ## 公共接口
 

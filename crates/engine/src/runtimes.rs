@@ -1,6 +1,6 @@
 //! Shared runtime clients, observation budgets and per-session execution serialization.
 use crate::config::{Config, Host, Provider, TransportKind, Workspace};
-use adapters::{Adapter, CodexAdapter};
+use adapters::{Adapter, AdapterFactory};
 use connections::{Endpoint, Timeouts};
 use session::AgentProvider;
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -24,7 +24,7 @@ pub enum Error {
     #[error("连接正在退避；稍后刷新即可，未自动发送任务")]
     Backoff,
     #[error(transparent)]
-    Rpc(#[from] codex::Error),
+    Rpc(#[from] adapters::codex::Error),
 }
 
 impl ::i18n::LocalizedError for Error {
@@ -42,7 +42,7 @@ impl ::i18n::LocalizedError for Error {
 }
 
 struct Entry {
-    client: Option<Arc<CodexAdapter>>,
+    client: Option<Arc<dyn Adapter>>,
     retry_at: Instant,
     failures: u32,
 }
@@ -136,12 +136,12 @@ impl RuntimeRegistry {
         let mut entry = entry.lock().await;
         if let Some(client) = &entry.client {
             if client.is_connected() {
-                if client.capabilities().control == provider.control_verified {
-                    return Ok(client.provider());
+                if client.capabilities().control_verified == provider.control_verified {
+                    return Ok(client.clone());
                 }
-                let client = Arc::new((**client).clone().with_control(provider.control_verified));
+                let client = client.with_control(provider.control_verified);
                 entry.client = Some(client.clone());
-                return Ok(client.provider());
+                return Ok(client.clone());
             }
             entry.client = None;
         }
@@ -150,13 +150,13 @@ impl RuntimeRegistry {
         }
         let mut effective = identity.clone();
         if matches!(host.transport, TransportKind::SSHProxy) {
-            let resolved = ssh::resolve(
+            let resolved = connections::ssh::resolve(
                 host.ssh_alias.as_deref().ok_or(Error::Selection)?,
                 host.ssh_config.as_ref(),
                 Duration::from_secs(host.timeouts.connect_seconds),
             )
             .await
-            .map_err(|_| codex::Error::Endpoint)?;
+            .map_err(|_| adapters::codex::Error::Endpoint)?;
             effective = crate::digest(&format!(
                 "{identity}\0{}\0{}\0{}",
                 resolved.hostname, resolved.user, resolved.port
@@ -165,7 +165,17 @@ impl RuntimeRegistry {
         self.store
             .check_instance(&provider.id, &effective, false)
             .await?;
-        match connect(host, provider, config).await {
+        let factory: &dyn AdapterFactory = &adapters::codex::Factory;
+        if provider.kind != factory.kind().as_str() {
+            return Err(session::ProviderError::Unsupported.into());
+        }
+        let options = adapters::ConnectOptions {
+            instance: provider.id.clone(),
+            endpoint: endpoint(host, provider, config)?,
+            timeouts: timeouts(host),
+            control_verified: provider.control_verified,
+        };
+        match factory.connect(options).await {
             Ok(client) => {
                 tracing::info!(host_id=%host.id,provider_id=%provider.id,"connected to shared app-server");
                 self.store
@@ -175,13 +185,9 @@ impl RuntimeRegistry {
                     .lock()
                     .await
                     .insert(provider.id.clone(), identity);
-                let client = Arc::new(CodexAdapter::new(
-                    codex::Codex::new(provider.id.clone(), client)
-                        .with_control(provider.control_verified),
-                ));
                 entry.client = Some(client.clone());
                 entry.failures = 0;
-                Ok(client.provider())
+                Ok(client)
             }
             Err(error) => {
                 entry.failures = entry.failures.saturating_add(1);
@@ -228,73 +234,57 @@ pub fn fingerprint(host: &Host, provider: &Provider) -> String {
     ))
 }
 
+/// Native RPC access for deployment diagnostics and explicitly authorized control probes.
 pub async fn connect(
     host: &Host,
     provider: &Provider,
     config: &Config,
-) -> Result<codex::Client, codex::Error> {
-    let endpoint = match host.transport {
-        TransportKind::LocalProxy => Endpoint::LocalProxy {
-            binary: provider
-                .endpoint
-                .as_ref()
-                .ok_or(codex::Error::Endpoint)?
-                .binary
-                .clone(),
-            socket: provider
-                .endpoint
-                .as_ref()
-                .ok_or(codex::Error::Endpoint)?
-                .socket
-                .clone()
-                .into(),
-        },
+) -> Result<adapters::codex::Client, adapters::codex::Error> {
+    adapters::codex::connect(endpoint(host, provider, config)?, timeouts(host)).await
+}
+
+/// Resolve configuration into an existing transport; never discover or create a daemon here.
+fn endpoint(
+    host: &Host,
+    provider: &Provider,
+    config: &Config,
+) -> Result<Endpoint, adapters::codex::Error> {
+    Ok(match host.transport {
         TransportKind::Websocket => Endpoint::Websocket {
-            endpoint: host.endpoint.clone().ok_or(codex::Error::Endpoint)?,
+            endpoint: host
+                .endpoint
+                .clone()
+                .ok_or(adapters::codex::Error::Endpoint)?,
         },
-        TransportKind::SSHProxy => Endpoint::SshProxy(codex::transport::SSHOptions {
-            alias: host.ssh_alias.clone().ok_or(codex::Error::Endpoint)?,
-            config: host.ssh_config.clone(),
-            binary: provider
+        TransportKind::LocalProxy | TransportKind::SSHProxy => {
+            let endpoint = provider
                 .endpoint
                 .as_ref()
-                .ok_or(codex::Error::Endpoint)?
-                .binary
-                .clone(),
-            socket: Some(
-                provider
-                    .endpoint
-                    .as_ref()
-                    .ok_or(codex::Error::Endpoint)?
-                    .socket
-                    .clone(),
-            ),
-            connect_timeout: Duration::from_secs(host.timeouts.connect_seconds),
-            keepalive_seconds: host.timeouts.keepalive_seconds,
-            keepalive_missed: host.timeouts.keepalive_missed,
-            askpass: ssh_options(host, config)?.askpass,
-            max_auth_attempts: host.authentication.max_attempts,
-            authentication_methods: host.authentication.methods.clone(),
-        }),
-    };
-    connections::connect(
-        endpoint,
-        Timeouts {
-            connect: Duration::from_secs(
-                host.timeouts
-                    .connect_seconds
-                    .saturating_add(host.timeouts.authenticate_seconds)
-                    .saturating_add(host.timeouts.proxy_ready_seconds),
-            ),
-            read: Duration::from_secs(host.timeouts.rpc_read_seconds),
-            write_receipt: Duration::from_secs(host.timeouts.rpc_write_receipt_seconds),
-        },
-    )
-    .await
-    .map_err(|error| match error {
-        connections::Error::Codex(error) => error,
-        connections::Error::Endpoint => codex::Error::Endpoint,
+                .ok_or(adapters::codex::Error::Endpoint)?;
+            let transport = match host.transport {
+                TransportKind::SSHProxy => connections::Host::SSH(ssh_options(host, config)?),
+                _ => connections::Host::Local,
+            };
+            adapters::codex::proxy_endpoint(
+                transport,
+                endpoint.binary.clone(),
+                endpoint.socket.clone(),
+            )?
+        }
     })
+}
+
+fn timeouts(host: &Host) -> Timeouts {
+    Timeouts {
+        connect: Duration::from_secs(
+            host.timeouts
+                .connect_seconds
+                .saturating_add(host.timeouts.authenticate_seconds)
+                .saturating_add(host.timeouts.proxy_ready_seconds),
+        ),
+        read: Duration::from_secs(host.timeouts.rpc_read_seconds),
+        write_receipt: Duration::from_secs(host.timeouts.rpc_write_receipt_seconds),
+    }
 }
 
 pub fn require_workspace(cwd: &str, workspace: &Workspace) -> Result<(), Error> {
@@ -392,23 +382,29 @@ pub async fn list_picker(
 #[path = "session_picker.rs"]
 mod session_picker;
 
-pub fn ssh_options(host: &Host, config: &Config) -> Result<ssh::Options, codex::Error> {
-    Ok(ssh::Options {
-        alias: host.ssh_alias.clone().ok_or(codex::Error::Endpoint)?,
+pub fn ssh_options(
+    host: &Host,
+    config: &Config,
+) -> Result<connections::ssh::Options, adapters::codex::Error> {
+    Ok(connections::ssh::Options {
+        alias: host
+            .ssh_alias
+            .clone()
+            .ok_or(adapters::codex::Error::Endpoint)?,
         config: host.ssh_config.clone(),
         connect_timeout: Duration::from_secs(host.timeouts.connect_seconds),
         keepalive_seconds: host.timeouts.keepalive_seconds,
         keepalive_missed: host.timeouts.keepalive_missed,
-        askpass: ssh::auth::helper(
+        askpass: connections::ssh::auth::helper(
             &host.authentication,
             &host.id,
-            &ssh::auth::AuthContext {
+            &connections::ssh::auth::AuthContext {
                 data_dir: config.service.data_dir.clone(),
                 source: config.source().to_owned(),
                 source_hash: config.source_hash().into(),
             },
         )
-        .map_err(|_| codex::Error::Unsupported)?,
+        .map_err(|_| adapters::codex::Error::Unsupported)?,
         max_auth_attempts: host.authentication.max_attempts,
         authentication_methods: host.authentication.methods.clone(),
     })
@@ -417,13 +413,13 @@ pub fn ssh_options(host: &Host, config: &Config) -> Result<ssh::Options, codex::
 pub async fn discover(
     host: &Host,
     config: &Config,
-) -> Result<Vec<codex::discovery::Endpoint>, codex::Error> {
+) -> Result<Vec<adapters::ServerEndpoint>, adapters::codex::Error> {
     let options = match host.transport {
         TransportKind::SSHProxy => Some(ssh_options(host, config)?),
         TransportKind::LocalProxy => None,
         TransportKind::Websocket => return Ok(vec![]),
     };
-    let mut endpoints = codex::discovery::discover(
+    let mut endpoints = adapters::codex::discovery::discover(
         options,
         Duration::from_secs(
             host.timeouts
@@ -450,71 +446,5 @@ pub async fn discover(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct Paths;
-
-    #[async_trait::async_trait]
-    impl AgentProvider for Paths {
-        fn capabilities(&self) -> session::Capabilities {
-            session::Capabilities::default()
-        }
-
-        async fn list(
-            &self,
-            q: session::SessionQuery,
-        ) -> Result<session::Page<session::Session>, session::ProviderError> {
-            let cwd = q.cwd.unwrap();
-            Ok(session::Page {
-                data: vec![session::Session {
-                    reference: session::SessionRef {
-                        instance: "fixture".into(),
-                        thread: cwd.clone(),
-                    },
-                    title: cwd.clone(),
-                    native_title: Some(cwd.clone()),
-                    cwd,
-                    status: session::RuntimeStatus::Idle,
-                    active_turn: None,
-                    updated_at: None,
-                }],
-                next_cursor: None,
-            })
-        }
-
-        async fn read(&self, _: &str) -> Result<session::Session, session::ProviderError> {
-            Err(session::ProviderError::Unsupported)
-        }
-
-        async fn history(&self, _: &str) -> Result<session::History, session::ProviderError> {
-            Err(session::ProviderError::Unsupported)
-        }
-    }
-
-    #[tokio::test]
-    async fn explicit_worktrees_are_paged_and_old_path_set_cursors_are_rejected() {
-        let mut ws = Workspace {
-            id: "ws".into(),
-            provider_id: "fixture".into(),
-            name: "workspace".into(),
-            short_name: "ws".into(),
-            cwd: "/base".into(),
-            additional_cwds: vec!["/worktree".into(), "/worktree".into()],
-            updated_at: None,
-        };
-        let first = list_workspace(&Paths, &ws, None, 1).await.unwrap();
-        assert_eq!(first.data[0].cwd, "/base");
-        let second = list_workspace(&Paths, &ws, first.next_cursor.clone(), 1)
-            .await
-            .unwrap();
-        assert_eq!(second.data[0].cwd, "/worktree");
-        assert!(second.next_cursor.is_none());
-        ws.additional_cwds = vec!["/changed".into()];
-        assert!(
-            list_workspace(&Paths, &ws, first.next_cursor, 1)
-                .await
-                .is_err()
-        );
-    }
-}
+#[path = "runtimes_tests.rs"]
+mod tests;

@@ -93,7 +93,7 @@ impl Catalog {
     pub async fn discover(
         &self,
         host: &str,
-        endpoint: codex::discovery::Endpoint,
+        endpoint: adapters::ServerEndpoint,
     ) -> Result<Provider, StoreError> {
         // Keep endpoint identity immutable. A changed socket is a new provider;
         // existing bindings and control attestations cannot silently follow it.

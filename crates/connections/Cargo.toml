@@ -6,10 +6,23 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-codex = { path = "../codex" }
-ssh = { path = "../ssh" }
+base64.workspace = true
+fs2.workspace = true
+glob.workspace = true
+i18n.workspace = true
+prost.workspace = true
+regex.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+ssh2-config.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+totp-rs.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

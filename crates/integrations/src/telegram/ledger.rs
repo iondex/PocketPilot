@@ -100,19 +100,7 @@ impl Outbound {
         if self.edit_message.is_some() {
             return Err(crate::telegram::Error::TooLarge);
         }
-        let texts = if self.agent_markdown {
-            session::markdown::Document::parse(&self.text)
-                .map_err(|_| crate::telegram::Error::TooLarge)?
-                .chunks(1000, 64)
-                .into_iter()
-                .map(|d| {
-                    d.markdown(session::markdown::Dialect::CommonMark)
-                        .unwrap_or_else(|| d.plain())
-                })
-                .collect::<Vec<_>>()
-        } else {
-            session::markdown::split_text(&self.text, 3000)
-        };
+        let texts = session::markdown::split_text(&self.text, 3000);
         let total = texts.len();
         Ok(texts
             .into_iter()

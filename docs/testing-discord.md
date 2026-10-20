@@ -15,7 +15,7 @@
 
 ```sh
 make check
-make package FEATURES=discord,slack
+make package
 cargo clean
 ./dist/pocketpilot doctor --credentials --discord
 ./dist/pocketpilot doctor --connect
@@ -28,7 +28,7 @@ cargo clean
 
 `Discord slash-command prototype ready` 表示 REST 初始化、命令注册及客户端构造已完成；它在 `client.start()` 之前输出，**不代表已收到 Gateway Ready**。`Discord Gateway ready` 才表示收到实际 Ready 事件；最终仍以服务器 owner 执行 `/pp` 并点击菜单获得回执为交互接通证据。
 
-只配置 Discord 时移除未使用的 `[telegram]`，避免占位 token 导致另一 integration 启动失败。与 Telegram 共用时，使用启用 Discord feature 的同一个 `serve` 进程；同一 data_dir 不能另起第二个服务。
+只配置 Discord 时移除未使用的 `[telegram]`，避免占位 token 导致另一 integration 启动失败。与 Telegram 共用时，使用同一个 `serve` 进程；同一 data_dir 不能另起第二个服务。
 
 工作区为空时，先检查主机允许路径与执行实例发现；可使用 `workspaces add --provider PROVIDER_ID --cwd /srv/code/pilot-test --name 测试项目` 明确登记测试目录。provider/workspace 保存在 catalog，不在 TOML 新增旧式数组。
 
@@ -106,8 +106,8 @@ NotLoaded 会话仅在明确 `/pp-ask` 时 resume。等待审批/用户输入的
 ## 本地回归
 
 ```sh
-cargo test --release -p discord --all-features --locked
-cargo test --release -p telegram discord --locked
+cargo test --release -p integrations discord:: --locked
+cargo test --release -p integrations telegram::runtime::tests::discord --locked
 ```
 
 第二条命令覆盖 Telegram/Discord 共用连接、操作锁、回执以及 Discord mock HTTP 流程。真实 Gateway、账号权限与客户端体验仍由上述服务器流程验收。

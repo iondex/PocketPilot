@@ -20,7 +20,7 @@ PocketPilot 不启动、升级、重启或停止原生 daemon。缺少共享入�
 
 Telegram 凭据只有 token，另有 default_locale=zh-CN/en/auto 控制默认语言。bot ID 来自 getMe，私聊用户须经本机 CLI approve，无配置 chat/user 允许列表。SQLite 配对申请表只保存一次性码 hash；投递队列为发送而短暂保存明文，进入终态后清除。更换 bot 按 bot ID 隔离账号数据，不继承旧配对。
 
-Discord 是可选编译功能，配置 token 和 guild_id。原型只允许该服务器 owner 使用；category 默认对 @everyone 隐藏，对 owner 和 bot 开放。服务器管理员依旧受 Discord 自身权限规则约束，不能把 category 当成隔绝管理员的安全边界。
+Discord 始终包含在默认构建中，配置 token 和 guild_id 后启用。原型只允许该服务器 owner 使用；category 默认对 @everyone 隐藏，对 owner 和 bot 开放。服务器管理员依旧受 Discord 自身权限规则约束，不能把 category 当成隔绝管理员的安全边界。
 
 密码、key passphrase 和 TOTP seed 均从根 TOML 读取，Debug/日志/错误脱敏。普通设置不存在环境变量覆盖；CODEX_SCHEMA_BIN 仅选择编译期 schema 工具，CODEX_TEST_BIN 仅供隔离原生兼容测试。
 

@@ -21,6 +21,11 @@ impl Text {
                 | Style::Italic { text }
                 | Style::Strikethrough { text }
                 | Style::Code { text }
+                | Style::Underline { text }
+                | Style::Subscript { text }
+                | Style::Superscript { text }
+                | Style::Marked { text }
+                | Style::Spoiler { text }
                 | Style::ReferenceLink { text, .. } => text.plain(),
                 Style::Url { text, url } => {
                     let text = text.plain();
@@ -42,6 +47,11 @@ impl Text {
 pub enum Style {
     Bold { text: Text },
     Italic { text: Text },
+    Underline { text: Text },
+    Subscript { text: Text },
+    Superscript { text: Text },
+    Marked { text: Text },
+    Spoiler { text: Text },
     Strikethrough { text: Text },
     Code { text: Text },
     Url { text: Text, url: String },
@@ -90,6 +100,11 @@ pub enum Block {
     Blockquote {
         blocks: Vec<Block>,
     },
+    Details {
+        summary: Text,
+        blocks: Vec<Block>,
+        is_open: bool,
+    },
     List {
         items: Vec<ListItem>,
     },
@@ -131,6 +146,17 @@ impl Block {
                 .map(Block::plain)
                 .collect::<Vec<_>>()
                 .join("\n\n"),
+            Self::Details {
+                summary, blocks, ..
+            } => format!(
+                "{}\n\n{}",
+                summary.plain(),
+                blocks
+                    .iter()
+                    .map(Block::plain)
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            ),
             Self::List { items } => items
                 .iter()
                 .map(|item| {
@@ -186,7 +212,9 @@ impl Block {
 
     fn cost(&self) -> usize {
         1 + match self {
-            Self::Blockquote { blocks } => blocks.iter().map(Block::cost).sum(),
+            Self::Blockquote { blocks } | Self::Details { blocks, .. } => {
+                blocks.iter().map(Block::cost).sum()
+            }
             Self::List { items } => items
                 .iter()
                 .map(|item| 1 + item.blocks.iter().map(Block::cost).sum::<usize>())
@@ -283,10 +311,18 @@ impl Renderer for RichRenderer {
 fn part(mut blocks: Vec<Block>, mut text: String, heading: Option<&str>) -> Result<Part, TooLarge> {
     if let Some(heading) = heading {
         let title = Document::parse(heading)?;
+        // Phase labels may be separate parser paragraphs; the repeated title stays one line.
+        let mut title_parts = Vec::new();
+        for node in title.nodes() {
+            if !title_parts.is_empty() {
+                title_parts.push(Text::Plain(" ".into()));
+            }
+            title_parts.push(inline(std::slice::from_ref(node)));
+        }
         blocks.insert(
             0,
             Block::Paragraph {
-                text: inline(title.nodes()),
+                text: Text::Sequence(title_parts),
             },
         );
         text = format!("{heading}\n\n{text}");
@@ -340,6 +376,11 @@ fn blocks(nodes: &[Node]) -> Vec<Block> {
             }),
             Node::Group(Kind::Quote, children) => result.push(Block::Blockquote {
                 blocks: blocks(children),
+            }),
+            Node::Group(Kind::Details { summary, open }, children) => result.push(Block::Details {
+                summary: Text::Plain(summary.clone()),
+                blocks: blocks(children),
+                is_open: *open,
             }),
             Node::Group(Kind::List(start), items) => {
                 let items = items
@@ -465,6 +506,11 @@ fn inline(nodes: &[Node]) -> Text {
                         let style = match kind {
                             Kind::Strong => Style::Bold { text },
                             Kind::Emphasis => Style::Italic { text },
+                            Kind::Underline => Style::Underline { text },
+                            Kind::Subscript => Style::Subscript { text },
+                            Kind::Superscript => Style::Superscript { text },
+                            Kind::Marked => Style::Marked { text },
+                            Kind::Spoiler => Style::Spoiler { text },
                             Kind::Strike => Style::Strikethrough { text },
                             Kind::Link(Some(url)) | Kind::Image(Some(url)) => Style::Url {
                                 text,
@@ -479,3 +525,7 @@ fn inline(nodes: &[Node]) -> Text {
             .collect(),
     )
 }
+
+#[cfg(test)]
+#[path = "rich_tests.rs"]
+mod tests;

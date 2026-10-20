@@ -41,7 +41,7 @@ Socket 回调只做身份检查和有界持久化，收到业务事件后以 `(n
 
 worker 执行慢 SSH / agent 操作。交互和 modal 保持三秒预算；耗时执行不阻塞 ACK。消息编辑、删除、自身输出、bot 消息、空文字和未绑定 thread 均不构成任务。在已绑定 thread 中，文件与可选文字一起提交；纯文件使用“请查看上传的附件”作为请求。DM 主输入框附件不选择默认会话。附件在授权后下载并写入所选 Codex 主机的私有附件目录；图片作为原生图片输入，文档以文件路径上下文传入。
 
-所有菜单、卡片、错误和正文在 DM 中以普通持久消息发送，不使用 chat.postEphemeral。过程和结果投递到相应 thread，根卡片仅在状态/标题变化时更新。菜单、状态和错误使用 plain_text block；短正文通过公共 Markdown 解析生成普通 rich_text block。fallback 是可读纯文本，转义 & / < / > 并显式关闭顶层 mrkdwn 与 link_names；不生成可执行 mention 元素。长输出按结构拆分成普通富文本消息，不生成历史文件；历史导出入口已移除。每段与已确认段号持久保存，未知段不重发。Slack 正文保守限制为 2,800 个 UTF-16 单元或 50 个富文本元素。格式边界见 [Markdown 说明](../research/chat-formatting.md)。
+所有菜单、卡片、错误和正文在 DM 中以普通持久消息发送，不使用 chat.postEphemeral。过程和结果投递到相应 thread，根卡片仅在状态/标题变化时更新。菜单、状态和错误使用 plain_text block；正文通过公共 Markdown 解析生成 rich_text、header 和原生 table block。fallback 是可读纯文本，转义 & / < / > 并显式关闭顶层 mrkdwn 与 link_names；不生成可执行 mention 元素。长输出按结构拆分成普通富文本消息，不生成历史文件；历史导出入口已移除。每段与已确认段号持久保存，未知段不重发。Slack 正文保守限制为 2,800 个 UTF-16 单元或 50 个富文本元素。格式边界见 [Markdown 说明](../research/chat-formatting.md)。
 
 上传方向与限制见 [附件说明](../attachments.md)。
 

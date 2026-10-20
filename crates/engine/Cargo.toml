@@ -7,10 +7,8 @@ publish.workspace = true
 
 [dependencies]
 i18n.workspace = true
-ssh = { path = "../ssh" }
-codex = { path = "../codex" }
-connections = { path = "../connections" }
 adapters = { path = "../adapters" }
+connections = { path = "../connections" }
 session = { path = "../session" }
 async-trait.workspace = true
 arc-swap.workspace = true

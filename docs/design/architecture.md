@@ -1,28 +1,26 @@
 # 架构、Rust 接口与数据设计
 
-状态：架构契约与接口设计。当前已实现 Telegram 服务和可选 Discord / Slack 原型；下方接口示例表达职责，部分名称/高级能力仍为设计目标。实际文件与验证边界见实施计划和验证记录，不能将示例当作已导出的 Rust API。
+状态：架构契约与接口设计。当前已实现 Telegram、Discord 与 Slack 接入；下方接口示例表达职责，部分名称/高级能力仍为设计目标。实际文件与验证边界见实施计划和验证记录，不能将示例当作已导出的 Rust API。
 
 ## 当前源码边界
 
-十个 crate 均为 publish=false，源码物理目录保持 src/ 下单层文件。
+七个 crate 均为 publish=false。session、engine、app、i18n 保持 src/ 下平铺；connections/src/ssh、adapters/src/codex 和 integrations 的平台目录容纳各自实现，测试放入独立源码文件。
 
 | crate | 所有权 |
 | --- | --- |
 | i18n | rust-i18n 共享中英文 ID 资源、显式 locale、参数插值与类型化错误展示；不依赖其他项目 crate |
-| ssh | 原生 SSH 配置、ProxyJump/ProxyCommand、连接参数、askpass、TOTP 与认证导出解析；不依赖 app/engine/codex |
 | session | 统一 AgentProvider、领域模型、允许的 Mutation、历史与消息规则 |
-| connections | local / SSH proxy / websocket endpoint 和 Codex transport seam；不持有聊天授权 |
-| adapters | agent runtime seam 与 Codex adapter；Claude Code / Pi runtime server 仍在规划 |
-| codex | Codex DTO、RPC/framing 和 app-server 原生实现，由 adapters 作为 runtime adapter 使用 |
+| connections | 通用 Connection 命令接口、local / SSH proxy / websocket endpoint；ssh 模块拥有原生 OpenSSH 配置、认证与 TOTP，不持有聊天授权 |
+| adapters | 通用 Adapter / AdapterFactory 与 AgentProvider 能力；codex 模块拥有 DTO、发现、RPC/framing 和 app-server 实现，Claude Code / Pi runtime server 仍在规划 |
 | engine | 配置快照、agent runtime registry、操作账本、会话锁、catalog 与执行编排 |
 | integrations | Telegram、Discord、Slack 的消息接收和控制端；各平台协议、菜单、SQL、投递及内部 network 模块按目录隔离 |
 | app | 根配置组合、日常 CLI、tracing、catalog 后台刷新、Integration 装配与退出 |
 
-依赖方向：各 crate → i18n；app → integrations/engine；integrations → engine → codex → ssh/session。engine 不引用 integrations，integrations 不依赖 app。各平台持有自己的 Store 包装，共用 engine 的 runtime registry 与服务锁；平台 SQL 不放回 app。这是一份应用内边界，不是数据库权限隔离。
+依赖方向：各 crate → i18n；app → integrations/engine；integrations → engine → adapters → connections/session。engine 不引用 integrations，integrations 不依赖 app。各平台持有自己的 Store 包装，共用 engine 的 runtime registry 与服务锁；平台 SQL 不放回 app。这是一份应用内边界，不是数据库权限隔离。
 
 Telegram runtime 只组装任务；commands/input/routing/binding/navigation/new_session/topics/history_view/management/observation/delivery/inbox 分担职责。持久收发进一步分为 inbox_store/outbox/ledger。Discord 使用对应平铺模块。engine::operations 统一处理已获授权写操作的回执与 OutcomeUnknown，平台分别保留授权/时效/绑定检查与 dispatch 原子边界。
 
-模块按功能和变化原因拆分，物理文件仍平铺在各 crate 的 src/ 下；内部实现通过私有模块和最小可见性组合，外部调用继续使用原有入口：
+模块按功能和变化原因拆分，各实现目录内保持文件平铺，通过私有模块和最小可见性组合：
 
 - Codex 的 provider 定义能力并实现只读会话观察；listing 管理已加载/已存储会话分页及游标作用域，mapping 将生成 DTO 转为 session 模型，mutations 集中显式授权写操作及原生输入编码。协议转换与写操作测试分别靠近所属实现。
 - Telegram 的 navigation 编排菜单发布、选择和项目管理；navigation_model 保存菜单内容、文案类型和原生按钮布局，navigation_store 负责菜单快照、发布回执与原子消费。浏览刷新和项目增删共用 catalog 快照加载与发布流程。
@@ -48,9 +46,9 @@ PocketPilot 是会话的附加客户端和聊天平台桥接器。Codex 继续�
 
 ```mermaid
 flowchart TB
-  T[Telegram adapter] --> I[持久化 Inbox + 授权]
-  D[可选 Discord adapter] --> I
-  S[可选 Slack adapter] --> I
+  T[Telegram integration] --> I[持久化 Inbox + 授权]
+  D[Discord integration] --> I
+  S[Slack integration] --> I
   I --> C[应用服务 / Command router]
   C --> A[每 thread 串行 SessionActor]
   A --> P[AgentProvider]
@@ -345,7 +343,7 @@ Telegram 的 presentation/markdown/presence/i18n 是独立平铺模块。Appeara
 
 ## 公共正文与平台显示
 
-session::markdown 以 pulldown-cmark 为语法解析器，集中提供有界文档结构、中文粗体兼容、安全链接、表格降级和纯文本 fallback；Telegram 复用输入解析，保留已有 HTML 渲染。Slack 把公共结构映射为 SDK 的普通 rich_text 元素，Discord 映射为其 Markdown 子集。平台菜单、状态和错误使用字面文本入口，不把动态标题作为正文语法。RuntimeStatus::text_in 提供共同的无图标状态文案，图标由平台入口决定。
+session::markdown 以 pulldown-cmark 为语法解析器，集中提供有界文档结构、中文粗体兼容、安全链接、表格/对齐/公式/脚注和纯文本 fallback。私有 syntax、segmentation、formatting、html 模块分别处理输入预处理、分段、文本格式输出和安全标签识别，文件保持平铺。Telegram 映射为 RichMessage blocks，Slack 映射为 SDK 的 rich_text/header/table，Discord 通过 Components V2 映射为其 Markdown 子集。平台菜单、状态和错误使用字面文本入口，不把动态标题作为正文语法。RuntimeStatus::text_in 提供共同的无图标状态文案，图标由平台入口决定。
 
 原始 Markdown 与显示文本分别保留；文字按文档结构分段并分别渲染，显示超限时继续分段，不能保真的语法保持字面内容；不提供历史导出或自动生成历史附件。UTF-16 长度与公共预览的 grapheme 边界分别处理。Slack 顶层 fallback 禁用标记解析，Discord 所有消息和编辑保留 allowed_mentions；格式优化不改变 outbox、未知结果、权限或原生操作语义。能力、验证范围和第三方库选型见 [Markdown 与 emoji](../research/chat-formatting.md)。
 

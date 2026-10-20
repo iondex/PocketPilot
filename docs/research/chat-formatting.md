@@ -6,7 +6,7 @@
 
 菜单的共享层应统一 workspace → 项目/目录 → session 的语义、状态和文案；展示层保留平台适配。Agent 正文应先解析为 Markdown 结构，再生成 Slack 或 Discord 内容，不能把同一份原始 Markdown 无差别发送给两端。Unicode emoji 可作为共同基础，但状态必须同时保留文字，不能仅靠圆点颜色区分。
 
-当前菜单和动态标签保持纯文本；Agent 正文共用 `session::markdown`，Slack 输出普通 `rich_text` blocks，Discord 输出支持的 Markdown 子集。两端共享语义，具体排版由客户端决定。[代码：Slack 渲染](../../crates/slack/src/render.rs) · [代码：Discord 发送](../../crates/discord/src/api.rs)
+当前菜单和动态标签保持纯文本；Agent 正文共用 `session::markdown`，Slack 输出 `rich_text`、标题与原生表格，Discord 以 Components V2 Text Display 输出支持的 Markdown 子集，Telegram 输出 RichMessage blocks。两端共享语义，具体排版由客户端决定。[代码：Slack 渲染](../../crates/integrations/src/slack/render.rs) · [代码：Discord 发送](../../crates/integrations/src/discord/api.rs)
 
 ### 富消息的能力上限与选择
 
@@ -93,11 +93,11 @@ Message 正文文档将 `content` 上限列为 2,000 字符，但本次读取的
 
 当前使用的普通 `sendMessage` 支持 `parse_mode=HTML`、MarkdownV2 或显式 entities，文字上限为解析后 4,096 字符。官方格式列表包括粗体、斜体、下划线、删除线、剧透、引用、链接、行内代码和代码块；HTML 是白名单标签而非浏览器 HTML，不能发送 `<table>`、`<h1>` 或 `<ul>` 期望获得对应结构。标题可降级为粗体，列表和表格用可读文本表达。[T1]
 
-MarkdownV2 不是 CommonMark：普通文本中 `` _ * [ ] ( ) ~ ` > # + - = | { } . ! `` 等字符必须按官方规则转义，code/pre 和 URL 还有各自规则。继续从解析结构输出 HTML，可避免将 Agent 原文直接当作可信 HTML 或 MarkdownV2。[T1]
+MarkdownV2 不是 CommonMark：普通文本中 `` _ * [ ] ( ) ~ ` > # + - = | { } . ! `` 等字符必须按官方规则转义，code/pre 和 URL 还有各自规则。从解析结构输出类型化节点，可避免将 Agent 原文直接当作可信 HTML 或 MarkdownV2。[T1]
 
 但 Telegram 已在 Bot API 10.1（2026-06-11）引入 Rich Messages，10.2 又补充显式输入 blocks。`sendRichMessage` 使用 `InputRichMessage`，其中 `markdown`、`html`、`blocks` 必须三选一；Rich Markdown 与 Rich HTML 支持标题、列表、表格、任务、折叠内容、脚注和公式，不能与普通 `sendMessage.parse_mode` 混为一谈。当前文档限制为文本 32,768 个 UTF-8 字符、500 blocks、嵌套深度 16、表格最多 20 列。`skip_entity_detection=true` 可关闭自动检测 URL、username mention、hashtag 等实体。[T2][T3][T4]
 
-普通 bot 可调用 `sendRichMessage`；文档另述代表 business account 发送时，账号本身也必须能发 rich messages，含媒体的 block 还要求聊天媒体权限。当前仓库尚未采用该 API。升级需要独立处理发送、编辑、SDK DTO、客户端验收、链接/实体策略、分段和持久投递，不应把 Rich HTML 白名单扩展直接套在当前 `parse_mode=HTML` 上。[T2][T3]
+普通 bot 可调用 `sendRichMessage`；文档另述代表 business account 发送时，账号本身也必须能发 rich messages，含媒体的 block 还要求聊天媒体权限。当前仓库已采用 blocks 路径，使用类型化 DTO 调用发送与编辑接口，按结构分段并固定投递布局；不再保留旧 HTML 正文渲染。客户端呈现仍需实测。[T2][T3]
 
 ## 4. Emoji：Unicode 为默认，平台自定义能力分开处理
 
@@ -129,22 +129,23 @@ Discord 文档说明其桌面/Android 与 iOS 采用不同 emoji 图形资源，
 | --- | --- |
 | 公共解析 | `session::markdown` 使用锁定的 `pulldown-cmark`；共享 Telegram 既有中文粗体与 phase label 兼容处理，不复用 Telegram HTML |
 | 公共边界 | 输入最多 8 MiB、深度 64、解析事件 8,192；过度结构降级为原文字面文本；仅接受无 URL 凭据的 http/https/mailto 链接 |
-| 表格与任务 | 表格转换为“列名：值”的行，保留单元格内的链接与强调；任务标记显示为 Unicode 勾选框 |
-| Slack 正文 | 标题显示粗体 `rich_text_section`；强调、引用、代码和列表使用普通 `rich_text` 元素；不生成 User/Broadcast/Channel mention 元素；尚未使用原生 table block |
+| 表格与任务 | 保留表格结构和对齐、任务标记、公式与脚注；Slack/Telegram 输出原生表格，Discord 降级为保留链接和强调的“列名：值”行 |
+| Slack 正文 | 标题与表格使用原生 header/table block；强调、引用、代码和列表使用普通 `rich_text` 元素；不生成 User/Broadcast/Channel mention 元素 |
 | Slack fallback | 从文档生成可读纯文本，转义 `& < >`；post/update 显式 `mrkdwn=false`、`link_names=false`，post 禁用自动 URL 解析与 unfurl |
-| Discord 正文 | 生成标题、强调、引用、列表、链接和代码子集；原文中的 Discord 专属提及/剧透语法作为文字，所有发送、编辑和交互保留 `allowed_mentions` 禁用通知 |
+| Discord 正文 | 使用 Components V2 原生容器、Text Display 与分隔；文本支持标题、强调、引用、列表、链接、代码和解析出的剧透，表格与公式降级为可读文本；所有发送、编辑和交互保留 `allowed_mentions` 禁用通知 |
+| Telegram 正文 | 类型化 RichMessage blocks，支持标题、表格、列表、任务、代码、引用、公式、脚注与折叠内容；安全识别的行内 HTML 标签转换为样式，未知标签作为文字 |
 | 菜单与状态 | 动态标题、目录、选项保持字面意义；共享 `RuntimeStatus::text_in` 提供不带图标的状态，Telegram 原有带图标入口保留 |
-| 文字与长度 | Slack 保守预算 2,800、Discord 渲染后 1,800、Telegram 3,500，按 UTF-16 计数；公共文档按结构分段，每段独立渲染，复杂语法降级为字面文本，不生成 `session.md` |
+| 文字与长度 | Slack 保守预算 2,800、Discord 渲染后 1,800、Telegram 按 6,000 预分段，并检查原生块数量、嵌套深度和最终 12,000 UTF-16 预算；公共文档按结构分段，每段独立渲染，复杂语法降级为字面文本，不生成 `session.md` |
 | 历史与附件 | 三端只保留最近交互，不提供历史导出入口；独立文件附件用于用户上传给 Codex，文件本身与聊天文字分开处理 |
 | 持久兼容 | 旧 Slack outbox 没有 format 字段时默认为纯文本；新正文明确标记 Markdown；发送与未知结果保护延用原账本 |
 
-代码依据：[公共解析](../../crates/session/src/markdown.rs)、[Slack 适配](../../crates/slack/src/markdown.rs)、[Slack API](../../crates/slack/src/api.rs)、[Discord 适配](../../crates/discord/src/render.rs)、[Discord Gateway](../../crates/discord/src/gateway.rs)。预算是项目自己的保守阈值，不是平台上限。Unicode emoji 保留原文，自定义 shortcode 不跨平台猜测转换，不增加 emoji 权限。
+代码依据：[公共解析](../../crates/session/src/markdown.rs)、[Slack 适配](../../crates/integrations/src/slack/markdown.rs)、[Slack API](../../crates/integrations/src/slack/api.rs)、[Discord 适配](../../crates/integrations/src/discord/render.rs)、[Discord Gateway](../../crates/integrations/src/discord/gateway.rs)。预算是项目自己的保守阈值，不是平台上限。Unicode emoji 保留原文，自定义 shortcode 不跨平台猜测转换，不增加 emoji 权限。
 
 ## 6. 验证与后续范围
 
-本地测试覆盖中文标点粗体、嵌套强调、HTML 字面文本、安全链接、代码、任务清单、表格降级、emoji/组合字符、UTF-16 长度，附件下载预算、原生文件写入，以及 SDK 请求的通知保护、旧 outbox 默认值和分段恢复。Telegram 既有 HTML 渲染行为保留并纳入全 workspace 回归。Slack 的 `blocks.validate` 已接受覆盖 section、链接、有序列表、引用及带语言代码块的合成 payload；该只读校验不等同于桌面/移动端视觉验收。
+本地测试覆盖中文标点粗体、嵌套强调、HTML 字面文本、安全链接、代码、任务清单、表格降级、emoji/组合字符、UTF-16 长度，附件下载预算、原生文件写入，以及 SDK 请求的通知保护、旧 outbox 默认值和分段恢复。Telegram 新 RichMessage 覆盖类型化结构、安全链接、标签白名单、分段与深度预算；旧 HTML 渲染及其测试已移除。Slack 的 `blocks.validate` 已接受覆盖 section、链接、有序列表、引用及带语言代码块的合成 payload；该只读校验不等同于桌面/移动端视觉验收。
 
-长文字以多个普通消息连续显示。投递前固定各段内容并持久保存；每段回执后记录下一个段号，重启从未发送段继续。当前段回执未知则停留在 outcome_unknown，不重发已确认段或未知段。段间复用原平台的发送预算和绑定/权限检查。桌面/移动端显示和实际通知仍需按 [Slack 操作指南](../slack-setup.md)、[Discord 测试指南](../testing-discord.md) 由用户触发验收。
+长文字以多个原生富消息连续显示。投递前固定各段内容并持久保存；每段回执后记录下一个段号，重启从未发送段继续。当前段回执未知则停留在 outcome_unknown，不重发已确认段或未知段。段间复用原平台的发送预算和绑定/权限检查。桌面/移动端显示和实际通知仍需按 [Slack 操作指南](../slack-setup.md)、[Discord 测试指南](../testing-discord.md) 由用户触发验收。
 
 第三方库的维护、许可和适配范围见 [选型核验](markdown-libraries.md)。
 
