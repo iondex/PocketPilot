@@ -1,5 +1,7 @@
 mod cli;
 
+mod doctor;
+
 mod telemetry;
 
 #[tokio::main]

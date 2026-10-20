@@ -1,11 +1,9 @@
-use app::config::{self, Config, Host, TransportKind};
+use app::config::{self, Config, TransportKind};
 use clap::{Parser, Subcommand};
 use engine::catalog::Catalog;
 use secrecy::ExposeSecret;
 use serde::Serialize;
-use session::{AgentProvider, SessionQuery};
 use std::{io::Write, path::PathBuf, time::Duration};
-use telegram::credentials;
 
 #[derive(Parser)]
 #[command(
@@ -36,18 +34,7 @@ enum Command {
     /// Run configured integrations until Ctrl-C or SIGTERM.
     Serve,
     /// Validate configuration and diagnose capabilities. Network probes require explicit flags.
-    Doctor {
-        /// Also check configured credentials offline (never prints their values).
-        #[arg(long)]
-        credentials: bool,
-        #[arg(long)]
-        connect: bool,
-        #[arg(long)]
-        telegram: bool,
-        /// Read Discord bot/application/guild identity without registering commands.
-        #[arg(long)]
-        discord: bool,
-    },
+    Doctor(crate::doctor::Options),
     /// List configured hosts or discover candidate SSH aliases without logging in.
     Hosts {
         #[command(subcommand)]
@@ -186,48 +173,6 @@ fn print(value: &impl Serialize) -> Result<(), Error> {
     writeln!(std::io::stdout().lock(), "{output}").map_err(|_| Error::Output)
 }
 
-#[derive(Serialize)]
-struct ConfigurationSummary {
-    hosts: usize,
-    providers: usize,
-    workspaces: usize,
-    telegram_configured: bool,
-    discord_configured: bool,
-    discord_runtime_enabled: bool,
-    slack_configured: bool,
-    slack_runtime_enabled: bool,
-    credentials_checked: bool,
-    control_enabled: bool,
-}
-
-fn configuration_summary(config: &Config, check: bool) -> Result<ConfigurationSummary, Error> {
-    if check && let Some(telegram) = &config.telegram {
-        let _ = credentials::read(telegram)?;
-    }
-    if check
-        && config
-            .slack
-            .as_ref()
-            .is_some_and(|s| !s.credentials_valid())
-    {
-        return Err(config::ConfigError::Credentials.into());
-    }
-    // Discord checks non-empty credentials and guild ID during config loading;
-    // token validity and permissions require a real Discord connection.
-    Ok(ConfigurationSummary {
-        hosts: config.hosts.len(),
-        providers: config.providers.len(),
-        workspaces: config.workspaces.len(),
-        telegram_configured: config.telegram.is_some(),
-        discord_configured: config.discord.is_some(),
-        discord_runtime_enabled: cfg!(feature = "discord"),
-        slack_configured: config.slack.is_some(),
-        slack_runtime_enabled: cfg!(feature = "slack"),
-        credentials_checked: check,
-        control_enabled: config.providers.iter().any(|p| p.control_verified),
-    })
-}
-
 #[derive(Debug)]
 pub struct Failure {
     error: Error,
@@ -288,12 +233,7 @@ async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Re
     match args.command {
         Command::SSHAskpass { .. } => unreachable!(),
         Command::Serve => app::runtime::run(args.config).await?,
-        Command::Doctor {
-            credentials,
-            connect,
-            telegram,
-            discord,
-        } => doctor(&config, credentials, connect, telegram, discord).await?,
+        Command::Doctor(options) => print(&crate::doctor::inspect(&config, &options).await?)?,
         Command::Pair { command } => {
             let store = telegram::pairing::Registry::open(&config.service.data_dir).await?;
             let now = std::time::SystemTime::now()
@@ -417,141 +357,6 @@ fn transport_name(kind: TransportKind) -> &'static str {
     }
 }
 
-async fn connect(host: &Host, config: &Config) -> Result<usize, Error> {
-    for endpoint in engine::connections::discover(host, config).await? {
-        let catalog = Catalog::open(&config.service.data_dir).await?;
-        catalog.discover(&host.id, endpoint).await?;
-    }
-    let mut effective = config.runtime.clone();
-    Catalog::open(&config.service.data_dir)
-        .await?
-        .load(&mut effective)
-        .await?;
-    let provider = effective
-        .providers
-        .iter()
-        .find(|p| p.host_id == host.id)
-        .ok_or(Error::SharedEndpoint)?;
-    let client = engine::connections::connect(host, provider, &effective).await?;
-    let agent = codex::Codex::new(provider.id.clone(), client);
-    let page = agent
-        .list(SessionQuery {
-            cwd: None,
-            cursor: None,
-            limit: 10,
-            archived: false,
-        })
-        .await?;
-    Ok(page.data.len())
-}
-
-async fn check_telegram(config: &Config) -> Result<telegram::Identity, Error> {
-    let tg = config.telegram.as_ref().ok_or(Error::Selection)?;
-    let token = credentials::read(tg)?;
-    Ok(
-        telegram::Inspector::new(token, Duration::from_secs(30), &tg.proxy)?
-            .check()
-            .await?,
-    )
-}
-
-async fn doctor(
-    config: &Config,
-    check: bool,
-    probe: bool,
-    telegram: bool,
-    discord: bool,
-) -> Result<(), Error> {
-    #[derive(Serialize)]
-    struct HostCheck {
-        id: String,
-        name: String,
-        ssh_alias: Option<String>,
-        configured: bool,
-        sample_sessions: Option<usize>,
-        connected: Option<bool>,
-        reason: Option<String>,
-        control_verified: bool,
-    }
-
-    #[derive(Serialize)]
-    struct Report {
-        configuration: ConfigurationSummary,
-        hosts: Vec<HostCheck>,
-        telegram: Option<telegram::Identity>,
-        discord: Option<discord::Identity>,
-        control_enabled: bool,
-        note: String,
-    }
-    let configuration = configuration_summary(config, check)?;
-    let mut tasks = tokio::task::JoinSet::new();
-    for host in config.hosts.clone() {
-        let config = config.clone();
-        tasks.spawn(async move {
-            let (connected, reason, sample_sessions) = if probe {
-                match connect(&host, &config).await {
-                    Ok(count) => (Some(true), None, Some(count)),
-                    Err(error) => (
-                        Some(false),
-                        Some(i18n::LocalizedError::localized(&error, &config.language)),
-                        None,
-                    ),
-                }
-            } else {
-                (None, None, None)
-            };
-            HostCheck {
-                id: host.id.clone(),
-                name: host.name.clone(),
-                ssh_alias: host.ssh_alias.clone(),
-                configured: true,
-                sample_sessions,
-                connected,
-                reason,
-                control_verified: config
-                    .providers
-                    .iter()
-                    .any(|p| p.host_id == host.id && p.control_verified),
-            }
-        });
-    }
-    let mut hosts = vec![];
-    while let Some(result) = tasks.join_next().await {
-        hosts.push(result.map_err(|_| Error::Selection)?);
-    }
-    hosts.sort_by(|a, b| a.id.cmp(&b.id));
-    let telegram = if telegram {
-        Some(check_telegram(config).await?)
-    } else {
-        None
-    };
-    let discord = if discord {
-        #[cfg(feature = "discord")]
-        {
-            let settings = config.discord.as_ref().ok_or(Error::Selection)?;
-            Some(
-                tokio::time::timeout(Duration::from_secs(30), discord::Api::inspect(settings))
-                    .await
-                    .map_err(|_| discord::Error::Request)??,
-            )
-        }
-        #[cfg(not(feature = "discord"))]
-        {
-            return Err(app::runtime::Error::Feature.into());
-        }
-    } else {
-        None
-    };
-    print(&Report {
-        configuration,
-        hosts,
-        telegram,
-        discord,
-        control_enabled: config.providers.iter().any(|p| p.control_verified),
-        note: i18n::text(&config.language, "cli.doctor_note"),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,49 +374,24 @@ mod tests {
         .unwrap();
         assert!(matches!(
             args.command,
-            Command::Doctor {
+            Command::Doctor(crate::doctor::Options {
                 credentials: true,
                 connect: true,
                 telegram: true,
                 discord: true,
-            }
+            })
         ));
         let args = Arguments::try_parse_from(["pocketpilot", "doctor"]).unwrap();
         assert!(matches!(
             args.command,
-            Command::Doctor {
+            Command::Doctor(crate::doctor::Options {
                 credentials: false,
                 connect: false,
                 telegram: false,
                 discord: false,
-            }
+            })
         ));
         assert!(Arguments::try_parse_from(["pocketpilot", "config-check"]).is_err());
-    }
-
-    #[test]
-    fn offline_credentials_check_supports_discord_only_and_redacts_tokens() {
-        let path = std::path::Path::new("/tmp/pocketpilot.toml");
-        let discord = config::parse(
-            path,
-            "[discord]\ntoken='fixture-discord-secret'\nguild_id=2",
-        )
-        .unwrap()
-        .config;
-        let summary = configuration_summary(&discord, true).unwrap();
-        let json = serde_json::to_value(summary).unwrap();
-        assert_eq!(json["discord_configured"], true);
-        assert_eq!(json["telegram_configured"], false);
-        assert_eq!(json["credentials_checked"], true);
-        assert!(!json.to_string().contains("fixture-discord-secret"));
-        let telegram = config::parse(path, "[telegram]\ntoken='invalid-fixture-secret'")
-            .unwrap()
-            .config;
-        assert!(configuration_summary(&telegram, false).is_ok());
-        assert!(matches!(
-            configuration_summary(&telegram, true),
-            Err(Error::Config(config::ConfigError::Credentials))
-        ));
     }
 
     #[test]

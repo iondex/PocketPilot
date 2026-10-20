@@ -23,6 +23,12 @@
 
 Telegram runtime 只组装任务；commands/input/routing/binding/navigation/new_session/topics/history_view/management/observation/delivery/inbox 分担职责。持久收发进一步分为 inbox_store/outbox/ledger。Discord 使用对应平铺模块。engine::operations 统一处理已获授权写操作的回执与 OutcomeUnknown，平台分别保留授权/时效/绑定检查与 dispatch 原子边界。
 
+模块按功能和变化原因拆分，物理文件仍平铺在各 crate 的 src/ 下；内部实现通过私有模块和最小可见性组合，外部调用继续使用原有入口：
+
+- Codex 的 provider 定义能力并实现只读会话观察；listing 管理已加载/已存储会话分页及游标作用域，mapping 将生成 DTO 转为 session 模型，mutations 集中显式授权写操作及原生输入编码。协议转换与写操作测试分别靠近所属实现。
+- Telegram 的 navigation 编排菜单发布、选择和项目管理；navigation_model 保存菜单内容、文案类型和原生按钮布局，navigation_store 负责菜单快照、发布回执与原子消费。浏览刷新和项目增删共用 catalog 快照加载与发布流程。
+- app 的 cli 负责命令解析、调度和输出；doctor 持有具名诊断选项、离线凭据检查和显式连接探测，返回可序列化报告，由 CLI 输出。诊断模块不直接写标准输出。
+
 Discord 的 gateway 只管理连接、代理 relay 和退出；command_menu 定义及注册命令，interactions 负责交互 ACK、输入解析、授权和私有回复。menus 读取目录与会话并描述导航页面，menu_model 将显示选项与目标配对，统一保存有作用域的动作并生成原生控件；ui 保留持久化导航类型和显示规则。目录选择继续共用 engine::navigation，平台动作 SQL 留在 Discord Store。
 
 根 TOML 与 catalog 合成一个不可变运行快照。provider/workspace 定义在 engine::model；配置反序列化跳过这两个运行字段，拒绝旧 TOML 中的静态目录。workspace_discovery 从分页会话 metadata 中补充允许路径内的 cwd，保留手工入口和移除排除记录。catalog 更新约两秒内可见；CAS 发布防止并发配置 reload 把已撤销主机重新带回。
@@ -229,7 +235,7 @@ Freshness 保存 observed_at 和连接 epoch。推荐新鲜状态窗口 15 秒�
 
 ## 6. 持久化
 
-SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署。迁移由 sqlx 管理；数据只存 PocketPilot 目录，不修改 Codex DB/rollout。根目录单一 TOML 管普通设置、host/workspace 和内联 token，不支持 include。配对/撤销由 CLI 管理 SQLite；没有 chat/user 配置允许列表。DB 管配对、派生索引、绑定与投递。配置 ID 是稳定 UUID。新增 ConfigSnapshot/ConfigWriter、notify + arc-swap 热更新及原子授权检查见 [部署与配置](connections-and-config.md)。
+SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署。原型期只维护根 schema.sql，幂等初始化不执行迁移器；已有列的升级需开发者备份后显式处理。数据只存 PocketPilot 目录，不修改 Codex DB/rollout。根目录单一 TOML 管普通设置、host、授权范围和内联 token，不支持 include；provider/workspace 由 catalog 持久化。配对/撤销由 CLI 管理 SQLite；没有 chat/user 配置允许列表。DB 管配对、派生索引、绑定与投递。配置 ID 是稳定 UUID。notify + arc-swap 热更新及原子授权检查见 [部署与配置](connections-and-config.md)。
 
 建议表：
 

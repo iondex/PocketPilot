@@ -1,8 +1,15 @@
 //! Durable inline management screens. Navigation never grants agent permissions.
 use super::*;
-use crate::ledger::{Outbound, Scope};
+use crate::ledger::Outbound;
 use engine::reload::Snapshot;
-use sqlx::Row;
+use navigation_model::{Choice, Menu, UiText};
+use navigation_store::SavedMenu;
+
+#[path = "navigation_model.rs"]
+mod navigation_model;
+
+#[path = "navigation_store.rs"]
+mod navigation_store;
 
 #[path = "topics.rs"]
 mod topics;
@@ -13,212 +20,17 @@ mod new_session;
 #[path = "workspace_picker.rs"]
 mod workspace_picker;
 
-#[derive(Clone, Serialize, Deserialize)]
-struct Choice {
-    label: UiText,
-    action: Action,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct Menu {
-    heading: UiText,
-    note: UiText,
-    choices: Vec<Choice>,
-    back: Action,
-    refresh: Action,
-    scope: Option<Scope>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-enum UiText {
-    Message { id: String },
-    Literal(String),
-}
-
-impl UiText {
-    fn id(id: &str) -> Self {
-        Self::Message { id: id.into() }
-    }
-
-    fn render(&self, locale: &str) -> String {
-        match self {
-            Self::Message { id } => ::i18n::text(locale, id),
-            Self::Literal(text) => text.clone(),
-        }
-    }
-}
-
-impl From<String> for UiText {
-    fn from(value: String) -> Self {
-        Self::Literal(value)
-    }
-}
-
-impl From<&str> for UiText {
-    fn from(value: &str) -> Self {
-        Self::Literal(value.into())
-    }
-}
-
-struct SavedMenu {
-    id: String,
-    menu: Menu,
-    after: i32,
-    message: Option<i32>,
-    published: Option<i64>,
-    consumed: bool,
-}
-
-impl Store {
-    async fn navigation(&self, bot: i64, input: &Input) -> Result<Option<SavedMenu>, StoreError> {
-        let row=sqlx::query("SELECT id,payload,after_message_id,message_id,published_at,consumed FROM navigation WHERE bot_id=? AND chat_id=? AND topic_id=? AND user_id=?")
-            .bind(bot).bind(input.chat).bind(input.topic).bind(input.user as i64).fetch_optional(&self.pool).await.map_err(|_|StoreError::Database)?;
-        row.map(|row| {
-            Ok(SavedMenu {
-                id: row.get("id"),
-                menu: serde_json::from_str(row.get("payload")).map_err(|_| StoreError::Database)?,
-                after: row.get("after_message_id"),
-                message: row.get("message_id"),
-                published: row.get("published_at"),
-                consumed: row.get("consumed"),
-            })
-        })
-        .transpose()
-    }
-
-    async fn save_navigation(
-        &self,
-        bot: i64,
-        input: &Input,
-        id: &str,
-        menu: &Menu,
-    ) -> Result<(), StoreError> {
-        sqlx::query("INSERT INTO navigation(bot_id,chat_id,topic_id,user_id,id,payload,after_message_id) VALUES(?,?,?,?,?,?,?) ON CONFLICT(bot_id,chat_id,topic_id) DO UPDATE SET user_id=excluded.user_id,id=excluded.id,payload=excluded.payload,after_message_id=excluded.after_message_id,published_at=NULL,consumed=0")
-            .bind(bot).bind(input.chat).bind(input.topic).bind(input.user as i64).bind(id)
-            .bind(serde_json::to_string(menu).map_err(|_|StoreError::Database)?).bind(input.message_id)
-            .execute(&self.pool).await.map_err(|_|StoreError::Database)?;
-        Ok(())
-    }
-
-    pub async fn navigation_receipt(
-        &self,
-        id: &str,
-        message: i32,
-        time: i64,
-    ) -> Result<(), StoreError> {
-        sqlx::query("UPDATE navigation SET message_id=?,published_at=? WHERE id=?")
-            .bind(message)
-            .bind(time)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(|_| StoreError::Database)?;
-        Ok(())
-    }
-
-    pub(crate) async fn navigation_current(
-        &self,
-        bot: i64,
-        chat: i64,
-        topic: i32,
-        id: &str,
-    ) -> Result<bool, StoreError> {
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM navigation WHERE bot_id=? AND chat_id=? AND topic_id=? AND id=?)")
-            .bind(bot).bind(chat).bind(topic).bind(id).fetch_one(&self.pool).await.map_err(|_|StoreError::Database)
-    }
-
-    async fn navigation_pending(&self, bot: i64, id: &str) -> Result<bool, StoreError> {
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM deliveries WHERE bot_id=? AND state IN ('pending','dispatching') AND json_extract(payload,'$.navigation_id')=?)")
-            .bind(bot).bind(id).fetch_one(&self.pool).await.map_err(|_|StoreError::Database)
-    }
-
-    async fn claim_navigation(&self, id: &str) -> Result<bool, StoreError> {
-        Ok(
-            sqlx::query("UPDATE navigation SET consumed=1 WHERE id=? AND consumed=0")
-                .bind(id)
-                .execute(&self.pool)
-                .await
-                .map_err(|_| StoreError::Database)?
-                .rows_affected()
-                == 1,
-        )
-    }
-}
-
-fn md(text: &str) -> String {
-    crate::api::escape_markdown(text)
-}
-
-impl Menu {
-    fn render(&self, locale: &str) -> String {
-        let mut text = format!("*{}*\n", md(&self.heading.render(locale)));
-        let note = self.note.render(locale);
-        if !note.is_empty() {
-            text.push_str(&format!("\n{}\n", md(&note)));
-        }
-        text
-    }
-
-    fn buttons(&self, id: &str, locale: &str) -> Vec<Vec<crate::api::Button>> {
-        let compact = matches!(
-            self.refresh,
-            Action::Home
-                | Action::Host { .. }
-                | Action::HostPage { .. }
-                | Action::NewSession
-                | Action::NewHost { .. }
-                | Action::NewHostPage { .. }
-        );
-        let mut rows = Vec::new();
-        let mut row = Vec::new();
-        let mut utility_row = false;
-        for (index, choice) in self.choices.iter().enumerate() {
-            let utility = matches!(
-                choice.action,
-                Action::NewSession | Action::Topics { after: 0 } | Action::ConfirmClearTopics
-            );
-            let paging = matches!(
-                choice.action,
-                Action::HostPage { .. }
-                    | Action::NewHostPage { .. }
-                    | Action::Workspace {
-                        cursor: Some(_),
-                        ..
-                    }
-            );
-            if (paging || utility != utility_row) && !row.is_empty() {
-                rows.push(std::mem::take(&mut row));
-            }
-            utility_row = utility;
-            row.push(crate::api::Button {
-                label: session::delivery::short_title(
-                    &choice.label.render(locale),
-                    if compact { 24 } else { 40 },
-                ),
-                data: format!("nav:{id}:{}", index + 1),
-            });
-            if !compact || paging || row.len() == 2 {
-                rows.push(std::mem::take(&mut row));
-            }
-        }
-        if !row.is_empty() {
-            rows.push(row);
-        }
-        rows.push(
-            [("nav.back", "b"), ("nav.home", "h"), ("nav.refresh", "r")]
-                .into_iter()
-                .map(|(key, action)| crate::api::Button {
-                    label: ::i18n::text(locale, key),
-                    data: format!("nav:{id}:{action}"),
-                })
-                .collect(),
-        );
-        rows
-    }
-}
-
 impl Service {
+    async fn refresh_catalog_snapshot(
+        &self,
+        catalog: &engine::catalog::Catalog,
+    ) -> Result<Arc<Snapshot>, Error> {
+        let mut config = self.config.snapshot().config.clone();
+        catalog.load(&mut config).await?;
+        self.config.publish_catalog(config)?;
+        Ok(self.config.snapshot())
+    }
+
     async fn show_navigation(
         &self,
         input: &Input,
@@ -857,10 +669,7 @@ impl Service {
         catalog
             .add_workspace(&snapshot.config, &providers[0].id, cwd, name)
             .await?;
-        let mut config = self.config.snapshot().config.clone();
-        catalog.load(&mut config).await?;
-        self.config.publish_catalog(config)?;
-        let next = self.config.snapshot();
+        let next = self.refresh_catalog_snapshot(&catalog).await?;
         let mut routed = input.clone();
         routed.config_hash = Some(next.hash.clone());
         self.host_workspaces(&routed, &next, &host_id).await
@@ -879,10 +688,7 @@ impl Service {
         let workspace = self.workspace(&snapshot.config, id)?;
         let catalog = engine::catalog::Catalog::new(self.store.pool().clone());
         catalog.remove_workspace(&workspace.id).await?;
-        let mut config = self.config.snapshot().config.clone();
-        catalog.load(&mut config).await?;
-        self.config.publish_catalog(config)?;
-        let next = self.config.snapshot();
+        let next = self.refresh_catalog_snapshot(&catalog).await?;
         let mut routed = input.clone();
         routed.config_hash = Some(next.hash.clone());
         self.workspaces(&routed, &next).await

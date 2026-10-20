@@ -88,9 +88,7 @@ impl Service {
                     "workspace refresh incomplete; displaying registered projects"
                 );
             }
-            let mut config = self.config.snapshot().config.clone();
-            catalog.load(&mut config).await?;
-            self.config.publish_catalog(config)?;
+            self.refresh_catalog_snapshot(&catalog).await?;
         }
         Ok((self.config.snapshot(), incomplete))
     }
