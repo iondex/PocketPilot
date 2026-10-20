@@ -151,7 +151,6 @@ _version: 1
 "error.discord.backend": "Discord 后端拒绝了操作，请刷新状态。"
 "error.discord.too_large": "消息超过处理预算，请在原客户端查看。"
 "error.runtime.missing": "请配置 Telegram、Discord 或 Slack 集成。"
-"error.runtime.feature": "此构建未包含 Discord，请使用 discord feature 构建。"
 "error.runtime.worker": "后台任务异常退出。"
 "error.cli.shared_endpoint": "未发现此主机现有的 Codex 共享控制端点。"
 "error.cli.selection": "主机或工作区不存在，或当前不受支持。"
@@ -228,7 +227,6 @@ error.telegram.icon_unavailable: "话题图标暂不可用，将在 %{seconds} �
 "tg.history.preview_unavailable": "历史尚未完整读取，暂时无法确认最近内容预览。可稍后使用 /history。"
 
 "error.slack.request": "Slack 请求失败；响应内容已隐藏。请检查状态后再操作。"
-"error.runtime.slack_feature": "Slack 需要使用 --features slack 编译。"
 "slack.error.busy": "待处理请求已满，请稍后重试。"
 "slack.error.rate_limit": "Slack 暂时限流，请稍后重试。"
 "slack.error.identity": "Slack token 与 app/team 身份不一致，或连接未就绪。"

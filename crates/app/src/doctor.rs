@@ -2,10 +2,10 @@
 use crate::cli::Error;
 use app::config::{self, Config, Host};
 use engine::catalog::Catalog;
+use integrations::telegram::credentials;
 use serde::Serialize;
 use session::{AgentProvider, SessionQuery};
 use std::time::Duration;
-use telegram::credentials;
 
 /// Offline validation is the default; each network probe is explicit.
 #[derive(clap::Args, Clone, Copy)]
@@ -29,9 +29,7 @@ struct ConfigurationSummary {
     workspaces: usize,
     telegram_configured: bool,
     discord_configured: bool,
-    discord_runtime_enabled: bool,
     slack_configured: bool,
-    slack_runtime_enabled: bool,
     credentials_checked: bool,
     control_enabled: bool,
 }
@@ -56,9 +54,7 @@ fn configuration_summary(config: &Config, check: bool) -> Result<ConfigurationSu
         workspaces: config.workspaces.len(),
         telegram_configured: config.telegram.is_some(),
         discord_configured: config.discord.is_some(),
-        discord_runtime_enabled: cfg!(feature = "discord"),
         slack_configured: config.slack.is_some(),
-        slack_runtime_enabled: cfg!(feature = "slack"),
         credentials_checked: check,
         control_enabled: config.providers.iter().any(|p| p.control_verified),
     })
@@ -80,14 +76,14 @@ struct HostCheck {
 pub(super) struct Report {
     configuration: ConfigurationSummary,
     hosts: Vec<HostCheck>,
-    telegram: Option<telegram::Identity>,
-    discord: Option<discord::Identity>,
+    telegram: Option<integrations::telegram::Identity>,
+    discord: Option<integrations::discord::Identity>,
     control_enabled: bool,
     note: String,
 }
 
 async fn connect(host: &Host, config: &Config) -> Result<usize, Error> {
-    for endpoint in engine::connections::discover(host, config).await? {
+    for endpoint in engine::runtimes::discover(host, config).await? {
         let catalog = Catalog::open(&config.service.data_dir).await?;
         catalog.discover(&host.id, endpoint).await?;
     }
@@ -101,7 +97,7 @@ async fn connect(host: &Host, config: &Config) -> Result<usize, Error> {
         .iter()
         .find(|p| p.host_id == host.id)
         .ok_or(Error::SharedEndpoint)?;
-    let client = engine::connections::connect(host, provider, &effective).await?;
+    let client = engine::runtimes::connect(host, provider, &effective).await?;
     let agent = codex::Codex::new(provider.id.clone(), client);
     let page = agent
         .list(SessionQuery {
@@ -114,11 +110,11 @@ async fn connect(host: &Host, config: &Config) -> Result<usize, Error> {
     Ok(page.data.len())
 }
 
-async fn check_telegram(config: &Config) -> Result<telegram::Identity, Error> {
+async fn check_telegram(config: &Config) -> Result<integrations::telegram::Identity, Error> {
     let tg = config.telegram.as_ref().ok_or(Error::Selection)?;
     let token = credentials::read(tg)?;
     Ok(
-        telegram::Inspector::new(token, Duration::from_secs(30), &tg.proxy)?
+        integrations::telegram::Inspector::new(token, Duration::from_secs(30), &tg.proxy)?
             .check()
             .await?,
     )
@@ -169,18 +165,16 @@ pub(super) async fn inspect(config: &Config, options: &Options) -> Result<Report
         None
     };
     let discord = if options.discord {
-        #[cfg(feature = "discord")]
         {
             let settings = config.discord.as_ref().ok_or(Error::Selection)?;
             Some(
-                tokio::time::timeout(Duration::from_secs(30), discord::Api::inspect(settings))
-                    .await
-                    .map_err(|_| discord::Error::Request)??,
+                tokio::time::timeout(
+                    Duration::from_secs(30),
+                    integrations::discord::Api::inspect(settings),
+                )
+                .await
+                .map_err(|_| integrations::discord::Error::Request)??,
             )
-        }
-        #[cfg(not(feature = "discord"))]
-        {
-            return Err(app::runtime::Error::Feature.into());
         }
     } else {
         None

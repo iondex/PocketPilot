@@ -1,6 +1,6 @@
 //! Discover project cwd metadata through all session pages; never load a turn.
 use super::*;
-use crate::connections::{Connections, Error};
+use crate::runtimes::{Error, RuntimeRegistry};
 use session::{AgentProvider, ProviderError, SessionQuery};
 use std::{collections::HashSet, path::Component};
 
@@ -241,17 +241,17 @@ impl Catalog {
     pub async fn refresh_host_workspaces(
         &self,
         config: &Config,
-        connections: &Connections,
+        runtimes: &RuntimeRegistry,
         host: &str,
     ) -> Result<WorkspaceDiscovery, Error> {
-        let actor = connections.actor("__workspace_catalog", host).await;
+        let actor = runtimes.actor("__workspace_catalog", host).await;
         let _guard = actor.lock().await;
         let mut report = WorkspaceDiscovery {
             complete: true,
             ..Default::default()
         };
         for provider in config.providers.iter().filter(|p| p.host_id == host) {
-            let agent = connections.get_provider(config, &provider.id).await?;
+            let agent = runtimes.get_provider(config, &provider.id).await?;
             let result = self
                 .discover_workspaces(config, &provider.id, agent.as_ref())
                 .await?;

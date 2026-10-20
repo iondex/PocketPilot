@@ -1,9 +1,5 @@
-use engine::{
-    connections::Connections,
-    integrations::{Context, Integration, IntegrationError},
-    reload::ConfigFile,
-    storage::Store,
-};
+use engine::{reload::ConfigFile, runtimes::RuntimeRegistry, storage::Store};
+use integrations::{Context, Integration, IntegrationError};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::{sync::watch, task::JoinSet};
 
@@ -17,10 +13,6 @@ pub enum Error {
     Integration(#[from] IntegrationError),
     #[error("configure a Telegram, Discord or Slack integration")]
     Missing,
-    #[error("Discord requires --features discord")]
-    Feature,
-    #[error("Slack requires --features slack")]
-    SlackFeature,
     #[error("a runtime task stopped unexpectedly")]
     WorkerStopped,
 }
@@ -29,8 +21,6 @@ impl ::i18n::LocalizedError for Error {
     fn message(&self) -> ::i18n::Message {
         match self {
             Self::Missing => ::i18n::Message::new("error.runtime.missing"),
-            Self::Feature => ::i18n::Message::new("error.runtime.feature"),
-            Self::SlackFeature => ::i18n::Message::new("error.runtime.slack_feature"),
             Self::WorkerStopped => ::i18n::Message::new("error.runtime.worker"),
             Self::Config(error) => ::i18n::LocalizedError::message(error),
             Self::Store(error) => ::i18n::LocalizedError::message(error),
@@ -51,35 +41,21 @@ pub async fn run(path: PathBuf) -> Result<(), Error> {
         .load(&mut initial)
         .await?;
     config.publish_catalog(initial)?;
-    let connections = Arc::new(Connections::new(store.clone()));
+    let runtimes = Arc::new(RuntimeRegistry::new(store.clone()));
     let context = Context {
         config: config.clone(),
         store,
-        connections,
+        runtimes,
     };
     let mut integrations: Vec<Arc<dyn Integration>> = Vec::new();
     if let Some(settings) = root.telegram {
-        integrations.push(Arc::new(telegram::Telegram::new(settings)));
+        integrations.push(Arc::new(integrations::telegram::Telegram::new(settings)));
     }
     if let Some(settings) = root.discord {
-        #[cfg(feature = "discord")]
-        integrations.push(Arc::new(discord::Discord::new(settings)));
-
-        #[cfg(not(feature = "discord"))]
-        {
-            let _ = settings;
-            return Err(Error::Feature);
-        }
+        integrations.push(Arc::new(integrations::discord::Discord::new(settings)));
     }
     if let Some(settings) = root.slack {
-        #[cfg(feature = "slack")]
-        integrations.push(Arc::new(slack::Slack::new(settings)));
-
-        #[cfg(not(feature = "slack"))]
-        {
-            let _ = settings;
-            return Err(Error::SlackFeature);
-        }
+        integrations.push(Arc::new(integrations::slack::Slack::new(settings)));
     }
     if integrations.is_empty() {
         return Err(Error::Missing);

@@ -1,9 +1,9 @@
-pub use discord::config::Config as Discord;
 pub use engine::config::{ConfigError, Host, Logging, TransportKind, Workspace};
+pub use integrations::discord::config::Config as Discord;
+pub use integrations::slack::config::Config as Slack;
+pub use integrations::telegram::config::Config as Telegram;
 use serde::Deserialize;
-pub use slack::config::Config as Slack;
 use std::path::{Path, PathBuf};
-pub use telegram::config::Config as Telegram;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

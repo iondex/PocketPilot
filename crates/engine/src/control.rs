@@ -72,12 +72,12 @@ pub async fn verify(
     }
     let writer = codex::Codex::new(
         id.into(),
-        crate::connections::connect(host, provider, config).await?,
+        crate::runtimes::connect(host, provider, config).await?,
     )
     .with_control(true);
     let observer = codex::Codex::new(
         id.into(),
-        crate::connections::connect(host, provider, config).await?,
+        crate::runtimes::connect(host, provider, config).await?,
     );
     let source = format!("probe:{}", uuid::Uuid::now_v7());
     let created = dispatch(
@@ -140,7 +140,7 @@ pub async fn verify(
     tokio::time::sleep(Duration::from_millis(300)).await;
     let observer = codex::Codex::new(
         id.into(),
-        crate::connections::connect(host, provider, config).await?,
+        crate::runtimes::connect(host, provider, config).await?,
     );
     let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
     loop {

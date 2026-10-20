@@ -151,7 +151,6 @@ _version: 1
 "error.discord.backend": "The Discord backend rejected the operation. Refresh its status."
 "error.discord.too_large": "The message exceeds the processing budget. View it in the original client."
 "error.runtime.missing": "Configure a Telegram, Discord or Slack integration."
-"error.runtime.feature": "This build does not include Discord. Build with the discord feature."
 "error.runtime.worker": "A runtime task stopped unexpectedly."
 "error.cli.shared_endpoint": "No existing shared Codex control endpoint was discovered for this host."
 "error.cli.selection": "The host or workspace is unknown or unsupported."
@@ -228,7 +227,6 @@ error.telegram.icon_unavailable: "Topic icons are temporarily unavailable; retry
 "tg.history.preview_unavailable": "History is not fully available yet; the recent preview cannot be confirmed. Try /history later."
 
 "error.slack.request": "Slack request failed; response redacted. Check status before sending again."
-"error.runtime.slack_feature": "Slack requires --features slack."
 "slack.error.busy": "The request queue is full. Try again later."
 "slack.error.rate_limit": "Slack is rate limiting requests. Try again later."
 "slack.error.identity": "Slack app/team identity did not match, or the connection is not ready."

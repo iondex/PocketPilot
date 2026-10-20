@@ -6,7 +6,6 @@
     "--release",
     "--workspace",
     "--all-targets",
-    "--all-features",
     "--message-format=json",
     "--locked",
     "--keep-going"
@@ -17,7 +16,6 @@
     "--release",
     "--workspace",
     "--all-targets",
-    "--all-features",
     "--message-format=json",
     "--locked",
     "--keep-going"

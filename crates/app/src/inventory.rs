@@ -1,8 +1,6 @@
 //! Refresh catalog state and discover workspace cwd metadata without agent mutations.
-use engine::{
-    catalog::{Catalog, WorkspaceDiscovery},
-    integrations::Context,
-};
+use engine::catalog::{Catalog, WorkspaceDiscovery};
+use integrations::Context;
 use std::{
     collections::{HashMap, HashSet},
     time::Duration,
@@ -14,10 +12,7 @@ enum Discovery {
         String,
         Result<Vec<codex::discovery::Endpoint>, codex::Error>,
     ),
-    Workspaces(
-        String,
-        Result<WorkspaceDiscovery, engine::connections::Error>,
-    ),
+    Workspaces(String, Result<WorkspaceDiscovery, engine::runtimes::Error>),
 }
 
 pub async fn watch(context: Context, mut stop: watch::Receiver<bool>) {
@@ -68,14 +63,14 @@ pub async fn watch(context: Context, mut stop: watch::Receiver<bool>) {
                     let config=config.clone();
                     if registered {
                         let catalog=catalog.clone();
-                        let connections=context.connections.clone();
+                        let runtimes=context.runtimes.clone();
                         jobs.spawn(async move {
-                            let result=tokio::time::timeout(Duration::from_secs(120),catalog.refresh_host_workspaces(&config,&connections,&host.id)).await
+                            let result=tokio::time::timeout(Duration::from_secs(120),catalog.refresh_host_workspaces(&config,&runtimes,&host.id)).await
                                 .unwrap_or_else(|_|Err(session::ProviderError::Timeout.into()));
                             Discovery::Workspaces(host.id,result)
                         });
                     } else {
-                        jobs.spawn(async move {let result=engine::connections::discover(&host,&config).await;Discovery::Endpoints(host.id,result)});
+                        jobs.spawn(async move {let result=engine::runtimes::discover(&host,&config).await;Discovery::Endpoints(host.id,result)});
                     }
                 }
             },
