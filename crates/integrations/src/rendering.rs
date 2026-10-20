@@ -5,7 +5,6 @@ use session::markdown::{Format, TooLarge};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageFormat {
-    TelegramHtml,
     TelegramRich,
     SlackBlocks,
     DiscordMarkdown,
@@ -41,7 +40,7 @@ impl Capabilities {
                 tables: Support::Native,
                 mathematics: Support::Native,
                 footnotes: Support::Native,
-                collapsible: Support::Text,
+                collapsible: Support::Native,
             },
             crate::Platform::Slack => Self {
                 format: MessageFormat::SlackBlocks,
