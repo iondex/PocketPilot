@@ -25,7 +25,7 @@ fn table_rows_keep_headers_and_safe_links_while_rejecting_active_content() {
 }
 
 #[test]
-fn cjk_bold_and_literal_markers_share_the_existing_telegram_parser() {
+fn cjk_bold_and_literal_markers_use_the_common_parser() {
     let doc = Document::parse("前文**中文。**后文\n\n`**literal**`\n\n\\*escaped\\*").unwrap();
     assert!(doc.plain().contains("前文中文。后文"));
     assert!(doc.plain().contains("**literal**"));

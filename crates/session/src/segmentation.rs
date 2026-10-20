@@ -1,3 +1,4 @@
+//! Split semantic blocks within message budgets without losing text or inline structure.
 use super::{Document, Kind, Node, fits, plain, size};
 
 pub(super) fn documents(nodes: &[Node], units: usize, budget: usize) -> Vec<Document> {

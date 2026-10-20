@@ -2,7 +2,7 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::borrow::Cow;
 
-pub fn options() -> Options {
+fn options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -10,13 +10,13 @@ pub fn options() -> Options {
         | Options::ENABLE_MATH
 }
 
-pub fn marker(text: &str) -> bool {
+fn marker(text: &str) -> bool {
     matches!(text, "💭" | "✅" | "💬" | "🧑‍💻" | "❌" | "⚠️")
 }
 
 /// Put a phase label in its own parser paragraph so block syntax stays intact.
 /// The output renderer joins that label to the first visible line again.
-pub fn source(markdown: &str) -> Cow<'_, str> {
+pub(super) fn source(markdown: &str) -> Cow<'_, str> {
     let mut offsets = Vec::new();
     let mut offset = 0;
     for line in markdown.split_inclusive('\n') {
@@ -59,10 +59,6 @@ pub fn source(markdown: &str) -> Cow<'_, str> {
         source.insert(separator + 1, '\n');
     }
     Cow::Owned(source)
-}
-
-pub fn events(markdown: &str) -> Vec<Event<'_>> {
-    bounded_events(markdown, usize::MAX).expect("unbounded parser event budget")
 }
 
 pub(super) fn bounded_events(markdown: &str, limit: usize) -> Option<Vec<Event<'_>>> {
