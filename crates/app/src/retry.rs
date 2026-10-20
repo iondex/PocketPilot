@@ -1,8 +1,8 @@
 //! Supervise bounded provider scans, waking on native events and periodic discovery.
-use engine::integrations::Context;
 use engine::{
-    catalog::Catalog, connections::Connections, reload::ConfigFile, retry::Monitor, storage::Store,
+    catalog::Catalog, reload::ConfigFile, retry::Monitor, runtimes::RuntimeRegistry, storage::Store,
 };
+use integrations::Context;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
@@ -45,7 +45,7 @@ pub async fn run(path: PathBuf) -> Result<(), Error> {
     config.publish_catalog(initial)?;
     let context = Context {
         config: config.clone(),
-        connections: Arc::new(Connections::new(store.clone())),
+        runtimes: Arc::new(RuntimeRegistry::new(store.clone())),
         store,
     };
     let (stop, receiver) = watch::channel(false);
@@ -102,10 +102,10 @@ async fn watch(context: Context, mut stop: watch::Receiver<bool>) {
             let context = context.clone();
             jobs.spawn(async move {
                 let snapshot = context.config.snapshot();
-                let mut changes = context.connections.get_provider(&snapshot.config, &id).await
+                let mut changes = context.runtimes.get_provider(&snapshot.config, &id).await
                     .ok().and_then(|p| p.session_changes());
                 if let Some(changes) = changes.as_mut() { changes.borrow_and_update(); }
-                if let Err(error) = monitor.scan(&context.config, &context.connections, &context.store, &id).await {
+                if let Err(error) = monitor.scan(&context.config, &context.runtimes, &context.store, &id).await {
                     tracing::warn!(provider_id=%id,%error,"retry scan unavailable; reads will retry");
                 }
                 // Native notifications may be scoped or lost. Always enumerate again.

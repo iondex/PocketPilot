@@ -4,14 +4,13 @@
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --release --workspace --all-features --all-targets --locked -- -D warnings
-cargo test --release --workspace --all-features --locked
-cargo clippy --release -p app --no-default-features --locked -- -D warnings
+cargo clippy --release --workspace --all-targets --locked -- -D warnings
+cargo test --release --workspace --locked
 ```
 
-构建、检查、测试与 Clippy 统一使用 release profile；可运行 `make check` 完成上述验证。需要保留的可执行文件先通过 `make package` 放入 Git 忽略的 `dist/`，每轮验证/打包完成后运行 `cargo clean` 清理 `target/`；`make release FEATURES=discord,slack` 顺序执行检查、全平台打包和清理。构建期间不并行清理。
+构建、检查、测试与 Clippy 统一使用 release profile；可运行 `make check` 完成上述验证。需要保留的可执行文件先通过 `make package` 放入 Git 忽略的 `dist/`，每轮验证/打包完成后运行 `cargo clean` 清理 `target/`；`make release` 顺序执行检查、全平台打包和清理。构建期间不并行清理。
 
-- crate 使用简短职责名，binary 名为 pocketpilot。源码物理目录平铺为 crates/*/src/*.rs；按职责增加文件，避免多层文件目录。
+- crate 使用简短职责名，binary 名为 pocketpilot。除 integrations 外，源码物理目录平铺为 crates/*/src/*.rs。integrations 按 src/telegram、src/discord、src/slack 分平台组织，各平台目录内按职责拆文件；公共契约和渲染规划位于 integrations/src 根部。
 - 每个类型、函数、方法、impl、trait、常量和模块定义之间留一个空行，文档注释和属性紧贴所属定义。rustfmt 不会主动补齐全部空行，编辑时须保留。
 - 类型和枚举变体使用 UpperCamelCase，但按项目约定，SSH、TOTP 保留全大写，例如 SSHOptions、SSHProxy、TOTP。字段、函数、crate 与配置键仍使用 snake_case。外部依赖的公开类型不改名。仅对实际触发的具体定义允许 Clippy acronym 例外，不全局禁用。
 - 用具名类型表达权限、身份和状态。业务逻辑使用生成的 Codex DTO；禁止直接操作 serde_json::Value。协议生成物只在 Cargo OUT_DIR。

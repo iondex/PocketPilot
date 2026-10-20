@@ -1,9 +1,9 @@
 //! The opt-in retry policy. Ordinary background observers remain read-only.
 use crate::{
     config::Config,
-    connections::Connections,
     operations,
     reload::ConfigFile,
+    runtimes::RuntimeRegistry,
     storage::{Store, StoreError},
 };
 use session::{
@@ -24,7 +24,7 @@ pub enum Error {
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error(transparent)]
-    Runtime(#[from] crate::connections::Error),
+    Runtime(#[from] crate::runtimes::Error),
     #[error(transparent)]
     Provider(#[from] session::ProviderError),
     #[error(transparent)]
@@ -69,20 +69,20 @@ impl Monitor {
     pub async fn scan(
         &mut self,
         config: &ConfigFile,
-        connections: &Connections,
+        runtimes: &RuntimeRegistry,
         store: &Store,
         instance: &str,
     ) -> Result<(), Error> {
         let snapshot = config.snapshot();
-        let provider = connections.get_provider(&snapshot.config, instance).await?;
-        self.scan_provider(config, connections, store, instance, provider.as_ref())
+        let provider = runtimes.get_provider(&snapshot.config, instance).await?;
+        self.scan_provider(config, runtimes, store, instance, provider.as_ref())
             .await
     }
 
     async fn scan_provider(
         &mut self,
         config: &ConfigFile,
-        connections: &Connections,
+        runtimes: &RuntimeRegistry,
         store: &Store,
         instance: &str,
         provider: &dyn AgentProvider,
@@ -124,7 +124,7 @@ impl Monitor {
                     self.cancel(store, &thread).await?;
                     continue;
                 }
-                let actor = connections.actor(instance, &thread).await;
+                let actor = runtimes.actor(instance, &thread).await;
                 let _guard = actor.lock().await;
                 if let Err(error) = self
                     .inspect(config, store, provider, &session, &snapshot.hash)

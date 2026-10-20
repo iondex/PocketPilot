@@ -15,7 +15,7 @@ cargo clean
 ./dist/pocketpilot serve
 ```
 
-可以只配 Discord，也可以与 Telegram 同进程启动。未启用编译 feature 却填写 Discord 配置会明确报错；没有两个并行服务争用同一个账本的部署方式。host/workspace 沿用同一根配置，平台 token/guild 和 data_dir 改动需要重启桥接。
+可以只配置 Discord，也可以与 Telegram、Slack 同进程启动；三端代码默认包含，由运行配置决定是否启用账号。没有两个并行服务争用同一个账本的部署方式。host/workspace 沿用同一根配置，平台 token/guild 和 data_dir 改动需要重启桥接。
 
 启动只 upsert 自己的 /pp 与 pp-* guild commands，不批量删除其他命令。应用 ID 由 Discord 官方账号接口取得。服务器 owner 在请求执行前重新校验；默认命令权限是 Administrator，但其他管理员不能通过原型的 owner 校验。群外、私信、其他 guild 和非 owner 都不能进入控制流程。
 

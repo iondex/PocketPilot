@@ -5,10 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[features]
-default = []
-discord = ["discord/runtime"]
-slack = ["slack/runtime"]
 
 [[bin]]
 name = "pocketpilot"
@@ -16,13 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 i18n.workspace = true
+integrations = { path = "../integrations" }
 engine = { path = "../engine" }
 ssh = { path = "../ssh" }
 session = { path = "../session" }
 codex = { path = "../codex" }
-telegram = { path = "../telegram" }
-discord = { path = "../discord", default-features = false }
-slack = { path = "../slack", default-features = false }
 clap.workspace = true
 secrecy.workspace = true
 serde.workspace = true

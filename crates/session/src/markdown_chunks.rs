@@ -27,6 +27,53 @@ fn fragments(node: &Node, units: usize, budget: usize) -> Vec<Node> {
         return vec![node.clone()];
     }
     match node {
+        Node::Group(Kind::Table(alignments), children) => {
+            let header = children
+                .iter()
+                .find(|n| matches!(n, Node::Group(Kind::TableHead, _)))
+                .cloned();
+            let mut rows = header.iter().cloned().collect::<Vec<_>>();
+            let mut output = Vec::new();
+            for row in children
+                .iter()
+                .filter(|n| !matches!(n, Node::Group(Kind::TableHead, _)))
+            {
+                rows.push(row.clone());
+                let candidate = Node::Group(Kind::Table(alignments.clone()), rows.clone());
+                if fits(&plain(std::slice::from_ref(&candidate)), units)
+                    && size(std::slice::from_ref(&candidate)) <= budget
+                {
+                    continue;
+                }
+                let last = rows.pop().expect("just appended row");
+                if rows.len() > usize::from(header.is_some()) {
+                    output.push(Node::Group(
+                        Kind::Table(alignments.clone()),
+                        std::mem::take(&mut rows),
+                    ));
+                }
+                rows = header.iter().cloned().collect();
+                rows.push(last);
+                let single = Node::Group(Kind::Table(alignments.clone()), rows.clone());
+                if !fits(&plain(std::slice::from_ref(&single)), units)
+                    || size(std::slice::from_ref(&single)) > budget
+                {
+                    for paragraph in super::table_rows(&rows) {
+                        output.extend(fragments(&paragraph, units, budget));
+                    }
+                    rows = header.iter().cloned().collect();
+                }
+            }
+            if rows.len() > usize::from(header.is_some()) {
+                output.push(Node::Group(Kind::Table(alignments.clone()), rows));
+            }
+            if output.is_empty() {
+                for paragraph in super::table_rows(children) {
+                    output.extend(fragments(&paragraph, units, budget));
+                }
+            }
+            output
+        }
         Node::Text(text) => split_text(text, units)
             .into_iter()
             .map(Node::Text)

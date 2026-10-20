@@ -3,13 +3,11 @@ pub mod catalog;
 
 pub mod config;
 
-pub mod connections;
+pub mod runtimes;
 
 pub mod control;
 
 pub mod uploads;
-
-pub mod integrations;
 
 pub mod model;
 

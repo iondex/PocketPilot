@@ -9,6 +9,8 @@ publish.workspace = true
 i18n.workspace = true
 ssh = { path = "../ssh" }
 codex = { path = "../codex" }
+connections = { path = "../connections" }
+adapters = { path = "../adapters" }
 session = { path = "../session" }
 async-trait.workspace = true
 arc-swap.workspace = true

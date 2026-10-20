@@ -153,15 +153,15 @@ impl Fixture {
 async fn discovers_new_sessions_without_bindings_and_tracks_start_and_disappearance() {
     let f = Fixture::new().await;
     let mut monitor = Monitor::default();
-    let connections = Connections::new(f.store.clone());
+    let runtimes = RuntimeRegistry::new(f.store.clone());
     monitor
-        .scan_provider(&f.config, &connections, &f.store, "instance", &f.provider)
+        .scan_provider(&f.config, &runtimes, &f.store, "instance", &f.provider)
         .await
         .unwrap();
     assert!(monitor.pending.is_empty());
     f.provider.listed.lock().unwrap().push(f.session.clone());
     monitor
-        .scan_provider(&f.config, &connections, &f.store, "instance", &f.provider)
+        .scan_provider(&f.config, &runtimes, &f.store, "instance", &f.provider)
         .await
         .unwrap();
     assert_eq!(monitor.pending.len(), 1);
@@ -170,20 +170,20 @@ async fn discovers_new_sessions_without_bindings_and_tracks_start_and_disappeara
         waiting_on_user_input: false,
     };
     monitor
-        .scan_provider(&f.config, &connections, &f.store, "instance", &f.provider)
+        .scan_provider(&f.config, &runtimes, &f.store, "instance", &f.provider)
         .await
         .unwrap();
     assert!(monitor.pending.is_empty());
     f.provider.failure.lock().unwrap().as_mut().unwrap().turn_id = "new-failure".into();
     f.provider.listed.lock().unwrap()[0].status = RuntimeStatus::Idle;
     monitor
-        .scan_provider(&f.config, &connections, &f.store, "instance", &f.provider)
+        .scan_provider(&f.config, &runtimes, &f.store, "instance", &f.provider)
         .await
         .unwrap();
     assert_eq!(monitor.pending.len(), 1);
     f.provider.listed.lock().unwrap().clear();
     monitor
-        .scan_provider(&f.config, &connections, &f.store, "instance", &f.provider)
+        .scan_provider(&f.config, &runtimes, &f.store, "instance", &f.provider)
         .await
         .unwrap();
     tokio::time::advance(DELAY).await;

@@ -133,13 +133,13 @@ pub enum Error {
     #[error(transparent)]
     Provider(#[from] session::ProviderError),
     #[error(transparent)]
-    Telegram(#[from] telegram::Error),
+    Telegram(#[from] integrations::telegram::Error),
     #[error(transparent)]
-    Discord(#[from] discord::Error),
+    Discord(#[from] integrations::discord::Error),
     #[error(transparent)]
     Store(#[from] engine::storage::StoreError),
     #[error(transparent)]
-    Pairing(#[from] telegram::pairing::Error),
+    Pairing(#[from] integrations::telegram::pairing::Error),
     #[error("no existing Codex control endpoint was discovered for this host")]
     SharedEndpoint,
     #[error("unknown or unsupported configured host/workspace")]
@@ -241,7 +241,8 @@ async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Re
         Command::Retry => app::retry::run(args.config).await?,
         Command::Doctor(options) => print(&crate::doctor::inspect(&config, &options).await?)?,
         Command::Pair { command } => {
-            let store = telegram::pairing::Registry::open(&config.service.data_dir).await?;
+            let store =
+                integrations::telegram::pairing::Registry::open(&config.service.data_dir).await?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| Error::Selection)?

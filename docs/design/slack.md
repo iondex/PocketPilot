@@ -49,7 +49,7 @@ worker 执行慢 SSH / agent 操作。交互和 modal 保持三秒预算；耗�
 
 ## 模块与状态
 
-slack crate 实现 engine::integrations::Integration，复用 ConfigFile、Store、Connections、共享会话 actor 和公共操作账本。平台 SQL 留在 Slack crate，schema 维护在根 schema.sql。
+integrations::slack 实现 Integrations::Integration，复用 ConfigFile、Store、RuntimeRegistry、共享会话 actor 和公共操作账本。平台 SQL 留在 integrations/slack，schema 维护在根 schema.sql。
 
 slack_bindings 保存 DM session 映射；slack_provisions 防止重复根消息创建；slack_inbox / slack_actions / slack_outbox 保持接收、确认与投递状态。slack_channel_budget 的 channel 字段是 Slack API 使用的 DM 会话 ID，与普通频道模式无关。
 
@@ -61,6 +61,6 @@ slack_bindings 保存 DM session 映射；slack_provisions 防止重复根消息
 
 ## 公共导航与原生呈现
 
-engine::navigation 集中维护 Host → 项目目录的归属、ID/短名/目录查找、同名歧义拒绝、排序及有界分页，Slack 和 Discord 共用此模块。项目内 session 分页继续复用 engine::connections::list_picker，不复制 provider 查询或执行逻辑。
+engine::navigation 集中维护 Host → 项目目录的归属、ID/短名/目录查找、同名歧义拒绝、排序及有界分页，Slack 和 Discord 共用此模块。项目内 session 分页继续复用 engine::runtimes::list_picker，不复制 provider 查询或执行逻辑。
 
 Slack 的 menus.rs 只装配 Block Kit：工作空间采用同行按钮，项目采用可搜索的原生下拉框，会话标题和打开按钮同一行。翻页、返回、选择更新原菜单；菜单消息 ID 与 session root 分离并随 durable action 保存，modal 提交也保留来源。会话卡片的控制按钮合并在一行，action_id 仍各自唯一，长期会话输出继续留在对应 thread。

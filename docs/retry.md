@@ -6,7 +6,7 @@
 
 ```sh
 make check
-make package FEATURES=discord,slack
+make package
 cargo clean
 ./dist/pocketpilot --config /absolute/path/pocketpilot.toml retry
 ```
@@ -19,17 +19,19 @@ provider 仍需完成共享生命周期验证并设为 `control_verified`。主�
 
 Codex 的 [官方轮次事件](https://learn.chatgpt.com/docs/app-server#turn-events) 在 `turn/completed` 中区分 completed、interrupted、failed，失败包含 message、codexErrorInfo 和 additionalDetails。当前构建使用 Codex CLI 导出的 DTO；错误分类优先读取 `codexErrorInfo`，仅在缺失或为 `other` 时匹配原生错误 message。不会扫描用户或 agent 正文中的错误词，也不会记录完整错误正文或 additionalDetails。
 
-| 错误 | 处理 |
-| --- | --- |
-| `Concurrency limit reached`、`concurrent request limit` | 等待 60 秒后续轮 |
-| `Our servers are currently overloaded. Please try again later.`、`serverOverloaded`、`flexUnavailable` | 等待 60 秒后续轮 |
-| `rateLimitExceeded`、`Rate limit reached`、`Too many requests`、HTTP 429 | 等待 60 秒后续轮 |
-| `internalServerError`、HTTP 5xx、`Service unavailable`、`Bad gateway`、`Gateway timeout` | 等待 60 秒后续轮 |
-| 原生 HTTP/响应流连接错误、响应流断开、重连耗尽，状态码缺失或为 408 | 等待 60 秒后续轮 |
-| `usageLimitExceeded`、`sessionBudgetExceeded`、quota/billing/credits | 不自动续轮，需要处理额度或预算 |
-| `unauthorized`、HTTP 401/403、API key/认证错误 | 不自动续轮，需要处理认证或权限 |
-| `contextWindowExceeded`、`badRequest`、sandbox/策略错误 | 不自动续轮，需要人工处理 |
-| 未知错误、单独的 `Please try again later` | 不自动续轮 |
+| 分类 | 结构化 `codexErrorInfo` | 无代码或 `other` 时匹配的消息片段（不区分大小写） |
+| --- | --- | --- |
+| 并发限制 | 无专用代码匹配 | `Concurrency limit reached`、`concurrent request limit` |
+| 服务过载 | `serverOverloaded`、`flexUnavailable` | `Our servers are currently overloaded`、`server is overloaded` |
+| 限流 | `rateLimitExceeded` | `rate limit reached`、`rate limit exceeded`、`too many requests` |
+| 服务端故障 | `internalServerError` | `internal server error`、`service unavailable`、`bad gateway`、`gateway timeout` |
+| 连接/响应流故障 | 下述四种对象代码，按 HTTP 状态码分类 | `stream disconnected before completion`、`error sending request`、`connection reset by peer` |
+
+对象代码包括 `httpConnectionFailed`、`responseStreamConnectionFailed`、`responseStreamDisconnected`、`responseTooManyFailedAttempts`，读取内部 `httpStatusCode`：429 归为限流；500–599 归为服务端故障；408 或缺失/null 归为连接故障；其他状态码不自动续轮。HTTP 状态码不会单独从消息文本提取。
+
+上述可重试错误统一等待至少 60 秒后续轮。结构化代码的对应消息可能随 Codex 版本变化；表中消息片段是工具实际实现的后备匹配规则，不代表代码与消息一一绑定。
+
+不自动续轮的代码包括 `contextWindowExceeded`、`sessionBudgetExceeded`、`usageLimitExceeded`、`unauthorized`、`badRequest`、`sandboxError` 和策略/未知代码。即使命中可重试代码，消息含 `usage limit`、`quota`、`billing`、`context window`、`session budget`、`unauthorized`、`authentication`、`api key`、`permission denied` 或 `credits` 时也不续轮。单独的 `Please try again later` 不触发重试。
 
 服务端连接错误和 PocketPilot 自身 RPC 超时/断连有不同含义：前者必须属于一个确认失败的 Codex 轮次才能触发续轮；后者只重试读取。结构化的永久错误覆盖 message 中可能出现的可重试字样。
 

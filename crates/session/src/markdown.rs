@@ -12,6 +12,9 @@ pub use chunks::split_text;
 #[path = "markdown_output.rs"]
 mod output;
 
+#[path = "markdown_html.rs"]
+mod html;
+
 pub use output::{Dialect, literal};
 
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -39,25 +42,54 @@ pub enum Kind {
     Strong,
     Emphasis,
     Strike,
+    Underline,
+    Subscript,
+    Superscript,
+    Marked,
+    Spoiler,
+    Details { summary: String, open: bool },
     Quote,
     List(Option<u64>),
     Item,
     CodeBlock(Option<String>),
     Link(Option<String>),
     Image(Option<String>),
-    Table,
+    Table(Vec<Alignment>),
     TableHead,
     TableRow,
     TableCell,
+    FootnoteDefinition(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Alignment {
+    None,
+    Left,
+    Center,
+    Right,
+}
+
+impl From<pulldown_cmark::Alignment> for Alignment {
+    fn from(value: pulldown_cmark::Alignment) -> Self {
+        match value {
+            pulldown_cmark::Alignment::None => Self::None,
+            pulldown_cmark::Alignment::Left => Self::Left,
+            pulldown_cmark::Alignment::Center => Self::Center,
+            pulldown_cmark::Alignment::Right => Self::Right,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Node {
     Text(String),
+    RawHtml(String),
     Code(String),
     Break,
     Rule,
     Task(bool),
+    Math { source: String, display: bool },
+    FootnoteReference(String),
     Group(Kind, Vec<Node>),
 }
 
@@ -109,10 +141,15 @@ impl Document {
                         }),
                         Tag::Link { dest_url, .. } => Kind::Link(safe_link(&dest_url)),
                         Tag::Image { dest_url, .. } => Kind::Image(safe_link(&dest_url)),
-                        Tag::Table(_) => Kind::Table,
+                        Tag::Table(alignments) => {
+                            Kind::Table(alignments.into_iter().map(Alignment::from).collect())
+                        }
                         Tag::TableHead => Kind::TableHead,
                         Tag::TableRow => Kind::TableRow,
                         Tag::TableCell => Kind::TableCell,
+                        Tag::FootnoteDefinition(name) => {
+                            Kind::FootnoteDefinition(name.into_string())
+                        }
                         _ => Kind::Paragraph,
                     };
                     stack.push((kind, Vec::new()));
@@ -120,28 +157,37 @@ impl Document {
                 }
                 Event::End(_) => {
                     if let Some((kind, children)) = stack.pop() {
-                        if kind == Kind::Table {
-                            let Some(rows) = table(children, MAX_NODES - count) else {
+                        if matches!(kind, Kind::Table(_)) {
+                            let Some(_) = table(children.clone(), MAX_NODES - count) else {
                                 return Ok(Self {
                                     nodes: vec![Node::Text(markdown.into())],
                                 });
                             };
-                            count += size(&rows);
-                            completed = rows;
+                            completed.push(Node::Group(kind, children));
                         } else {
                             completed.push(Node::Group(kind, children));
                         }
                     }
                 }
-                Event::Text(text) | Event::Html(text) | Event::InlineHtml(text) => {
-                    completed.push(Node::Text(text.into_string()))
+                Event::Text(text) => completed.push(Node::Text(text.into_string())),
+                Event::Html(text) | Event::InlineHtml(text) => {
+                    completed.push(Node::RawHtml(text.into_string()))
                 }
                 Event::Code(text) => completed.push(Node::Code(text.into_string())),
                 Event::SoftBreak | Event::HardBreak => completed.push(Node::Break),
                 Event::Rule => completed.push(Node::Rule),
                 Event::TaskListMarker(done) => completed.push(Node::Task(done)),
-                Event::FootnoteReference(text) => completed.push(Node::Text(format!("[{text}]"))),
-                _ => {}
+                Event::FootnoteReference(text) => {
+                    completed.push(Node::FootnoteReference(text.into_string()))
+                }
+                Event::InlineMath(source) => completed.push(Node::Math {
+                    source: source.into_string(),
+                    display: false,
+                }),
+                Event::DisplayMath(source) => completed.push(Node::Math {
+                    source: source.into_string(),
+                    display: true,
+                }),
             }
             if let Some((_, children)) = stack.last_mut() {
                 children.extend(completed);
@@ -149,7 +195,9 @@ impl Document {
                 root.extend(completed);
             }
         }
-        Ok(Self { nodes: root })
+        Ok(Self {
+            nodes: html::normalize(root),
+        })
     }
 
     pub fn nodes(&self) -> &[Node] {
@@ -212,10 +260,25 @@ pub fn plain(nodes: &[Node]) -> String {
     let mut result = String::new();
     for node in nodes {
         match node {
-            Node::Text(text) | Node::Code(text) => result.push_str(text),
+            Node::Text(text) | Node::RawHtml(text) | Node::Code(text) => result.push_str(text),
             Node::Break => result.push('\n'),
             Node::Rule => result.push_str("────────\n"),
             Node::Task(done) => result.push_str(if *done { "☑ " } else { "☐ " }),
+            Node::Math { source, .. } => result.push_str(source),
+            Node::FootnoteReference(name) => result.push_str(&format!("[{name}]")),
+            Node::Group(Kind::Table(_), children) => {
+                result.push_str(&plain(
+                    &table(children.clone(), MAX_NODES).unwrap_or_default(),
+                ));
+            }
+            Node::Group(Kind::FootnoteDefinition(name), children) => {
+                result.push_str(&format!("[{name}]: {}\n", plain(children).trim_end()));
+            }
+            Node::Group(Kind::Details { summary, .. }, children) => {
+                result.push_str(summary);
+                result.push_str("\n\n");
+                result.push_str(&plain(children));
+            }
             Node::Group(Kind::List(start), items) => {
                 let mut index = start.unwrap_or(1);
                 for item in items {
@@ -268,7 +331,11 @@ fn language(info: &str) -> Option<String> {
     .then(|| language.into())
 }
 
-/// Both targets display tables as labeled rows, preserving formatting and links in cells.
+/// Readable fallback for platforms without native tables; preserve inline structure.
+pub fn table_rows(children: &[Node]) -> Vec<Node> {
+    table(children.to_vec(), MAX_NODES).unwrap_or_else(|| children.to_vec())
+}
+
 fn table(children: Vec<Node>, budget: usize) -> Option<Vec<Node>> {
     let mut headers = Vec::new();
     let mut rows = Vec::new();
