@@ -148,6 +148,7 @@ _version: 1
 "error.telegram_runtime.worker_stopped": "桥接任务异常退出；待处理写操作未自动重发。"
 "error.discord.request": "Discord 请求失败，凭据与响应已隐藏。"
 "error.discord.denied": "Discord 命令无效或未获授权。"
+"error.discord.missing_input": "请提供文字或上传附件。"
 "error.discord.backend": "Discord 后端拒绝了操作，请刷新状态。"
 "error.discord.too_large": "消息超过处理预算，请在原客户端查看。"
 "error.runtime.missing": "请配置 Telegram、Discord 或 Slack 集成。"

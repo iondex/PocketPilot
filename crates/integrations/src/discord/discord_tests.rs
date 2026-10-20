@@ -11,6 +11,14 @@ fn guild_owner_is_required_and_stop_has_no_route() {
 }
 
 #[test]
+fn empty_pp_ask_reports_the_missing_text_or_attachment() {
+    assert!(matches!(
+        parse("pp-ask", &BTreeMap::new(), false),
+        Err(Error::MissingInput)
+    ));
+}
+
+#[test]
 fn channel_names_are_short_and_cannot_ping_members() {
     let name = channel_name("Hello @everyone / Test");
     assert!(!name.contains('@'));

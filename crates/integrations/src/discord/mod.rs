@@ -47,6 +47,8 @@ pub enum Error {
     Request,
     #[error("Discord command is invalid or not authorized")]
     Denied,
+    #[error("Discord ask requires text or an attachment")]
+    MissingInput,
     #[error("Discord prototype backend rejected the operation; refresh its status")]
     Backend,
     #[error("message exceeds the processing limit")]
@@ -58,6 +60,7 @@ impl ::i18n::LocalizedError for Error {
         match self {
             Self::Request => ::i18n::Message::new("error.discord.request"),
             Self::Denied => ::i18n::Message::new("error.discord.denied"),
+            Self::MissingInput => ::i18n::Message::new("error.discord.missing_input"),
             Self::Backend => ::i18n::Message::new("error.discord.backend"),
             Self::TooLarge => ::i18n::Message::new("error.discord.too_large"),
         }
@@ -191,7 +194,11 @@ pub(crate) fn parse(
             confirmed,
         },
         "pp-ask" => Command::Ask {
-            text: field("text")?,
+            text: text
+                .get("text")
+                .filter(|value| !value.trim().is_empty())
+                .cloned()
+                .ok_or(Error::MissingInput)?,
         },
         "pp-status" => Command::Status,
         "pp-recent" => Command::Recent,

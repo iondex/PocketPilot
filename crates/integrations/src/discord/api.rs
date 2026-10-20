@@ -1,6 +1,15 @@
 use crate::discord::{Error, Input, authorized};
 use serenity::{all::*, http::Http};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::sync::Mutex;
+
+struct OwnerCache {
+    owner: u64,
+    valid_until: Instant,
+}
 
 #[derive(Clone)]
 pub struct Api {
@@ -8,6 +17,7 @@ pub struct Api {
     pub guild: u64,
     pub bot: u64,
     pub(crate) proxy: crate::network::Proxy,
+    owner_cache: Arc<Mutex<Option<OwnerCache>>>,
 }
 
 impl Api {
@@ -84,6 +94,7 @@ impl Api {
             guild,
             bot,
             proxy: Default::default(),
+            owner_cache: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -113,25 +124,36 @@ impl Api {
             guild,
             bot,
             proxy: proxy.clone(),
+            owner_cache: Arc::new(Mutex::new(None)),
         })
     }
 
     pub async fn authorize(&self, input: &Input) -> Result<(), Error> {
-        let guild = tokio::time::timeout(
-            Duration::from_secs(15),
-            self.http.get_guild(GuildId::new(self.guild)),
-        )
-        .await
-        .map_err(|_| Error::Request)?
-        .map_err(|_| Error::Request)?;
-        if input.bot != self.bot
-            || !authorized(
-                self.guild,
-                Some(input.guild),
-                guild.owner_id.get(),
-                input.user,
+        let cached_owner = {
+            let cache = self.owner_cache.lock().await;
+            cache
+                .as_ref()
+                .filter(|entry| entry.valid_until > Instant::now())
+                .map(|entry| entry.owner)
+        };
+        let owner = if let Some(owner) = cached_owner {
+            owner
+        } else {
+            let guild = tokio::time::timeout(
+                Duration::from_secs(15),
+                self.http.get_guild(GuildId::new(self.guild)),
             )
-        {
+            .await
+            .map_err(|_| Error::Request)?
+            .map_err(|_| Error::Request)?;
+            let owner = guild.owner_id.get();
+            *self.owner_cache.lock().await = Some(OwnerCache {
+                owner,
+                valid_until: Instant::now() + Duration::from_secs(15),
+            });
+            owner
+        };
+        if input.bot != self.bot || !authorized(self.guild, Some(input.guild), owner, input.user) {
             return Err(Error::Denied);
         }
         Ok(())

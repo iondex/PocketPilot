@@ -148,6 +148,7 @@ _version: 1
 "error.telegram_runtime.worker_stopped": "A bridge worker stopped unexpectedly; pending writes were not replayed."
 "error.discord.request": "The Discord request failed; credentials and response are redacted."
 "error.discord.denied": "The Discord command is invalid or unauthorized."
+"error.discord.missing_input": "Provide text or upload an attachment."
 "error.discord.backend": "The Discord backend rejected the operation. Refresh its status."
 "error.discord.too_large": "The message exceeds the processing budget. View it in the original client."
 "error.runtime.missing": "Configure a Telegram, Discord or Slack integration."

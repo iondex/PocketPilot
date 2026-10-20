@@ -130,3 +130,30 @@ async fn components_acknowledge_and_edit_the_original_menu_without_posting_new_m
     assert_eq!(backend.0.load(Ordering::SeqCst), 1);
     assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn repeated_authorization_checks_reuse_the_short_lived_guild_owner_cache() {
+    let server = server().await;
+    let api = Api::local_fixture(&server.uri(), 2, 1);
+    let input = Input {
+        uploads: Vec::new(),
+        locale: Some("en".into()),
+        id: 100,
+        bot: 1,
+        guild: 2,
+        channel: 7,
+        user: 10,
+        date: engine::now(),
+        command: crate::discord::Command::Workspaces,
+    };
+    api.authorize(&input).await.unwrap();
+    api.authorize(&input).await.unwrap();
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.method == "GET")
+            .count(),
+        1
+    );
+}
