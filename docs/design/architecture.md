@@ -26,7 +26,7 @@ Telegram runtime 只组装任务；commands/input/routing/binding/navigation/new
 - Telegram 的 navigation 编排菜单发布、选择和项目管理；navigation_model 保存菜单内容、文案类型和原生按钮布局，navigation_store 负责菜单快照、发布回执与原子消费。浏览刷新和项目增删共用 catalog 快照加载与发布流程。
 - app 的 cli 负责命令解析、调度和输出；doctor 持有具名诊断选项、离线凭据检查和显式连接探测，返回可序列化报告，由 CLI 输出。诊断模块不直接写标准输出。
 
-Integrations 的公共 contracts 定义平台身份、生命周期、附件来源和渲染能力；telegram、discord、slack 目录各自保留协议特有实现。Discord 的 gateway 只管理 Gateway、代理 relay 和退出；command_menu 定义及注册命令，interactions 负责交互 ACK、输入解析、授权和私有回复。menus 读取目录与会话并描述导航页面，menu_model 将显示选项与目标配对，统一保存有作用域的动作并生成原生控件；ui 保留持久化导航类型和显示规则。目录选择继续共用 engine::navigation，平台动作 SQL 留在 Discord Store。
+Integrations 的公共 contracts 定义平台身份、生命周期、附件来源和渲染能力；telegram、discord、slack 目录各自保留协议特有实现。Discord 的 gateway 只管理 Gateway、代理 relay 和退出；command_menu 定义及注册命令，interactions 负责交互 ACK、输入解析、授权和私有回复。menus 读取目录与会话并描述导航页面，menu_model 将显示选项与目标配对，统一保存有作用域的动作并生成原生控件；ui 保留持久化导航类型和显示规则。目录选择继续共用 integrations::navigation，平台动作 SQL 留在 Discord Store。
 
 根 TOML 与 catalog 合成一个不可变运行快照。provider/workspace 定义在 engine::model；配置反序列化跳过这两个运行字段，拒绝旧 TOML 中的静态目录。workspace_discovery 从分页会话 metadata 中补充允许路径内的 cwd，保留手工入口和移除排除记录。catalog 更新约两秒内可见；CAS 发布防止并发配置 reload 把已撤销主机重新带回。
 
@@ -338,7 +338,7 @@ Telegram 的 presentation/markdown/presence/i18n 是独立平铺模块。Appeara
 
 ## 公共导航
 
-聊天界面的 workspace 表示执行环境/主机（Host），project 表示该环境内的项目目录（持久化 Workspace），session 位于项目内。engine::navigation 是 Slack/Discord 的公共目录选择模块，集中处理归属校验、排序、歧义拒绝与分页；平台模块只生成原生控件或命令。Discord /pp 使用私有的原生 select/buttons，逐层更新同一菜单；持久动作句柄验证 owner、服务器、channel、配置和有效期，UI 不展示内部 ID。session 查询、操作账本、会话 actor 和 provider 连接仍由现有 engine/session 模块共享。
+聊天界面的 workspace 表示执行环境/主机（Host），project 表示该环境内的项目目录（持久化 Workspace），session 位于项目内。integrations::navigation 是 Telegram、Slack、Discord 的公共目录选择与只读 session 加载模块，集中处理归属校验、排序、歧义拒绝与分页；平台模块只生成原生控件或命令。Discord /pp 使用私有的原生 select/buttons，逐层更新同一菜单；持久动作句柄验证 owner、服务器、channel、配置和有效期，UI 不展示内部 ID。session 查询、操作账本、会话 actor 和 provider 连接仍由现有 engine/session 模块共享。
 
 
 ## 公共正文与平台显示

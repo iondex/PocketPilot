@@ -61,6 +61,6 @@ slack_bindings 保存 DM session 映射；slack_provisions 防止重复根消息
 
 ## 公共导航与原生呈现
 
-engine::navigation 集中维护 Host → 项目目录的归属、ID/短名/目录查找、同名歧义拒绝、排序及有界分页，Slack 和 Discord 共用此模块。项目内 session 分页继续复用 engine::runtimes::list_picker，不复制 provider 查询或执行逻辑。
+integrations::navigation 集中维护 Host → 项目目录的归属、ID/短名/目录查找、同名歧义拒绝、排序及有界分页，Slack 和 Discord 共用此模块。项目内 session 分页继续复用 engine::runtimes::list_picker，不复制 provider 查询或执行逻辑。
 
 Slack 的 menus.rs 只装配 Block Kit：工作空间采用同行按钮，项目采用可搜索的原生下拉框，会话标题和打开按钮同一行。翻页、返回、选择更新原菜单；菜单消息 ID 与 session root 分离并随 durable action 保存，modal 提交也保留来源。会话卡片的控制按钮合并在一行，action_id 仍各自唯一，长期会话输出继续留在对应 thread。

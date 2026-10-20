@@ -15,6 +15,7 @@ crates/integrations/src/
   lib.rs             公共入口
   contracts.rs       生命周期、平台身份、附件来源契约
   rendering.rs       渲染请求、能力与可持久化消息段
+  navigation.rs      三端共享的目录选择、分页与只读 session 加载
   network/           三端共享的 HTTP CONNECT、WS relay、受限下载
   telegram/          Telegram 协议、topic、配对、菜单、SQL 与投递
   discord/           Discord 协议、Gateway、V2、菜单、SQL 与投递
@@ -61,3 +62,13 @@ Renderer 的关联 Part 类型保留平台完整表达能力；公共层不持�
 不在第一轮抽象平台特有的 callback、topic 和 owner/pairing 流程，也不让 engine 操作 SDK DTO。后续只有在至少两个平台共享同一行为及错误/恢复语义时，才继续合并该流程。
 
 验证沿用三端 protocol/HTTP fixtures、公共渲染长度和结构测试、owner/配对隔离、一次性动作、未知结果保护及重启分段恢复；统一由 make check 和默认全平台 make package 执行。视觉和新 API 的真实投递由用户触发，文档中的平台能力不替代客户端验收。
+
+## 公共导航
+
+`integrations::navigation::Navigator` 统一工作环境、项目与 session 的选择。主机按名称和 ID 排序；项目先按最近活动倒序，再按忽略大小写的名称、目录和稳定 ID 排序。主机/项目的稳定 ID 优先于同名别名，名称、SSH alias、项目短名与路径须唯一；歧义或已移除的父主机明确拒绝，不转到另一执行环境。Telegram 的 `主机/项目` 快捷键也通过同一选择器处理。
+
+三端的浏览和 Telegram 新建流程共用有界分页；过时 offset 超出目录范围时回到首页，每页最多 100 项。原生控件决定更小的页大小：Telegram 主机/项目 8、session 6；Discord 主机/项目 20、session 8；Slack 主机 8、项目 80、session 8。从 session 返回项目列表时，统一定位到该项目当前所在的页。session 页面统一解析项目归属、取得共享运行时并调用已有只读 picker，继续使用其排序、游标快照和操作探针过滤。
+
+公共导航不持有平台凭据或回调句柄，不创建、resume 或续轮。各平台将结果映射成原生控件，保留授权、菜单消息更新、一次性动作、过期确认及本地 SQL；已有持久动作编码继续使用。Telegram 的显式 catalog 刷新属于独立平台流程，不在选择器中隐式触发。
+
+模块封装、平台无关计算及持久收发的第三方库复用范围见 [库复用核验](../research/integration-library-reuse.md)。
