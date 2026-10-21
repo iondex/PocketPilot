@@ -307,3 +307,6 @@ async fn project_controls_follow_the_shared_activity_order() {
         .unwrap();
     assert_eq!(selector(&screen).1[0]["label"], "Project 22");
 }
+
+#[path = "binding_menu_tests.rs"]
+mod bindings;

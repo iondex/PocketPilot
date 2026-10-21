@@ -16,6 +16,7 @@ crates/integrations/src/
   contracts.rs       生命周期、平台身份、附件来源契约
   rendering.rs       渲染请求、能力与可持久化消息段
   navigation.rs      三端共享的目录选择、分页与只读 session 加载
+  bindings.rs        绑定清单、缓存状态与观察/解绑规则
   network/           三端共享的 HTTP CONNECT、WS relay、受限下载
   telegram/          Telegram 协议、topic、配对、菜单、SQL 与投递
   discord/           Discord 协议、Gateway、V2、菜单、SQL 与投递
@@ -74,3 +75,15 @@ Renderer 的关联 Part 类型保留平台完整表达能力；公共层不持�
 模块封装、平台无关计算及持久收发的第三方库复用范围见 [库复用核验](../research/integration-library-reuse.md)。
 
 菜单动作、资源创建、输入确认与投递回执的后续收束顺序见 [状态转换规划](../planning/integration-state-transitions.md)。该文区分交互句柄复用和实际副作用领取，列出现有三端差异及逐批验收条件。
+
+## 已绑定会话管理
+
+`integrations::bindings` 集中绑定清单、状态、分页、跳转地址、观察偏好与带版本检查的变更。`Repository` 保留三端原生 SQL，`Manager` 接收已通过平台授权的作用域：Telegram bot/私聊、Discord bot/guild/owner、Slack app/team/bot/DM/owner。目标仍是对应 topic、channel 或 thread 绑定；公共模块不接管配对、owner 校验或 agent 写权限。
+
+三端首页的“已绑定会话”每页最多显示八个入口，包含执行环境、项目和绑定状态。详情显示上次读取到的会话状态及缓存年龄，不能把缓存当作实时状态；清单不连接运行时，元数据由现有打开与观察路径填充。移除项目、变更 endpoint 等使绑定标为失效，仍允许用户明确解绑。解除绑定的记录保留在清单中，不删除聊天历史或停止原生任务。
+
+“暂停自动观察”只停止后续后台读取、状态卡刷新与新输出发现，任务输入、手动状态与最近交互仍可用。已经开始的观察及排队投递按原账本完成。恢复观察后继续原游标，可能补发暂停期间的变化。暂停偏好使用独立 revision，不修改绑定 revision，现有输入确认仍有效；解绑增加绑定 revision，使旧输入和投递失效。操作在同一数据库事务内复核账号作用域、绑定 revision 和观察 revision，过期或重复管理操作不能覆盖新状态。
+
+平台保留原生表现：Discord 的 `/pp-bindings` 与首页按钮使用私有 select/button 菜单，Slack 使用 App DM 内的 Block Kit，Telegram 的 `/bindings` 路由到管理 topic。三端菜单均有暂停/恢复与单条解绑确认。Discord/Slack 可打开原聊天容器；Telegram bot 私聊 topic 缺少可靠官方直达链接，显示话题说明并提示从话题列表进入，不构造 `t.me/c`。依据见 [导航与预算核验](../research/binding-navigation-links.md)。
+
+本轮仅收束绑定管理；[交互状态转换规划](../planning/integration-state-transitions.md) 中的其他流程仍保留现有实现。

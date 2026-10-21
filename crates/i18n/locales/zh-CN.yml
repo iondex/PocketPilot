@@ -354,3 +354,51 @@ error.telegram.icon_unavailable: "话题图标暂不可用，将在 %{seconds} �
 "discord.ui.updated_days": "%{count} 天前"
 
 "discord.ui.channel_topic": "PocketPilot · /pp 打开菜单 · /pp-ask 发送任务或附件 · /pp-recent 最近交互"
+
+"bindings.heading": "🔗 已绑定会话"
+
+"bindings.choose": "选择一个已绑定会话"
+
+"bindings.empty": "还没有已绑定会话。请先从工作环境和项目中选择会话。"
+
+"bindings.watching": "自动观察已启用"
+
+"bindings.paused": "自动观察已暂停"
+
+"bindings.detached": "已解除绑定"
+
+"bindings.invalid": "绑定范围已失效"
+
+"bindings.unavailable": "已移除的环境或项目"
+
+"bindings.untitled": "会话"
+
+"bindings.open": "打开会话"
+
+"bindings.pause": "暂停自动观察"
+
+"bindings.resume": "恢复自动观察"
+
+"bindings.detach": "解除绑定"
+
+"bindings.confirm": "确认解除此聊天入口的绑定？聊天记录会保留，原生任务继续运行。"
+
+"bindings.confirm_button": "确认解除绑定"
+
+"bindings.back": "返回已绑定会话"
+
+"bindings.home": "选择其他会话"
+
+"bindings.count": "共 %{count} 个已绑定入口"
+
+"bindings.runtime": "会话状态（上次观察）：%{status}"
+
+"bindings.checked": "缓存更新于 %{seconds} 秒前"
+
+"bindings.changed": "绑定已更新。"
+
+"bindings.pause_hint": "暂停只影响自动观察，仍可发送任务；已排队输出会按原账本完成投递。"
+
+"bindings.topic_hint": "请在聊天的话题列表中打开对应会话话题。"
+
+"bindings.manage": "管理"

@@ -12,6 +12,13 @@ use engine::runtimes;
 use engine::storage::StoreError;
 
 impl Service {
+    pub(super) fn binding_scope(&self, chat: i64) -> crate::bindings::Scope {
+        crate::bindings::Scope::Telegram {
+            bot: self.bot,
+            chat,
+        }
+    }
+
     pub(super) fn workspace<'a>(
         &self,
         config: &'a Config,

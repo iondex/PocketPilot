@@ -90,3 +90,6 @@ impl Store {
 #[cfg(test)]
 #[path = "storage_tests.rs"]
 mod tests;
+
+#[path = "binding_store.rs"]
+mod binding_store;

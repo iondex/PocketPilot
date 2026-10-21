@@ -426,3 +426,6 @@ impl Store {
         Ok(())
     }
 }
+
+#[path = "binding_store.rs"]
+mod binding_store;

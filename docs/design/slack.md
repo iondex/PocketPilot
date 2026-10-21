@@ -64,3 +64,7 @@ slack_bindings 保存 DM session 映射；slack_provisions 防止重复根消息
 integrations::navigation 集中维护 Host → 项目目录的归属、ID/短名/目录查找、同名歧义拒绝、排序及有界分页，Slack 和 Discord 共用此模块。项目内 session 分页继续复用 engine::runtimes::list_picker，不复制 provider 查询或执行逻辑。
 
 Slack 的 menus.rs 只装配 Block Kit：工作空间采用同行按钮，项目采用可搜索的原生下拉框，会话标题和打开按钮同一行。翻页、返回、选择更新原菜单；菜单消息 ID 与 session root 分离并随 durable action 保存，modal 提交也保留来源。会话卡片的控制按钮合并在一行，action_id 仍各自唯一，长期会话输出继续留在对应 thread。
+
+## 已绑定会话
+
+在 App DM 首页选择“已绑定会话”，可查看清单、打开原 thread、暂停/恢复自动观察并确认解绑。清单显示带缓存年龄的上次状态，暂停后仍可发送任务和手动查询；已开始的观察与排队输出可继续完成。完整语义见 [公共绑定管理](integrations.md#已绑定会话管理)。

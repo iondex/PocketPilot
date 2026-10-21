@@ -3,6 +3,21 @@ use slack_morphism::prelude::SlackBlock;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Command {
+    Bindings {
+        offset: usize,
+    },
+    Binding {
+        target: crate::bindings::Target,
+    },
+    BindingConfirm {
+        target: crate::bindings::Target,
+        version: crate::bindings::Version,
+    },
+    BindingChange {
+        target: crate::bindings::Target,
+        version: crate::bindings::Version,
+        change: crate::bindings::Change,
+    },
     Menu,
     Workspaces {
         offset: usize,
@@ -42,7 +57,11 @@ impl Command {
     pub fn writes(&self) -> bool {
         matches!(
             self,
-            Self::New { .. } | Self::Input { .. } | Self::Unbind | Self::Confirm { .. }
+            Self::New { .. }
+                | Self::Input { .. }
+                | Self::Unbind
+                | Self::Confirm { .. }
+                | Self::BindingChange { .. }
         )
     }
 }

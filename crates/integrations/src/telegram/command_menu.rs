@@ -12,6 +12,7 @@ impl Api {
                 ("start", "tg.cmd.start"),
                 ("workspaces", "tg.cmd.workspaces"),
                 ("topics", "tg.cmd.topics"),
+                ("bindings", "bindings.heading"),
                 ("new", "tg.cmd.new"),
                 ("status", "tg.cmd.status"),
                 ("history", "tg.cmd.history"),

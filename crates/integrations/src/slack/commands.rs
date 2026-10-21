@@ -19,6 +19,26 @@ impl Service {
         self.api.channel(&r.channel).await?;
         self.fresh(r, hash)?;
         match &r.command {
+            Command::Bindings { offset } => self.binding_list(r, hash, &snapshot, *offset).await?,
+            Command::Binding { target } => self.binding_detail(r, hash, &snapshot, target).await?,
+            Command::BindingConfirm { target, version } => {
+                self.binding_confirmation(r, hash, target, *version).await?
+            }
+            Command::BindingChange {
+                target,
+                version,
+                change,
+            } => {
+                if r.date < self.cutoff.load(Ordering::SeqCst)
+                    || !(0..=300).contains(&engine::now().saturating_sub(r.date))
+                {
+                    return Err(Error::Ui("slack.error.stale"));
+                }
+                crate::bindings::Manager::new(&self.store, self.binding_scope())
+                    .change(target, *version, *change)
+                    .await?;
+                self.binding_detail(r, hash, &snapshot, target).await?;
+            }
             Command::Menu => self.workspace_menu(r, hash, &snapshot, 0).await?,
             Command::Workspaces { offset } => {
                 self.workspace_menu(r, hash, &snapshot, *offset).await?
@@ -112,6 +132,7 @@ impl Service {
                 let provider = self.context.runtimes.get(&snapshot.config, ws).await?;
                 let current = provider.read(&b.thread).await?;
                 engine::runtimes::require_workspace(&current.cwd, ws)?;
+                crate::bindings::remember(&self.store.core, &current).await?;
                 if matches!(r.command, Command::Status) {
                     let text = i18n::t!(
                         "common.session.details",
@@ -161,7 +182,14 @@ impl Service {
                 }
                 let b = self.bound(r).await?;
                 self.fresh(r, hash)?;
-                self.store.activate(&b, false).await?;
+                let manager = crate::bindings::Manager::new(&self.store, self.binding_scope());
+                let target = crate::bindings::Target::Slack { id: b.id.clone() };
+                let entry = manager
+                    .entry(&snapshot.config, &target, &self.locale())
+                    .await?;
+                manager
+                    .change(&target, entry.version, crate::bindings::Change::Detach)
+                    .await?;
                 let mut reply = r.clone();
                 reply.binding = None;
                 reply.revision = None;
@@ -214,6 +242,7 @@ impl Service {
         let provider = self.context.runtimes.get(&snapshot.config, ws).await?;
         let current = provider.read(thread).await?;
         engine::runtimes::require_workspace(&current.cwd, ws)?;
+        crate::bindings::remember(&self.store.core, &current).await?;
         let _permit = self
             .context
             .runtimes

@@ -20,6 +20,9 @@ mod new_session;
 #[path = "catalog.rs"]
 mod catalog;
 
+#[path = "binding_menu.rs"]
+mod binding_menu;
+
 const HOST_PAGE_SIZE: usize = 8;
 
 const PROJECT_PAGE_SIZE: usize = 8;
@@ -120,6 +123,10 @@ impl Service {
                 Choice {
                     label: UiText::id("tg.topics.heading"),
                     action: Action::Topics { after: 0 },
+                },
+                Choice {
+                    label: UiText::id("bindings.heading"),
+                    action: Action::Bindings { offset: 0 },
                 },
             ]);
         }
@@ -405,6 +412,11 @@ impl Service {
                 self.host_workspace_page(input, snapshot, &id, offset).await
             }
             Action::Workspace { id, cursor } => self.sessions(input, snapshot, &id, cursor).await,
+            Action::Bindings { offset } => self.binding_list(input, snapshot, offset).await,
+            Action::Binding { target } => self.binding_detail(input, snapshot, target, false).await,
+            Action::BindingConfirm { target } => {
+                self.binding_detail(input, snapshot, target, true).await
+            }
             Action::Topics { after } => self.topics(input, snapshot, after).await,
             Action::ConfirmTopicRemoval { topic } => {
                 self.confirm_topic_removal(input, snapshot, topic).await
@@ -497,6 +509,11 @@ impl Service {
                 }
                 Action::RemoveTopic { topic } => {
                     return self.confirm_topic_removal(&trusted, snapshot, *topic).await;
+                }
+                Action::BindingChange { target, .. } => {
+                    return self
+                        .binding_detail(&trusted, snapshot, target.clone(), false)
+                        .await;
                 }
                 Action::ClearTopics { .. } => {
                     return self.confirm_clear_topics(&trusted, snapshot).await;
@@ -644,6 +661,16 @@ impl Service {
         {
             return self.confirm_clear_topics(input, snapshot).await;
         }
+        if let Action::BindingChange { target, .. } = &action
+            && (self.delayed(input)
+                || saved.published.is_none_or(|at| {
+                    at < self.started_at || now().saturating_sub(at) > 300 || input.date < at
+                }))
+        {
+            return self
+                .binding_detail(input, snapshot, target.clone(), false)
+                .await;
+        }
         if !self.store.claim_navigation(&saved.id).await? {
             return Ok(());
         }
@@ -656,6 +683,17 @@ impl Service {
             }
             Action::RemoveTopic { topic } => self.remove_topic(input, snapshot, topic).await,
             Action::ClearTopics { topics } => self.clear_topics(input, snapshot, topics).await,
+            Action::BindingChange {
+                target,
+                version,
+                change,
+            } => {
+                self.authorize(input, &snapshot.hash).await?;
+                crate::bindings::Manager::new(&self.store, self.binding_scope(input.chat))
+                    .change(&target, version, change)
+                    .await?;
+                self.binding_detail(input, snapshot, target, false).await
+            }
             action => self.show_action(input, snapshot, action).await,
         }
     }

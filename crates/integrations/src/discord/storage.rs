@@ -77,11 +77,19 @@ impl Store {
         sqlx::query("DELETE FROM discord_ui_actions WHERE rowid IN (SELECT rowid FROM discord_ui_actions WHERE bot=? AND guild=? AND owner=? ORDER BY rowid DESC LIMIT -1 OFFSET 1024)")
             .bind(input.bot.to_string()).bind(input.guild.to_string()).bind(input.user.to_string())
             .execute(&mut *tx).await.map_err(|_| Error::Database)?;
+        let ttl = if matches!(
+            &action,
+            crate::discord::ui::Action::Navigate(crate::discord::ui::View::BindingChange { .. })
+        ) {
+            300
+        } else {
+            86400
+        };
         let nonce = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO discord_ui_actions(nonce,bot,guild,owner,channel,config_hash,action,expires) VALUES(?,?,?,?,?,?,?,?)")
             .bind(&nonce).bind(input.bot.to_string()).bind(input.guild.to_string()).bind(input.user.to_string()).bind(input.channel.to_string())
             .bind(hash).bind(serde_json::to_string(&action).map_err(|_| Error::Database)?)
-            .bind(engine::now()+86400).execute(&mut *tx).await.map_err(|_| Error::Database)?;
+            .bind(engine::now()+ttl).execute(&mut *tx).await.map_err(|_| Error::Database)?;
         tx.commit().await.map_err(|_| Error::Database)?;
         Ok(nonce)
     }
@@ -110,7 +118,13 @@ impl Store {
                 .and_then(|index| choices.get(index).cloned()),
             _ => None,
         };
-        if matches!(view, Some(crate::discord::ui::View::Open { .. })) {
+        if matches!(
+            view,
+            Some(
+                crate::discord::ui::View::Open { .. }
+                    | crate::discord::ui::View::BindingChange { .. }
+            )
+        ) {
             sqlx::query("UPDATE discord_ui_actions SET consumed=1 WHERE nonce=? AND consumed=0")
                 .bind(nonce)
                 .execute(&mut *tx)
@@ -348,3 +362,6 @@ impl Store {
 #[cfg(test)]
 #[path = "storage_tests.rs"]
 mod tests;
+
+#[path = "binding_store.rs"]
+mod binding_store;

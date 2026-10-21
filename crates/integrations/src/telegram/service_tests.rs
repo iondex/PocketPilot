@@ -4916,3 +4916,6 @@ async fn host_pages_are_bounded_in_both_browsing_and_creation_without_agent_requ
     assert!(!menu_labels(&second).contains("下一页"));
     assert!(fixture.state.lock().await.requests.is_empty());
 }
+
+#[path = "binding_menu_tests.rs"]
+mod bindings;

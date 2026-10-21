@@ -31,6 +31,7 @@ impl Service {
         let provider = self.runtimes.get(&snapshot.config, workspace).await?;
         let current = provider.read(thread).await?;
         runtimes::require_workspace(&current.cwd, workspace)?;
+        crate::bindings::remember(self.store.core(), &current).await?;
         let existing_topic = self
             .store
             .topic(self.bot, input.chat, &workspace.provider_id, thread)

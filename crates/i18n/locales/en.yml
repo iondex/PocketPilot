@@ -354,3 +354,51 @@ error.telegram.icon_unavailable: "Topic icons are temporarily unavailable; retry
 "discord.ui.updated_days": "%{count} days ago"
 
 "discord.ui.channel_topic": "PocketPilot · /pp menu · /pp-ask send a task or file · /pp-recent recent interaction"
+
+"bindings.heading": "🔗 Bound sessions"
+
+"bindings.choose": "Choose a bound session"
+
+"bindings.empty": "No bound sessions. Choose a workspace, project and session first."
+
+"bindings.watching": "Watching enabled"
+
+"bindings.paused": "Watching paused"
+
+"bindings.detached": "Unbound"
+
+"bindings.invalid": "Binding scope is unavailable"
+
+"bindings.unavailable": "Removed workspace or project"
+
+"bindings.untitled": "Session"
+
+"bindings.open": "Open conversation"
+
+"bindings.pause": "Pause watching"
+
+"bindings.resume": "Resume watching"
+
+"bindings.detach": "Unbind"
+
+"bindings.confirm": "Unbind this conversation? Chat history is retained and the native task keeps running."
+
+"bindings.confirm_button": "Confirm unbind"
+
+"bindings.back": "Back to bound sessions"
+
+"bindings.home": "Browse sessions"
+
+"bindings.count": "%{count} bound conversations"
+
+"bindings.runtime": "Session state (last observed): %{status}"
+
+"bindings.checked": "Cached %{seconds} seconds ago"
+
+"bindings.changed": "Binding updated."
+
+"bindings.pause_hint": "Pausing affects automatic watching. Task input remains available; queued output follows its existing delivery ledger."
+
+"bindings.topic_hint": "Open the matching session topic in this chat’s topic list."
+
+"bindings.manage": "Manage"

@@ -46,6 +46,9 @@ impl Service {
             .map_err(error)?;
         let current = provider.read(thread).await.map_err(error)?;
         runtimes::require_workspace(&current.cwd, ws).map_err(error)?;
+        crate::bindings::remember(&self.store, &current)
+            .await
+            .map_err(error)?;
         let history = self.history(provider.as_ref(), ws, thread).await?;
         self.fresh(api, input, snapshot, true).await?;
         let category = match self

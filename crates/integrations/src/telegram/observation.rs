@@ -216,6 +216,18 @@ impl Service {
             .await?
             .ok_or(Error::Unbound)?;
         let binding = &binding;
+        if !crate::bindings::observing(
+            self.store.core(),
+            &self.binding_scope(binding.chat_id),
+            &crate::bindings::Target::Telegram {
+                topic: binding.topic_id,
+            },
+        )
+        .await?
+        {
+            self.presence.clear(binding).await;
+            return Ok(());
+        }
         if !self
             .store
             .pairing()
@@ -230,6 +242,7 @@ impl Service {
         let provider = self.runtimes.get(&snapshot.config, workspace).await?;
         let current = provider.read(&binding.thread_id).await?;
         runtimes::require_workspace(&current.cwd, workspace)?;
+        crate::bindings::remember(self.store.core(), &current).await?;
         self.refresh_status(binding, workspace, &current, &snapshot)
             .await?;
         let history = self

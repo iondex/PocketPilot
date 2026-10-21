@@ -9,6 +9,14 @@ use engine::reload::Snapshot;
 use engine::runtimes;
 
 impl Service {
+    pub(super) fn binding_scope(&self, input: &Input) -> crate::bindings::Scope {
+        crate::bindings::Scope::Discord {
+            bot: input.bot,
+            guild: input.guild,
+            owner: input.user,
+        }
+    }
+
     pub(super) fn project<'a>(
         &self,
         config: &'a Config,

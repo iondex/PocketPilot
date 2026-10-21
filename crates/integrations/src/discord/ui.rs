@@ -10,6 +10,21 @@ use twilight_util::builder::message::{
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum View {
+    Bindings {
+        offset: usize,
+    },
+    Binding {
+        target: crate::bindings::Target,
+    },
+    BindingConfirm {
+        target: crate::bindings::Target,
+        version: crate::bindings::Version,
+    },
+    BindingChange {
+        target: crate::bindings::Target,
+        version: crate::bindings::Version,
+        change: crate::bindings::Change,
+    },
     Workspaces {
         offset: usize,
     },

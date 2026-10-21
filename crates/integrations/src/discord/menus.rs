@@ -11,6 +11,9 @@ mod model;
 
 use model::Menu;
 
+#[path = "binding_menu.rs"]
+mod bindings;
+
 const PAGE_SIZE: usize = 20;
 
 impl Service {
@@ -32,6 +35,7 @@ impl Service {
         } else {
             match &input.command {
                 Command::Workspaces => View::Workspaces { offset: 0 },
+                Command::Bindings => View::Bindings { offset: 0 },
                 Command::Projects { workspace } => {
                     let host = Navigator::new(&snapshot.config)
                         .workspace(workspace)
@@ -57,6 +61,24 @@ impl Service {
             }
         };
         let menu = match view {
+            View::Bindings { offset } => self.binding_list(&input, &snapshot, offset).await?,
+            View::Binding { target } => self.binding_detail(&input, &snapshot, target).await?,
+            View::BindingConfirm { target, version } => {
+                self.binding_confirmation(&input, &snapshot, target, version)
+                    .await?
+            }
+            View::BindingChange {
+                target,
+                version,
+                change,
+            } => {
+                self.fresh(api, &input, &snapshot, true).await?;
+                crate::bindings::Manager::new(&self.store, self.binding_scope(&input))
+                    .change(&target, version, change)
+                    .await
+                    .map_err(error)?;
+                self.binding_detail(&input, &snapshot, target).await?
+            }
             View::Workspaces { offset } => self.workspace_screen(&input, &snapshot, offset),
             View::Projects { workspace, offset } => {
                 self.project_screen(&input, &snapshot, &workspace, offset)?
@@ -144,6 +166,7 @@ impl Service {
         if let Some(offset) = page.next {
             menu.button("discord.ui.next", View::Workspaces { offset });
         }
+        menu.button("bindings.heading", View::Bindings { offset: 0 });
         menu.button(
             "discord.ui.refresh",
             View::Workspaces {

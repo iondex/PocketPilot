@@ -37,6 +37,18 @@ impl Service {
             command: Command::Status,
         };
         self.fresh(api, &input, &snapshot, false).await?;
+        if !crate::bindings::observing(
+            &self.store,
+            &self.binding_scope(&input),
+            &crate::bindings::Target::Discord {
+                channel: b.channel.clone(),
+            },
+        )
+        .await
+        .map_err(error)?
+        {
+            return Ok(());
+        }
         let provider = self
             .runtimes
             .get(&snapshot.config, ws)
@@ -44,6 +56,9 @@ impl Service {
             .map_err(error)?;
         let current = provider.read(&b.thread).await.map_err(error)?;
         runtimes::require_workspace(&current.cwd, ws).map_err(error)?;
+        crate::bindings::remember(&self.store, &current)
+            .await
+            .map_err(error)?;
         let history = self.history(provider.as_ref(), ws, &b.thread).await?;
         self.fresh(api, &input, &snapshot, false).await?;
         let current_binding = self.bound(&input).await?;

@@ -150,6 +150,10 @@ impl Service {
                 | Action::NewHost { .. }
                 | Action::NewHostPage { .. }
                 | Action::NewPrompt { .. }
+                | Action::Bindings { .. }
+                | Action::Binding { .. }
+                | Action::BindingConfirm { .. }
+                | Action::BindingChange { .. }
                 | Action::Topics { .. }
                 | Action::ConfirmTopicRemoval { .. }
                 | Action::ConfirmClearTopics
@@ -197,6 +201,7 @@ impl Service {
                 command,
                 "/start"
                     | "/topics"
+                    | "/bindings"
                     | "/workspaces"
                     | "/sessions"
                     | "/open"
@@ -222,6 +227,7 @@ impl Service {
                 command,
                 "/start"
                     | "/topics"
+                    | "/bindings"
                     | "/workspaces"
                     | "/sessions"
                     | "/open"
@@ -250,6 +256,7 @@ impl Service {
                 localized.locale = Some(crate::telegram::i18n::normalize(choice).into());
                 self.workspaces(&localized, &snapshot).await
             }
+            "/bindings" => self.binding_list(input, &snapshot, 0).await,
             "/topics" => {
                 if args.trim() == "clear" {
                     self.confirm_clear_topics(input, &snapshot).await

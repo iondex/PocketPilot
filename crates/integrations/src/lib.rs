@@ -5,6 +5,8 @@ pub use contracts::{AttachmentSource, Context, Integration, IntegrationError, Pl
 
 pub mod navigation;
 
+pub mod bindings;
+
 pub mod rendering;
 
 pub mod network;

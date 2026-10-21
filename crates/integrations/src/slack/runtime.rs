@@ -113,6 +113,16 @@ pub struct Service {
 }
 
 impl Service {
+    pub(super) fn binding_scope(&self) -> crate::bindings::Scope {
+        crate::bindings::Scope::Slack {
+            app: self.settings.app_id.clone(),
+            team: self.settings.team_id.clone(),
+            bot: self.bot.clone(),
+            channel: self.direct_channel.clone(),
+            owner: self.settings.owner_user_id.clone(),
+        }
+    }
+
     pub(crate) fn locale(&self) -> String {
         self.context.config.snapshot().config.language.clone()
     }
@@ -374,3 +384,6 @@ impl Service {
         self.command(r, &self.context.config.snapshot().hash).await
     }
 }
+
+#[path = "binding_menu.rs"]
+mod binding_menu;

@@ -83,6 +83,15 @@ impl Service {
                 .await?,
             );
         }
+        c.blocks.push(
+            self.action_button(
+                r,
+                hash,
+                "bindings.heading",
+                Action::Run(Command::Bindings { offset: 0 }),
+            )
+            .await?,
+        );
         self.menu_output(r, c, hash).await
     }
 

@@ -123,6 +123,20 @@ enum Action {
         workspace: String,
         text: String,
     },
+    Bindings {
+        offset: usize,
+    },
+    Binding {
+        target: crate::bindings::Target,
+    },
+    BindingConfirm {
+        target: crate::bindings::Target,
+    },
+    BindingChange {
+        target: crate::bindings::Target,
+        version: crate::bindings::Version,
+        change: crate::bindings::Change,
+    },
     Topics {
         after: i32,
     },

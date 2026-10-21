@@ -83,7 +83,10 @@ impl Menu {
         for (index, choice) in self.choices.iter().enumerate() {
             let utility = matches!(
                 choice.action,
-                Action::NewSession | Action::Topics { after: 0 } | Action::ConfirmClearTopics
+                Action::NewSession
+                    | Action::Topics { after: 0 }
+                    | Action::Bindings { offset: 0 }
+                    | Action::ConfirmClearTopics
             );
             let paging = matches!(
                 choice.action,

@@ -1,6 +1,15 @@
 -- Prototype schema. Edit directly until stable 0.1; no migration runner.
 -- IF NOT EXISTS preserves existing PocketPilot data when opening the ledger.
 
+-- Rebuildable metadata and independent observation settings shared by integrations.
+CREATE TABLE IF NOT EXISTS integration_session_cache (
+    instance TEXT NOT NULL, thread TEXT NOT NULL, payload TEXT NOT NULL,
+    checked_at INTEGER NOT NULL, PRIMARY KEY(instance,thread)
+);
+CREATE TABLE IF NOT EXISTS integration_binding_preferences (
+    key TEXT PRIMARY KEY, paused INTEGER NOT NULL, revision INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS bindings (
     bot_id INTEGER NOT NULL,
     chat_id INTEGER NOT NULL,

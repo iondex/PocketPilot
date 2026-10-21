@@ -69,6 +69,7 @@ impl ::i18n::LocalizedError for Error {
 
 #[derive(Clone, Debug)]
 pub enum Command {
+    Bindings,
     Workspaces,
     Projects {
         workspace: String,
@@ -168,6 +169,7 @@ pub(crate) fn parse(
     };
     Ok(match name {
         "pp" | "pp-workspaces" => Command::Workspaces,
+        "pp-bindings" => Command::Bindings,
         "pp-projects" | "pp-sessions" | "pp-open" if !text.contains_key("workspace") => {
             Command::Workspaces
         }

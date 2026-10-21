@@ -3,72 +3,7 @@ use sqlx::Row;
 
 #[tokio::test]
 async fn workspace_then_project_menus_filter_scope_and_update_the_existing_screen() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("pocketpilot.toml");
-    std::fs::write(&path, "[[hosts]]\nid='alpha'\nname='Alpha'\ntransport='local_proxy'\nallowed_workspace_roots=['/projects']\n[[hosts]]\nid='beta'\nname='Beta'\ntransport='local_proxy'\nallowed_workspace_roots=['/projects']").unwrap();
-    let config = Arc::new(
-        engine::reload::ConfigFile::open(path, |path, text| {
-            let mut config: engine::config::Config = toml::from_str(text).unwrap();
-            config.prepare(path, text)?;
-            for id in ["alpha", "beta"] {
-                config.providers.push(engine::model::Provider {
-                    id: format!("p-{id}"),
-                    host_id: id.into(),
-                    kind: "codex".into(),
-                    connection_mode: "existing_proxy".into(),
-                    compatibility_profile: "fixture".into(),
-                    control_verified: false,
-                    endpoint: None,
-                });
-                config.workspaces.push(engine::config::Workspace {
-                    id: format!("project-{id}"),
-                    provider_id: format!("p-{id}"),
-                    name: format!("Project {id}"),
-                    short_name: id.into(),
-                    cwd: format!("/projects/{id}"),
-                    additional_cwds: Vec::new(),
-                    updated_at: None,
-                });
-            }
-            let mut recent = config.workspaces[0].clone();
-            recent.id = "recent-alpha".into();
-            recent.name = "ZZ recent project".into();
-            recent.short_name = "recent".into();
-            recent.cwd = "/projects/alpha-recent".into();
-            recent.updated_at = Some(500);
-            config.workspaces.push(recent);
-            config.validate()?;
-            Ok(engine::reload::ParsedConfig {
-                config,
-                restart_key: String::new(),
-            })
-        })
-        .unwrap(),
-    );
-    let core = engine::storage::Store::open(dir.path()).await.unwrap();
-    let (_stop, receiver) = watch::channel(false);
-    let service = Service {
-        settings: crate::slack::config::Config {
-            proxy: Default::default(),
-            app_token: "xapp-fixture".into(),
-            bot_token: "xoxb-fixture".into(),
-            app_id: "A1".into(),
-            team_id: "T1".into(),
-            owner_user_id: "U1".into(),
-        },
-        context: Context {
-            config: config.clone(),
-            runtimes: Arc::new(engine::runtimes::RuntimeRegistry::new(core.clone())),
-            store: core.clone(),
-        },
-        store: Store::new(core, "A1", "T1", "U2"),
-        api: Arc::new(crate::slack::tests::NoNetwork),
-        bot: "U2".into(),
-        direct_channel: "D1".into(),
-        stop: receiver,
-        cutoff: AtomicI64::new(0),
-        verified: AtomicBool::new(true),
-    };
+    let (_dir, service, config) = fixture().await;
     let snapshot = config.snapshot();
     let mut r = Request {
         id: "menu".into(),
@@ -99,7 +34,7 @@ async fn workspace_then_project_menus_filter_scope_and_update_the_existing_scree
     assert!(
         workspace_menu.blocks[2..]
             .iter()
-            .all(|b| matches!(b, SlackBlock::Actions(a) if a.elements.len() == 2))
+            .all(|b| matches!(b, SlackBlock::Actions(a) if a.elements.len() == 3))
     );
     r.id = "projects".into();
     r.menu_message = Some("100.000001".into());
@@ -201,3 +136,76 @@ async fn workspace_then_project_menus_filter_scope_and_update_the_existing_scree
         .unwrap();
     }
 }
+
+async fn fixture() -> (tempfile::TempDir, Service, Arc<engine::reload::ConfigFile>) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pocketpilot.toml");
+    std::fs::write(&path, "[[hosts]]\nid='alpha'\nname='Alpha'\ntransport='local_proxy'\nallowed_workspace_roots=['/projects']\n[[hosts]]\nid='beta'\nname='Beta'\ntransport='local_proxy'\nallowed_workspace_roots=['/projects']").unwrap();
+    let config = Arc::new(
+        engine::reload::ConfigFile::open(path, |path, text| {
+            let mut config: engine::config::Config = toml::from_str(text).unwrap();
+            config.prepare(path, text)?;
+            for id in ["alpha", "beta"] {
+                config.providers.push(engine::model::Provider {
+                    id: format!("p-{id}"),
+                    host_id: id.into(),
+                    kind: "codex".into(),
+                    connection_mode: "existing_proxy".into(),
+                    compatibility_profile: "fixture".into(),
+                    control_verified: false,
+                    endpoint: None,
+                });
+                config.workspaces.push(engine::config::Workspace {
+                    id: format!("project-{id}"),
+                    provider_id: format!("p-{id}"),
+                    name: format!("Project {id}"),
+                    short_name: id.into(),
+                    cwd: format!("/projects/{id}"),
+                    additional_cwds: Vec::new(),
+                    updated_at: None,
+                });
+            }
+            let mut recent = config.workspaces[0].clone();
+            recent.id = "recent-alpha".into();
+            recent.name = "ZZ recent project".into();
+            recent.short_name = "recent".into();
+            recent.cwd = "/projects/alpha-recent".into();
+            recent.updated_at = Some(500);
+            config.workspaces.push(recent);
+            config.validate()?;
+            Ok(engine::reload::ParsedConfig {
+                config,
+                restart_key: String::new(),
+            })
+        })
+        .unwrap(),
+    );
+    let core = engine::storage::Store::open(dir.path()).await.unwrap();
+    let (_stop, receiver) = watch::channel(false);
+    let service = Service {
+        settings: crate::slack::config::Config {
+            proxy: Default::default(),
+            app_token: "xapp-fixture".into(),
+            bot_token: "xoxb-fixture".into(),
+            app_id: "A1".into(),
+            team_id: "T1".into(),
+            owner_user_id: "U1".into(),
+        },
+        context: Context {
+            config: config.clone(),
+            runtimes: Arc::new(engine::runtimes::RuntimeRegistry::new(core.clone())),
+            store: core.clone(),
+        },
+        store: Store::new(core, "A1", "T1", "U2"),
+        api: Arc::new(crate::slack::tests::NoNetwork),
+        bot: "U2".into(),
+        direct_channel: "D1".into(),
+        stop: receiver,
+        cutoff: AtomicI64::new(0),
+        verified: AtomicBool::new(true),
+    };
+    (dir, service, config)
+}
+
+#[path = "binding_menu_tests.rs"]
+mod bindings;

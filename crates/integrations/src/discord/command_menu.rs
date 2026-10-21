@@ -49,6 +49,7 @@ fn localized_command(name: &str, id: &str) -> CreateCommand {
 fn commands() -> Vec<CreateCommand> {
     vec![
         localized_command("pp", "discord.cmd.menu"),
+        localized_command("pp-bindings", "bindings.heading"),
         localized_command("pp-workspaces", "discord.cmd.workspaces"),
         localized_command("pp-projects", "discord.cmd.projects").add_option(string(
             "workspace",

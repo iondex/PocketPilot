@@ -16,9 +16,10 @@ impl Service {
     ) -> Result<String> {
         let locale = self.locale(input);
         match &input.command {
-            Command::Workspaces | Command::Projects { .. } | Command::Sessions { .. } => {
-                Err("discord.ui.use_menu".into())
-            }
+            Command::Bindings
+            | Command::Workspaces
+            | Command::Projects { .. }
+            | Command::Sessions { .. } => Err("discord.ui.use_menu".into()),
             Command::Open {
                 workspace,
                 project,
@@ -190,7 +191,18 @@ impl Service {
             Command::Unbind => {
                 let b = self.bound(input).await?;
                 self.fresh(api, input, snapshot, true).await?;
-                self.store.discord_unbind(&b).await.map_err(error)?;
+                let manager = crate::bindings::Manager::new(&self.store, self.binding_scope(input));
+                let target = crate::bindings::Target::Discord {
+                    channel: b.channel.clone(),
+                };
+                let entry = manager
+                    .entry(&snapshot.config, &target, &locale)
+                    .await
+                    .map_err(error)?;
+                manager
+                    .change(&target, entry.version, crate::bindings::Change::Detach)
+                    .await
+                    .map_err(error)?;
                 Ok(i18n::text(&locale, "discord.unbound"))
             }
             Command::Rename { title } => {

@@ -51,11 +51,21 @@ impl Service {
     }
 
     async fn refresh(&self, b: &Binding) -> Result<()> {
+        if !crate::bindings::observing(
+            &self.store.core,
+            &self.binding_scope(),
+            &crate::bindings::Target::Slack { id: b.id.clone() },
+        )
+        .await?
+        {
+            return Ok(());
+        }
         let snapshot = self.context.config.snapshot();
         let ws = self.validate(&snapshot, b)?;
         let provider = self.context.runtimes.get(&snapshot.config, ws).await?;
         let current = provider.read(&b.thread).await?;
         engine::runtimes::require_workspace(&current.cwd, ws)?;
+        crate::bindings::remember(&self.store.core, &current).await?;
         let _permit = self
             .context
             .runtimes
