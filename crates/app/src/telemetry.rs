@@ -55,6 +55,10 @@ pub fn init(config: &Logging) -> Result<Option<tracing_appender::non_blocking::W
             "ssh2_config",
             "serenity",
             "slack_morphism",
+            "openlark_client",
+            "openlark_core",
+            "openlark_auth",
+            "lark_websocket_protobuf",
         ]
         .iter()
         .any(|target| metadata.target().starts_with(target))

@@ -1,6 +1,7 @@
 [workspace]
 members = ["crates/i18n", "crates/connections", "crates/adapters", "crates/engine", "crates/session", "crates/integrations", "crates/app", "crates/agent-server"]
 resolver = "3"
+exclude = ["vendor/openlark-client"]
 
 [workspace.package]
 version = "0.1.0"
@@ -57,3 +58,6 @@ opt-level = "z"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+[patch.crates-io]
+openlark-client = { path = "vendor/openlark-client" }

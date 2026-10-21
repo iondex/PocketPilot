@@ -167,6 +167,7 @@ pub struct Api {
 impl Api {
     #[cfg(test)]
     pub fn local_fixture(token: SecretString, endpoint: &str) -> Result<Self, Error> {
+        crate::network::initialize_tls();
         let url = url::Url::parse(endpoint).map_err(|_| Error::Protocol)?;
         if url.scheme() != "http"
             || !url.host_str().is_some_and(|h| {
@@ -199,6 +200,7 @@ impl Api {
     }
 
     fn with_builder(token: SecretString, builder: reqwest::ClientBuilder) -> Result<Self, Error> {
+        crate::network::initialize_tls();
         // teloxide's default HTTP timeout is 17s, shorter than a 30s long poll.
         let client = builder
             .connect_timeout(Duration::from_secs(15))

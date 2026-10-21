@@ -22,7 +22,8 @@ impl Drop for Relay {
 impl Relay {
     pub async fn start(proxy: Proxy, upstream: String) -> io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let endpoint = format!("ws://{}/", listener.local_addr()?);
+        let access = uuid::Uuid::new_v4().to_string();
+        let endpoint = format!("ws://{}/{access}", listener.local_addr()?);
         let task = tokio::spawn(async move {
             let mut tasks = JoinSet::new();
             loop {
@@ -32,7 +33,8 @@ impl Relay {
                         if tasks.len() >= 4 { continue; }
                         let proxy = proxy.clone();
                         let upstream = upstream.clone();
-                        tasks.spawn(async move { let _ = forward(stream, proxy, upstream).await; });
+                        let access=access.clone();
+                        tasks.spawn(async move { let _ = forward(stream, proxy, upstream,access).await; });
                     }
                     _ = tasks.join_next(), if !tasks.is_empty() => {}
                 }
@@ -44,12 +46,17 @@ impl Relay {
 
 // tungstenite fixes the callback error type to an HTTP response.
 #[allow(clippy::result_large_err)]
-async fn forward(stream: TcpStream, proxy: Proxy, upstream: String) -> io::Result<()> {
+async fn forward(
+    stream: TcpStream,
+    proxy: Proxy,
+    upstream: String,
+    access: String,
+) -> io::Result<()> {
     let mut target = url::Url::parse(&upstream).map_err(|_| failed())?;
     let mut local = tokio::time::timeout(
         Duration::from_secs(15),
         tokio_tungstenite::accept_hdr_async(stream, |req: &Request, response: Response| {
-            if req.headers().contains_key("origin") {
+            if req.headers().contains_key("origin") || req.uri().path() != format!("/{access}") {
                 return Err(http::Response::builder()
                     .status(403)
                     .body(None)

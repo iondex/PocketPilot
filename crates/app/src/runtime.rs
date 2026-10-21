@@ -30,6 +30,7 @@ impl ::i18n::LocalizedError for Error {
 }
 
 pub async fn run(path: PathBuf) -> Result<(), Error> {
+    integrations::network::initialize_tls();
     let root = crate::config::load(&path)?.config;
     let config = Arc::new(ConfigFile::open(path, crate::config::runtime_parser)?);
     if config.snapshot().hash != root.source_hash() {

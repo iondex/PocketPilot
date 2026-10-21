@@ -179,6 +179,7 @@ impl std::fmt::Display for Failure {
 }
 
 pub async fn run() -> Result<(), Failure> {
+    integrations::network::initialize_tls();
     let args = Arguments::parse();
     let loaded = config::load(&args.config).map_err(|error| Failure {
         error: Error::Config(error),

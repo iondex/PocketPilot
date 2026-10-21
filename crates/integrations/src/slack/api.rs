@@ -82,6 +82,7 @@ pub async fn bounded<T>(
 
 impl Api {
     pub async fn connect(config: &Config) -> Result<(Arc<Self>, String)> {
+        crate::network::initialize_tls();
         let https = hyper_rustls::HttpsConnectorBuilder::new()
             .with_native_roots()
             .map_err(|_| Error::Request)?

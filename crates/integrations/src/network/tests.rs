@@ -228,3 +228,16 @@ async fn attachment_download_is_bounded_and_never_forwards_credentials_on_redire
         server.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn websocket_relay_rejects_clients_without_its_random_access_path() {
+    let relay = Relay::start(Proxy::default(), "ws://127.0.0.1:9/".into())
+        .await
+        .unwrap();
+    let mut address = url::Url::parse(&relay.endpoint).unwrap();
+    address.set_path("/");
+    let result = tokio_tungstenite::connect_async(address.as_str()).await;
+    assert!(
+        matches!(result,Err(tokio_tungstenite::tungstenite::Error::Http(response)) if response.status()==403)
+    );
+}

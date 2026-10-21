@@ -59,6 +59,12 @@ fn failed() -> io::Error {
     io::Error::other("network connection failed (details redacted)")
 }
 
+/// SDKs bring multiple rustls providers; pick one once, preserving an embedding
+/// application's existing choice. This also protects channels when Feishu is disabled.
+pub fn initialize_tls() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 impl Proxy {
     pub fn restart_key(&self) -> &str {
         &self.0
@@ -69,6 +75,7 @@ impl Proxy {
     }
 
     pub fn http_builder(&self) -> Result<reqwest::ClientBuilder, reqwest::Error> {
+        initialize_tls();
         let builder = reqwest::Client::builder().no_proxy();
         Ok(if self.enabled() {
             builder.proxy(reqwest::Proxy::all(&self.0)?)
@@ -127,6 +134,7 @@ impl Proxy {
     }
 
     pub async fn websocket(&self, endpoint: &str) -> io::Result<WebSocket> {
+        initialize_tls();
         tokio::time::timeout(Duration::from_secs(30), async {
             let url = Url::parse(endpoint).map_err(|_| failed())?;
             if !matches!(url.scheme(), "ws" | "wss") {

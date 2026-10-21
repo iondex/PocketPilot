@@ -78,6 +78,7 @@ impl Api {
 
     #[cfg(test)]
     pub fn local_fixture(endpoint: &str, guild: u64, bot: u64) -> Self {
+        crate::network::initialize_tls();
         Self {
             http: Arc::new(
                 serenity::http::HttpBuilder::new("fixture-token")
