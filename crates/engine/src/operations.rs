@@ -47,7 +47,10 @@ pub async fn execute_dispatched(
         Err(error) => {
             let rejected = matches!(
                 error,
-                ProviderError::Rejected(_) | ProviderError::Conflict | ProviderError::Unsupported
+                ProviderError::Rejected(_)
+                    | ProviderError::Conflict
+                    | ProviderError::Unsupported
+                    | ProviderError::InvalidAnswer
             );
             store
                 .transition(

@@ -57,7 +57,7 @@ fn independent_runtime_files_stay_under_its_private_socket_directory() {
         host_id: "host".into(),
         kind: "claude_code".into(),
         connection_mode: "existing_proxy".into(),
-        compatibility_profile: "pocketpilot-runtime-v1".into(),
+        compatibility_profile: "pocketpilot-runtime-v2".into(),
         control_verified: false,
         endpoint: Some(adapters::ServerEndpoint {
             binary: "/home/operator/.pocketpilot/bin/agent-server-fixture".into(),

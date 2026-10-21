@@ -164,6 +164,16 @@ struct Failure {
 type Reply = Result<Box<RawValue>, Error>;
 
 enum Command {
+    Questions {
+        thread: String,
+        reply: oneshot::Sender<Vec<session::questions::Dialog>>,
+    },
+    Answer {
+        thread: String,
+        submission: session::questions::Submission,
+        deadline: Instant,
+        reply: oneshot::Sender<Result<Option<String>, Error>>,
+    },
     Call {
         method: &'static str,
         params: Box<RawValue>,
@@ -246,6 +256,48 @@ impl Client {
             timeout,
             write_timeout: timeout,
         }
+    }
+
+    pub(crate) async fn questions(
+        &self,
+        thread: &str,
+    ) -> Result<Vec<session::questions::Dialog>, Error> {
+        let (reply, receive) = oneshot::channel();
+        tokio::time::timeout(self.timeout, async {
+            self.commands
+                .send(Command::Questions {
+                    thread: thread.into(),
+                    reply,
+                })
+                .await
+                .map_err(|_| Error::Disconnected)?;
+            receive.await.map_err(|_| Error::Disconnected)
+        })
+        .await
+        .map_err(|_| Error::Timeout)?
+    }
+
+    pub(crate) async fn answer(
+        &self,
+        thread: String,
+        submission: session::questions::Submission,
+    ) -> Result<Option<String>, Error> {
+        let deadline = Instant::now() + self.write_timeout;
+        let (reply, receive) = oneshot::channel();
+        tokio::time::timeout_at(deadline, async {
+            self.commands
+                .send(Command::Answer {
+                    thread,
+                    submission,
+                    deadline,
+                    reply,
+                })
+                .await
+                .map_err(|_| Error::Disconnected)?;
+            receive.await.map_err(|_| Error::Disconnected)?
+        })
+        .await
+        .map_err(|_| Error::Timeout)?
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
@@ -336,6 +388,7 @@ async fn run(
     events: broadcast::Sender<Event>,
 ) {
     let mut pending = Pending::new();
+    let mut questions = super::questions::Questions::default();
     let mut next_id = 1_i64;
     let mut cleanup = tokio::time::interval(Duration::from_millis(100));
     loop {
@@ -343,6 +396,22 @@ async fn run(
             command = commands.recv() => {
                 match command {
                     None => break,
+                    Some(Command::Questions { thread, reply }) => { let _ = reply.send(questions.list(&thread)); }
+                    Some(Command::Answer { thread, submission, deadline, reply }) => {
+                        if reply.is_closed() || deadline <= Instant::now() {
+                            let _ = reply.send(Err(Error::Timeout));
+                            continue;
+                        }
+                        let (message, turn) = match questions.answer(&thread, submission) {
+                            Ok(value) => value,
+                            Err(error) => { let _ = reply.send(Err(error)); continue; }
+                        };
+                        let result = tokio::time::timeout_at(deadline, wire.send(message)).await
+                            .map_err(|_| Error::Timeout).and_then(|r| r).map(|()| turn);
+                        let failed = result.is_err();
+                        let _ = reply.send(result);
+                        if failed { break; }
+                    }
                     Some(Command::Initialized { reply }) => {
                         let result = tokio::time::timeout(Duration::from_secs(10), wire.send("{\"method\":\"initialized\"}".into())).await
                             .map_err(|_| Error::Timeout).and_then(|r| r);
@@ -380,8 +449,20 @@ async fn run(
                 let text = match received { Ok(Some(value)) => value, _ => break };
                 let value: Incoming = match serde_json::from_str(&text) { Ok(value) => value, Err(_) => break };
                 if let Some(method) = value.method {
+                    if let Some(params) = value.params.as_ref() {
+                        let tracked = match (method.as_str(), value.id.as_ref()) {
+                            ("item/tool/requestUserInput", Some(id)) => serde_json::from_str::<p::ToolRequestUserInputParams>(params.get())
+                                .map_err(|_| Error::Protocol).and_then(|params| questions.receive(id.clone(), params)),
+                            ("serverRequest/resolved", _) => serde_json::from_str::<p::ServerRequestResolvedNotification>(params.get())
+                                .map(|n| questions.resolved(n)).map_err(|_| Error::Protocol),
+                            ("turn/completed", _) => serde_json::from_str::<p::TurnCompletedNotification>(params.get())
+                                .map(|n| questions.completed(&n.thread_id, &n.turn.id)).map_err(|_| Error::Protocol),
+                            _ => Ok(()),
+                        };
+                        if tracked.is_err() { break; }
+                    }
                     let _ = events.send(Event { method, request_id:value.id, params:value.params });
-                    // Observe server requests without answering, cancelling or changing policies.
+                    // Question responses require a separate explicit command; approvals remain untouched.
                     continue;
                 }
                 let Some(p::RequestId::Int64(id)) = value.id else { continue; };

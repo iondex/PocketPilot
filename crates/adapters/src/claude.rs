@@ -242,6 +242,24 @@ impl AgentProvider for Client {
         }
     }
 
+    async fn questions(
+        &self,
+        thread: &str,
+    ) -> Result<Vec<session::questions::Dialog>, ProviderError> {
+        match self
+            .call(
+                Call::Questions {
+                    thread: thread.into(),
+                },
+                self.shared.read,
+            )
+            .await?
+        {
+            Reply::Questions { dialogs } => Ok(dialogs),
+            _ => Err(ProviderError::Incompatible),
+        }
+    }
+
     async fn execute(&self, mutation: Mutation) -> Result<Receipt, ProviderError> {
         if !self.control
             || matches!(

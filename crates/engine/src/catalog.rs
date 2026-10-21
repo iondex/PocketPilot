@@ -119,11 +119,10 @@ impl Catalog {
             kind: kind.as_str().into(),
             connection_mode: "existing_proxy".into(),
             compatibility_profile: if kind == adapters::RuntimeKind::Codex {
-                "latest-tested-codex"
+                "latest-tested-codex".into()
             } else {
-                "pocketpilot-runtime-v1"
-            }
-            .into(),
+                format!("pocketpilot-runtime-v{}", session::server::VERSION)
+            },
             control_verified: false,
             endpoint: Some(endpoint),
         };

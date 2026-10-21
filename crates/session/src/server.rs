@@ -5,7 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 pub const MAX_FRAME_BYTES: usize = 128 * 1024 * 1024;
 
@@ -26,6 +26,9 @@ pub enum Call {
         query: SessionQuery,
     },
     Read {
+        thread: String,
+    },
+    Questions {
         thread: String,
     },
     History {
@@ -56,6 +59,9 @@ pub enum Reply {
     },
     Session {
         session: Session,
+    },
+    Questions {
+        dialogs: Vec<crate::questions::Dialog>,
     },
     History {
         history: History,

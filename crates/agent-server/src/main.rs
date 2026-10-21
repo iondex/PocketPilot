@@ -8,6 +8,8 @@ mod storage;
 
 mod claude;
 
+mod questions;
+
 #[derive(Parser)]
 #[command(version, about = "PocketPilot independent agent runtime server")]
 struct Arguments {

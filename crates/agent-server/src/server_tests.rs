@@ -14,7 +14,20 @@ thread=next(x.split('=',1)[1] for x in sys.argv if x.startswith(('--session-id='
 pathlib.Path(__file__).with_suffix('.started').write_text('started')
 for raw in sys.stdin:
     data=json.loads(raw)
-    if data['type']=='control_request':
+    if data['type']=='control_response':
+        response=data['response']
+        assert response['request_id']=='native-question'
+        assert response['subtype']=='success'
+        assert response['response']['behavior']=='allow'
+        updated=response['response']['updatedInput']
+        assert updated['answers']=={'Pick language':'Rust'}
+        assert updated['questions'][0]['extension']=='preserved'
+        assert updated['extension']=={'keep':True}
+        assert 'updatedPermissions' not in response['response']
+        pathlib.Path(__file__).with_suffix('.answered').write_text('once')
+        print(json.dumps({'type':'assistant','session_id':thread,'uuid':'question-final','message':{'content':[{'type':'text','text':'Received Rust'}]}}),flush=True)
+        print(json.dumps({'type':'result','session_id':thread,'subtype':'success','is_error':False,'result':'Received Rust'}),flush=True)
+    elif data['type']=='control_request':
         if pathlib.Path.cwd().name=='needs-question':
             print(json.dumps({'type':'control_request','request_id':'question','request':{'subtype':'can_use_tool','tool_name':'AskUserQuestion'}}),flush=True)
         print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':data['request_id'],'response':{}}}),flush=True)
@@ -28,6 +41,13 @@ for raw in sys.stdin:
             assert data['message']['content'][1]['source']['media_type']=='image/png'
         print(json.dumps(data),flush=True)
         if data['message']['content']=='wrong-echo': sys.exit(0)
+        if data['message']['content'] in ('ask-user','ask-cancel','ask-approval'):
+            request={'subtype':'can_use_tool','tool_name':'AskUserQuestion' if data['message']['content']!='ask-approval' else 'Bash','tool_use_id':'tool','input':{'questions':[{'question':'Pick language','header':'Language','options':[{'label':'Rust','description':'Native'}],'multiSelect':False,'extension':'preserved'}],'extension':{'keep':True}}}
+            print(json.dumps({'type':'control_request','request_id':'native-question','request':request}),flush=True)
+            if data['message']['content']=='ask-cancel':
+                time.sleep(0.3)
+                print(json.dumps({'type':'control_cancel_request','request_id':'native-question'}),flush=True)
+            continue
         time.sleep(0.1)
         print(json.dumps({'type':'assistant','session_id':thread,'uuid':'answer','message':{'content':[{'type':'thinking','thinking':'never expose'},{'type':'text','text':'fixture answer'}]},'parent_tool_use_id':None}),flush=True)
         print(json.dumps({'type':'result','session_id':thread,'subtype':'success','is_error':False,'result':'fixture answer'}),flush=True)
@@ -382,4 +402,168 @@ async fn a_question_during_initialization_cannot_be_overwritten_as_idle() {
             .items
             .is_empty()
     );
+}
+
+async fn ask(runtime: &Runtime, thread: &str, text: &str) -> Vec<session::questions::Dialog> {
+    runtime
+        .mutate(
+            "start-question",
+            Mutation::Start {
+                thread: thread.into(),
+                text: text.into(),
+                client_id: "client-question".into(),
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let Reply::Questions { dialogs } = runtime
+                .call(Call::Questions {
+                    thread: thread.into(),
+                })
+                .await
+                .unwrap()
+            else {
+                panic!("questions expected")
+            };
+            if !dialogs.is_empty() {
+                break dialogs;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn native_question_answer_survives_proxy_replacement_and_has_a_durable_receipt() {
+    let (directory, runtime) = runtime().await;
+    let created = create(&runtime, directory.path(), "create-question").await;
+    let dialogs = ask(&runtime, &created.thread, "ask-user").await;
+    let submission = session::questions::Submission {
+        token: dialogs[0].token.clone(),
+        answers: vec![session::questions::Answer {
+            question: "Pick language".into(),
+            values: vec!["Rust".into()],
+        }],
+    };
+    let mutation = Mutation::Answer {
+        thread: created.thread.clone(),
+        submission,
+    };
+    // A new RPC client can inspect and answer the process-owned question; dropping it
+    // later cannot cancel native execution. The shared server state owns the token.
+    let (server, peer) = UnixStream::pair().unwrap();
+    let task = tokio::spawn(client(server, runtime.clone()));
+    let mut peer = Framed::new(peer, LinesCodec::new());
+    for (id, call) in [
+        (
+            1,
+            Call::Initialize {
+                version: server::VERSION,
+                runtime: "claude_code".into(),
+            },
+        ),
+        (
+            2,
+            Call::Questions {
+                thread: created.thread.clone(),
+            },
+        ),
+        (
+            3,
+            Call::Mutate {
+                operation: "answer-question".into(),
+                mutation: mutation.clone(),
+            },
+        ),
+    ] {
+        peer.send(serde_json::to_string(&Request { id, call }).unwrap())
+            .await
+            .unwrap();
+        let response: Response =
+            serde_json::from_str(&peer.next().await.unwrap().unwrap()).unwrap();
+        assert_eq!(response.id, id);
+        assert!(response.result.is_ok());
+    }
+    drop(peer);
+    task.await.unwrap().unwrap();
+    let again = runtime
+        .mutate("answer-question", mutation.clone())
+        .await
+        .unwrap();
+    assert_eq!(again.thread, created.thread);
+    assert!(matches!(
+        runtime.mutate("duplicate-answer", mutation).await,
+        Err(Failure::Conflict)
+    ));
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if runtime
+                .store
+                .history(&created.thread)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .any(|i| i.text == "Received Rust")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(runtime.binary.with_extension("answered")).unwrap(),
+        "once"
+    );
+}
+
+#[tokio::test]
+async fn cancelled_native_question_never_writes_an_answer() {
+    let (directory, runtime) = runtime().await;
+    let created = create(&runtime, directory.path(), "create-question").await;
+    let dialogs = ask(&runtime, &created.thread, "ask-cancel").await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let Reply::Questions { dialogs } = runtime
+                .call(Call::Questions {
+                    thread: created.thread.clone(),
+                })
+                .await
+                .unwrap()
+            else {
+                panic!("questions expected")
+            };
+            if dialogs.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        runtime
+            .mutate(
+                "cancelled-answer",
+                Mutation::Answer {
+                    thread: created.thread,
+                    submission: session::questions::Submission {
+                        token: dialogs[0].token.clone(),
+                        answers: vec![session::questions::Answer {
+                            question: "Pick language".into(),
+                            values: vec!["Rust".into()]
+                        }]
+                    }
+                }
+            )
+            .await,
+        Err(Failure::Conflict)
+    ));
+    assert!(!runtime.binary.with_extension("answered").exists());
 }

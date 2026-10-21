@@ -434,3 +434,10 @@ error.telegram.icon_unavailable: "Topic icons are temporarily unavailable; retry
 "feishu.error.empty": "Enter a task or attach a file."
 "feishu.error.unsupported": "This message contains unsupported rich content or too many attachments. Send text and up to four separate files or images."
 "feishu.error.api": "Feishu rejected the request (code %{code}). Check the app's published permissions and scope."
+
+"common.question.title": "The agent has a question"
+"common.question.secret": "This question requires private input. Answer in the native agent interface."
+"common.question.multiple": "Multiple selections: use a JSON list of option labels, such as [\"A\", \"B\"]."
+"common.question.instructions": "Send this through the session input (Discord: /pp-ask text). Replace every … with an option label or your own answer where allowed. Include every question. The code works only while this question is pending."
+"common.question.invalid": "Invalid answer. Use !answer with the current question code, then one numbered answer per line (1: option label). Answer every question once; omit attachments."
+"common.question.accepted": "Answer sent to the agent."

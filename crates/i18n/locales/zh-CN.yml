@@ -434,3 +434,10 @@ error.telegram.icon_unavailable: "话题图标暂不可用，将在 %{seconds} �
 "feishu.error.empty": "请输入任务或添加文件。"
 "feishu.error.unsupported": "消息含尚不支持的富内容或过多附件，请改为文字和不超过四个文件或图片。"
 "feishu.error.api": "飞书拒绝了请求（错误码 %{code}），请检查应用已发布的权限及可用范围。"
+
+"common.question.title": "Agent 正在等你回答"
+"common.question.secret": "此问题需要私密输入，请在原生 Agent 界面回答。"
+"common.question.multiple": "多选请用选项文字的 JSON 数组，例如 [\"A\", \"B\"]。"
+"common.question.instructions": "通过当前会话的输入入口发送以下文本（Discord 使用 /pp-ask 的 text），将每个 … 换成选项文字或允许的自定义答案，逐项填写。回答码仅在本问题等待期间有效。"
+"common.question.invalid": "回答格式不正确。请发送 !answer 和当前回答码，换行逐项填写（1: 选项文字），每题回答一次，不附加文件。"
+"common.question.accepted": "已将回答发送给 Agent。"

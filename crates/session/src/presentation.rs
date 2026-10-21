@@ -13,6 +13,7 @@ pub fn role_heading(role: Role, locale: &str) -> String {
 pub fn phase_icon(phase: Option<&str>) -> &'static str {
     match phase {
         Some("final_answer") => "✅",
+        Some("question") => "❓",
         Some("commentary" | "partial_answer" | "plan") => "💭",
         Some("error" | "turn_failed" | "turn_interrupted") => "❌",
         _ => "💬",
@@ -50,6 +51,20 @@ impl Section {
 }
 
 pub fn latest(history: &History, locale: &str) -> Vec<Section> {
+    let mut sections = latest_interaction(history, locale);
+    if history.all_pages_read {
+        sections.extend(
+            history
+                .items
+                .iter()
+                .filter(|i| i.phase.as_deref() == Some("question"))
+                .map(|i| Section::item(i, locale)),
+        );
+    }
+    sections
+}
+
+fn latest_interaction(history: &History, locale: &str) -> Vec<Section> {
     let notice = |id| {
         vec![Section {
             heading: "ℹ️".into(),

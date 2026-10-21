@@ -1,5 +1,8 @@
 //! Claude's stream-json boundary. The server owns pipes; RPC clients never own the child.
-use crate::storage::Store;
+use crate::{
+    questions::{Request as ControlRequest, Requests, Snapshot},
+    storage::Store,
+};
 use base64::Engine;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -25,6 +28,7 @@ const MAX_NATIVE_FRAME: usize = 32 * 1024 * 1024;
 
 pub struct Driver {
     writer: Mutex<ChildStdin>,
+    requests: Arc<Mutex<Requests>>,
     pending: Arc<Mutex<HashMap<String, Pending>>>,
     round: Arc<Mutex<Option<Round>>>,
     alive: Arc<AtomicBool>,
@@ -49,6 +53,9 @@ struct Round {
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Input<'a> {
+    ControlResponse {
+        response: crate::questions::Response,
+    },
     ControlRequest {
         request_id: &'a str,
         request: Initialize,
@@ -196,13 +203,10 @@ enum NativeState {
 struct ControlResponse {
     subtype: String,
     request_id: String,
-}
-
-#[derive(Deserialize)]
-struct ControlRequest {
-    subtype: String,
     #[serde(default)]
-    tool_name: Option<String>,
+    pending_permission_requests: Option<Vec<Snapshot>>,
+    #[serde(default)]
+    pending_user_dialog_requests: Option<Vec<Snapshot>>,
 }
 
 #[derive(Deserialize)]
@@ -218,6 +222,44 @@ enum Block {
     },
     #[serde(other)]
     Other,
+}
+
+/// Decode control payloads directly from JSON. Serde's internally tagged enum
+/// buffering cannot preserve RawValue extensions in nested tool input/snapshots.
+fn decode(line: &str) -> Result<Output, serde_json::Error> {
+    #[derive(Deserialize)]
+    struct Kind {
+        #[serde(rename = "type")]
+        kind: String,
+    }
+
+    #[derive(Deserialize)]
+    struct RequestFrame {
+        request_id: String,
+        request: ControlRequest,
+    }
+
+    #[derive(Deserialize)]
+    struct ResponseFrame {
+        response: ControlResponse,
+    }
+
+    match serde_json::from_str::<Kind>(line)?.kind.as_str() {
+        "control_request" => {
+            let frame: RequestFrame = serde_json::from_str(line)?;
+            Ok(Output::ControlRequest {
+                request_id: frame.request_id,
+                request: frame.request,
+            })
+        }
+        "control_response" => {
+            let frame: ResponseFrame = serde_json::from_str(line)?;
+            Ok(Output::ControlResponse {
+                response: frame.response,
+            })
+        }
+        _ => serde_json::from_str(line),
+    }
 }
 
 impl Driver {
@@ -262,7 +304,9 @@ impl Driver {
         let round = Arc::new(Mutex::new(None));
         let (ready_tx, ready_rx) = oneshot::channel();
         let init_id = uuid::Uuid::new_v4().to_string();
+        let requests = Arc::new(Mutex::new(Requests::default()));
         let driver = Self {
+            requests: requests.clone(),
             writer: Mutex::new(writer),
             pending: pending.clone(),
             round: round.clone(),
@@ -277,7 +321,7 @@ impl Driver {
             round,
             init_id: init_id.clone(),
             ready: Some(ready_tx),
-            requests: HashMap::new(),
+            requests,
         };
         // Intentionally detached from the RPC task. Dropping a proxy cannot end the native turn.
         tokio::spawn(async move {
@@ -285,7 +329,7 @@ impl Driver {
             let mut lines =
                 FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_NATIVE_FRAME));
             while let Some(Ok(line)) = lines.next().await {
-                let Ok(frame) = serde_json::from_str::<Output>(&line) else {
+                let Ok(frame) = decode(&line) else {
                     break;
                 };
                 if owner.frame(frame).await.is_err() {
@@ -293,6 +337,7 @@ impl Driver {
                 }
             }
             alive.store(false, Ordering::Release);
+            let _ = owner.requests.lock().await.finish();
             let _ = owner
                 .store
                 .status(&owner.thread, RuntimeStatus::Unknown, None)
@@ -335,6 +380,41 @@ impl Driver {
         .await
         .map_err(|_| Failure::Unknown)?
         .map_err(|_| Failure::Unknown)
+    }
+
+    pub async fn questions(&self) -> Result<Vec<session::questions::Dialog>, Failure> {
+        if !self.alive() {
+            return Err(Failure::Conflict);
+        }
+        Ok(self.requests.lock().await.list())
+    }
+
+    pub async fn answer(
+        &self,
+        submission: session::questions::Submission,
+    ) -> Result<Receipt, Failure> {
+        let mut requests = self.requests.lock().await;
+        if !self.alive() {
+            return Err(Failure::Conflict);
+        }
+        let (response, turn) = requests.answer(submission)?;
+        // Consume the token before touching stdin. Failed/uncertain writes are never repeated.
+        let (approval, question) = requests.waiting();
+        self.store
+            .status(
+                &self.thread,
+                RuntimeStatus::Active {
+                    waiting_on_approval: approval,
+                    waiting_on_user_input: question,
+                },
+                turn.as_deref(),
+            )
+            .await?;
+        self.write(&Input::ControlResponse { response }).await?;
+        Ok(Receipt {
+            thread: self.thread.clone(),
+            turn,
+        })
     }
 
     pub async fn start(
@@ -408,13 +488,29 @@ struct Reader {
     round: Arc<Mutex<Option<Round>>>,
     init_id: String,
     ready: Option<oneshot::Sender<Result<(), Failure>>>,
-    requests: HashMap<String, bool>,
+    requests: Arc<Mutex<Requests>>,
 }
 
 impl Reader {
     async fn frame(&mut self, frame: Output) -> Result<(), Failure> {
         match frame {
             Output::ControlResponse { response } if response.request_id == self.init_id => {
+                let snapshots = response
+                    .pending_permission_requests
+                    .into_iter()
+                    .flatten()
+                    .chain(response.pending_user_dialog_requests.into_iter().flatten());
+                let turn = self.round.lock().await.as_ref().map(|r| r.id.clone());
+                for snapshot in snapshots {
+                    self.requests.lock().await.receive(
+                        snapshot.request_id,
+                        snapshot.request,
+                        turn.clone(),
+                    )?;
+                }
+                if self.requests.lock().await.waiting() != (false, false) {
+                    self.waiting().await?;
+                }
                 if response.subtype == "success"
                     && !matches!(
                         self.store.read(&self.thread).await?.status,
@@ -556,7 +652,7 @@ impl Reader {
                         )
                         .await?;
                 }
-                self.requests.clear();
+                self.requests.lock().await.finish()?;
             }
             Output::System {
                 subtype,
@@ -577,14 +673,13 @@ impl Reader {
                     }
                     NativeState::Running | NativeState::RequiresAction => {
                         let waiting = matches!(state, NativeState::RequiresAction);
+                        let (approval, question) = self.requests.lock().await.waiting();
                         self.store
                             .status(
                                 &self.thread,
                                 RuntimeStatus::Active {
-                                    waiting_on_approval: waiting
-                                        && self.requests.values().any(|q| !*q),
-                                    waiting_on_user_input: waiting
-                                        && self.requests.values().any(|q| *q),
+                                    waiting_on_approval: waiting && approval,
+                                    waiting_on_user_input: waiting && question,
                                 },
                                 turn.as_ref().map(|t| t.id.as_str()),
                             )
@@ -597,18 +692,23 @@ impl Reader {
                 request_id,
                 request,
             } => {
-                if self.requests.len() >= 64 {
-                    return Err(Failure::Busy);
+                let turn = self.round.lock().await.as_ref().map(|r| r.id.clone());
+                let inserted = self
+                    .requests
+                    .lock()
+                    .await
+                    .receive(request_id, request, turn)?;
+                if inserted {
+                    self.waiting().await?;
                 }
-                // AskUserQuestion is not a permission approval. Response support is planned separately.
-                let question = request.subtype == "can_use_tool"
-                    && request.tool_name.as_deref() == Some("AskUserQuestion");
-                self.requests.insert(request_id, question);
-                self.waiting().await?;
             }
             Output::ControlCancelRequest { request_id } => {
-                self.requests.remove(&request_id);
-                self.waiting().await?;
+                // A late cancellation of an already-finished request must not
+                // turn an idle session back into an active waiting state.
+                let removed = self.requests.lock().await.cancel(&request_id)?;
+                if removed {
+                    self.waiting().await?;
+                }
             }
             _ => {}
         }
@@ -617,12 +717,13 @@ impl Reader {
 
     async fn waiting(&self) -> Result<(), Failure> {
         let turn = self.round.lock().await;
+        let (approval, question) = self.requests.lock().await.waiting();
         self.store
             .status(
                 &self.thread,
                 RuntimeStatus::Active {
-                    waiting_on_approval: self.requests.values().any(|q| !*q),
-                    waiting_on_user_input: self.requests.values().any(|q| *q),
+                    waiting_on_approval: approval,
+                    waiting_on_user_input: question,
                 },
                 turn.as_ref().map(|t| t.id.as_str()),
             )

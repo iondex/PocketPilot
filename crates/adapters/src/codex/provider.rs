@@ -164,6 +164,13 @@ impl AgentProvider for Codex {
             .map(|t| t.id))
     }
 
+    async fn questions(
+        &self,
+        thread: &str,
+    ) -> Result<Vec<session::questions::Dialog>, ProviderError> {
+        Ok(self.client.questions(thread).await?)
+    }
+
     async fn history(&self, thread: &str) -> Result<History, ProviderError> {
         let metadata = self
             .client

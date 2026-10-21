@@ -192,6 +192,21 @@ impl Runtime {
             Call::Read { thread } => Ok(Reply::Session {
                 session: self.store.read(&thread).await?,
             }),
+            Call::Questions { thread } => {
+                self.store.read(&thread).await?;
+                let slot = self.drivers.lock().await.get(&thread).cloned();
+                let dialogs = if let Some(slot) = slot {
+                    let driver = slot.lock().await;
+                    if let Some(driver) = driver.as_ref().filter(|d| d.alive()) {
+                        driver.questions().await?
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                };
+                Ok(Reply::Questions { dialogs })
+            }
             Call::History { thread } => Ok(Reply::History {
                 history: self.store.history(&thread).await?,
             }),
@@ -262,7 +277,8 @@ impl Runtime {
             return Ok(receipt);
         }
         let thread = match &mutation {
-            Mutation::Resume { thread }
+            Mutation::Answer { thread, .. }
+            | Mutation::Resume { thread }
             | Mutation::SetTitleIfMissing { thread, .. }
             | Mutation::Upload { thread, .. }
             | Mutation::Start { thread, .. }
@@ -275,6 +291,16 @@ impl Runtime {
         let slot = self.slot(&thread).await?;
         let mut driver = slot.lock().await;
         match mutation {
+            Mutation::Answer { submission, .. } => {
+                let receipt = driver
+                    .as_ref()
+                    .filter(|d| d.alive())
+                    .ok_or(Failure::Conflict)?
+                    .answer(submission)
+                    .await?;
+                self.store.accept(operation, &receipt).await?;
+                return Ok(receipt);
+            }
             Mutation::SetTitleIfMissing { title, .. } => {
                 if title.len() > 512 || title.contains(['\0', '\n', '\r']) {
                     return Err(Failure::Invalid);

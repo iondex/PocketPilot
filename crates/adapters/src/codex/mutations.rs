@@ -46,6 +46,10 @@ impl Codex {
             mutation => (mutation, Vec::new()),
         };
         match mutation {
+            Mutation::Answer { thread, submission } => {
+                let turn = self.client.answer(thread.clone(), submission).await?;
+                Ok(Receipt { thread, turn })
+            }
             Mutation::Upload {
                 thread,
                 path,

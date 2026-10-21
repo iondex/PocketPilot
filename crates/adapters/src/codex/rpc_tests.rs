@@ -271,3 +271,120 @@ async fn loaded_sessions_missing_from_the_index_remain_scoped_and_deduplicated()
 fn listing_thread(name: &str) -> p::Thread {
     serde_json::from_str(&format!(r#"{{"id":"{name}","sessionId":"fixture-session","cliVersion":"fixture","projectId":null,"historyMode":"paginated","preview":"Scoped session","cwd":"/projects/{name}","ephemeral":false,"source":"appServer","modelProvider":"fixture","createdAt":1,"updatedAt":1,"status":{{"type":"idle"}},"turns":[]}}"#)).unwrap()
 }
+
+async fn question(server: &mut Framed<tokio::io::DuplexStream, LinesCodec>, id: &str) {
+    server.send(format!(r#"{{"id":{id},"method":"item/tool/requestUserInput","params":{{"threadId":"session","turnId":"turn","itemId":"item","isBlocking":true,"questions":[{{"id":"format","header":"Format","question":"Choose format","options":[{{"label":"Brief","description":"Summary"}}],"isOther":false,"isSecret":false}}]}}}}"#)).await.unwrap();
+}
+
+#[tokio::test]
+async fn answers_native_user_question_on_original_connection_once() {
+    use session::{
+        AgentProvider,
+        provider::Mutation,
+        questions::{Answer, Submission},
+    };
+    let (local, remote) = tokio::io::duplex(8192);
+    let (read, write) = tokio::io::split(local);
+    let client = Client::spawn(
+        Box::new(JsonLines::new(read, write, None)),
+        Duration::from_secs(2),
+    );
+    let provider = crate::codex::Codex::new("fixture".into(), client.clone()).with_control(true);
+    let mut server = Framed::new(remote, LinesCodec::new());
+    let mut events = client.subscribe();
+    question(&mut server, "\"original-native-id\"").await;
+    events.recv().await.unwrap();
+    let dialogs = provider.questions("session").await.unwrap();
+    assert_eq!(dialogs.len(), 1);
+    assert!(provider.questions("other").await.unwrap().is_empty());
+    let submission = Submission {
+        token: dialogs[0].token.clone(),
+        answers: vec![Answer {
+            question: "format".into(),
+            values: vec!["Brief".into()],
+        }],
+    };
+    let mut invalid = submission.clone();
+    invalid.answers[0].values = vec!["not-an-option".into()];
+    assert!(matches!(
+        provider
+            .execute(Mutation::Answer {
+                thread: "session".into(),
+                submission: invalid
+            })
+            .await,
+        Err(session::ProviderError::Conflict)
+    ));
+    let receipt = provider
+        .execute(Mutation::Answer {
+            thread: "session".into(),
+            submission: submission.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(receipt.turn.as_deref(), Some("turn"));
+    let response: Incoming = serde_json::from_str(&server.next().await.unwrap().unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_string(&response.id).unwrap(),
+        "\"original-native-id\""
+    );
+    assert!(response.method.is_none());
+    let response: p::ToolRequestUserInputResponse =
+        serde_json::from_str(response.result.unwrap().get()).unwrap();
+    assert_eq!(response.answers["format"].answers, ["Brief"]);
+    assert!(matches!(
+        provider
+            .execute(Mutation::Answer {
+                thread: "session".into(),
+                submission
+            })
+            .await,
+        Err(session::ProviderError::Conflict)
+    ));
+    question(&mut server, "\"original-native-id\"").await;
+    events.recv().await.unwrap();
+    assert!(provider.questions("session").await.unwrap().is_empty());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), server.next())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn question_resolution_and_connection_loss_invalidate_answer_handles() {
+    let (local, remote) = tokio::io::duplex(8192);
+    let (read, write) = tokio::io::split(local);
+    let client = Client::spawn(
+        Box::new(JsonLines::new(read, write, None)),
+        Duration::from_secs(2),
+    );
+    let mut server = Framed::new(remote, LinesCodec::new());
+    let mut events = client.subscribe();
+    question(&mut server, "123").await;
+    events.recv().await.unwrap();
+    assert_eq!(client.questions("session").await.unwrap().len(), 1);
+    server.send(r#"{"method":"serverRequest/resolved","params":{"threadId":"session","requestId":123}}"#.to_owned()).await.unwrap();
+    events.recv().await.unwrap();
+    assert!(client.questions("session").await.unwrap().is_empty());
+    question(&mut server, "124").await;
+    events.recv().await.unwrap();
+    let dialog = client.questions("session").await.unwrap().pop().unwrap();
+    drop(server);
+    let result = client
+        .answer(
+            "session".into(),
+            session::questions::Submission {
+                token: dialog.token,
+                answers: vec![session::questions::Answer {
+                    question: "format".into(),
+                    values: vec!["Brief".into()],
+                }],
+            },
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(Error::Disconnected) | Err(Error::Timeout)
+    ));
+}

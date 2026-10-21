@@ -318,3 +318,229 @@ supports_websockets = false
     server.kill().await.unwrap();
     server.wait().await.unwrap();
 }
+
+/// Real app-server + deterministic local model: exercises the native tool request,
+/// original response ID, resumed model input and final answer without external credentials.
+#[tokio::test]
+async fn real_codex_user_question_round_trip() {
+    use session::questions::{Answer, Submission};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let binary =
+        std::env::var("CODEX_TEST_BIN").unwrap_or_else(|_| env!("CODEX_SCHEMA_BIN_PATH").into());
+    let model = MockServer::start().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let arguments = r#"{"questions":[{"id":"format","header":"Format","question":"Which format?","options":[{"label":"Brief","description":"Summary"},{"label":"Detailed","description":"Full text"}]}]}"#;
+    #[derive(serde::Serialize)]
+    struct Tool<'a> {
+        id: &'a str,
+        #[serde(rename = "type")]
+        kind: &'a str,
+        call_id: &'a str,
+        name: &'a str,
+        arguments: &'a str,
+    }
+    let tool = serde_json::to_string(&Tool {
+        id: "fixture-call",
+        kind: "function_call",
+        call_id: "fixture-call",
+        name: "request_user_input",
+        arguments,
+    })
+    .unwrap();
+    let question_sse = format!(
+        "event: response.output_item.done\ndata: {{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{tool}}}\n\nevent: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"question-response\",\"status\":\"completed\",\"output\":[],\"usage\":{{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}}}}\n\n"
+    );
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(move |_: &wiremock::Request| {
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                    question_sse.clone()
+                } else {
+                    SSE.into()
+                })
+        })
+        .mount(&model)
+        .await;
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"
+model = "gpt-5.4"
+model_provider = "fixture"
+approval_policy = "never"
+sandbox_mode = "read-only"
+[features]
+shell_snapshot = false
+code_mode_host = false
+default_mode_request_user_input = true
+[model_providers.fixture]
+name = "Question fixture"
+base_url = "{}/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 0
+stream_max_retries = 0
+supports_websockets = false
+"#,
+            model.uri()
+        ),
+    )
+    .unwrap();
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("ws://{}", reservation.local_addr().unwrap());
+    drop(reservation);
+    let log = std::fs::File::create(home.path().join("native.log")).unwrap();
+    let mut server = Command::new(binary)
+        .args(["app-server", "--listen", &endpoint])
+        .env("CODEX_HOME", home.path())
+        .env_remove("OPENAI_API_KEY")
+        .env_remove("CODEX_ACCESS_TOKEN")
+        .env_remove("HTTP_PROXY")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("ALL_PROXY")
+        .env_remove("http_proxy")
+        .env_remove("https_proxy")
+        .env_remove("all_proxy")
+        .current_dir(cwd.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(log)
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let connection = Endpoint::Websocket { endpoint };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let client = loop {
+        if let Ok(client) = connect(&connection).await {
+            break client;
+        }
+        assert!(server.try_wait().unwrap().is_none());
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    };
+    let provider = Codex::new("fixture".into(), client).with_control(true);
+    let thread = provider
+        .execute(Mutation::Create {
+            cwd: cwd.path().to_string_lossy().into(),
+        })
+        .await
+        .unwrap()
+        .thread;
+    provider
+        .execute(Mutation::Start {
+            thread: thread.clone(),
+            text: "Ask me which format to use".into(),
+            client_id: "question-client".into(),
+        })
+        .await
+        .unwrap();
+    let dialog = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(dialog) = provider.questions(&thread).await.unwrap().pop() {
+                break dialog;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        #[derive(serde::Deserialize)]
+        struct Input {
+            input: Vec<Item>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Item {
+            #[serde(rename = "type")]
+            kind: String,
+            #[serde(default)]
+            output: Option<String>,
+        }
+        eprintln!(
+            "isolated native log: {}",
+            std::fs::read_to_string(home.path().join("native.log")).unwrap()
+        );
+        if let Some(requests) =
+            futures_util::FutureExt::now_or_never(model.received_requests()).flatten()
+        {
+            for request in requests {
+                let input: Input = serde_json::from_slice(&request.body).unwrap();
+                for item in input.input {
+                    if item.kind == "function_call_output" {
+                        eprintln!("isolated tool output: {:?}", item.output);
+                    }
+                }
+            }
+        }
+        panic!(
+            "native question was not delivered; model calls: {}",
+            calls.load(Ordering::SeqCst)
+        );
+    });
+    assert_eq!(dialog.questions[0].id, "format");
+    provider
+        .execute(Mutation::Answer {
+            thread: thread.clone(),
+            submission: Submission {
+                token: dialog.token,
+                answers: vec![Answer {
+                    question: "format".into(),
+                    values: vec!["Brief".into()],
+                }],
+            },
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if provider
+                .history(&thread)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .any(|i| i.text == "fixture OK")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("native turn did not resume after answering");
+    assert!(provider.questions(&thread).await.unwrap().is_empty());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    #[derive(serde::Deserialize)]
+    struct ModelInput {
+        input: Vec<ModelItem>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ModelItem {
+        #[serde(rename = "type")]
+        kind: String,
+        #[serde(default)]
+        output: Option<String>,
+    }
+    let requests = model.received_requests().await.unwrap();
+    let input: ModelInput = serde_json::from_slice(&requests[1].body).unwrap();
+    let output = input
+        .input
+        .iter()
+        .find(|i| i.kind == "function_call_output")
+        .unwrap()
+        .output
+        .as_deref()
+        .unwrap();
+    let answer: crate::codex::protocol::ToolRequestUserInputResponse =
+        serde_json::from_str(output).unwrap();
+    assert_eq!(answer.answers["format"].answers, ["Brief"]);
+    server.kill().await.unwrap();
+    server.wait().await.unwrap();
+}

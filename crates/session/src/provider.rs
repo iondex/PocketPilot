@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Mutation {
+    Answer {
+        thread: String,
+        submission: crate::questions::Submission,
+    },
     Upload {
         thread: String,
         path: String,
@@ -64,6 +68,10 @@ pub enum ProviderError {
     Incompatible,
     #[error("operation is unsupported by this provider")]
     Unsupported,
+    #[error(
+        "invalid answer; use !answer followed by the current question code and one numbered answer per line"
+    )]
+    InvalidAnswer,
     #[error("session state changed; refresh and confirm the input again")]
     Conflict,
 }
@@ -78,6 +86,7 @@ impl ::i18n::LocalizedError for ProviderError {
             }
             Self::Incompatible => ::i18n::Message::new("error.provider.incompatible"),
             Self::Unsupported => ::i18n::Message::new("error.provider.unsupported"),
+            Self::InvalidAnswer => ::i18n::Message::new("common.question.invalid"),
             Self::Conflict => ::i18n::Message::new("error.provider.conflict"),
         }
     }
@@ -97,6 +106,14 @@ pub trait AgentProvider: Send + Sync {
     }
 
     async fn history(&self, thread: &str) -> Result<History, ProviderError>;
+
+    /// Only dialogs owned by this live runtime connection/process are answerable.
+    async fn questions(
+        &self,
+        _thread: &str,
+    ) -> Result<Vec<crate::questions::Dialog>, ProviderError> {
+        Ok(Vec::new())
+    }
 
     /// Wake observers on lifecycle changes; polling remains necessary after event loss.
     fn session_changes(&self) -> Option<tokio::sync::watch::Receiver<()>> {
