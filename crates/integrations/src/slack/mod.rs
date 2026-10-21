@@ -11,7 +11,7 @@ pub mod model;
 pub mod storage;
 
 #[path = "render.rs"]
-mod render;
+pub(crate) mod render;
 
 #[path = "markdown.rs"]
 mod markdown;

@@ -20,8 +20,7 @@ impl Service {
             .acquire()
             .await
             .map_err(|_| i18n::Message::new("error.discord.backend"))?;
-        provider
-            .history(thread)
+        crate::questions::history(provider, thread, &self.config.snapshot().config.language)
             .await
             .map(session::History::without_transient_errors)
             .map_err(error)

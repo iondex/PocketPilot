@@ -373,11 +373,15 @@ import json,sys,pathlib
 session=json.loads(pathlib.Path(__file__).with_suffix('.session').read_text())
 for line in sys.stdin:
     request=json.loads(line);call=request['call'];method=call['method']
-    if method=='initialize': reply={'type':'initialized','version':1,'runtime':'claude_code','steer':False}
+    if method=='initialize': reply={'type':'initialized','version':call['version'],'runtime':'claude_code','steer':False}
     elif method=='read': reply={'type':'session','session':session}
     elif method=='history': reply={'type':'history','history':{'items':[],'all_pages_read':True}}
+    elif method=='questions':
+        dialog=pathlib.Path(__file__).with_suffix('.dialog')
+        reply={'type':'questions','dialogs':[json.loads(dialog.read_text())] if dialog.exists() else []}
     elif method=='mutate':
         with pathlib.Path(__file__).with_suffix('.calls').open('a') as log: log.write(json.dumps(call['mutation'])+'\n')
+        if call['mutation']['action']=='answer': pathlib.Path(__file__).with_suffix('.dialog').unlink()
         reply={'type':'receipt','receipt':{'thread':'session','turn':'turn'}}
     else: sys.exit(1)
     print(json.dumps({'id':request['id'],'result':{'Ok':reply}}),flush=True)
@@ -413,7 +417,7 @@ for line in sys.stdin:
         host_id: "host".into(),
         kind: "claude_code".into(),
         connection_mode: "existing_proxy".into(),
-        compatibility_profile: "pocketpilot-runtime-v1".into(),
+        compatibility_profile: "pocketpilot-runtime-v2".into(),
         control_verified: true,
         endpoint: Some(adapters::ServerEndpoint {
             binary: binary.to_str().unwrap().into(),
@@ -490,5 +494,85 @@ for line in sys.stdin:
         serde_json::from_str(calls.lines().next().unwrap()).unwrap();
     assert!(
         matches!(mutation,session::provider::Mutation::Start {text,..} if text=="fixture task")
+    );
+    // The same authenticated group/thread input path handles structured answers;
+    // no native steer or permission approval is substituted for the answer.
+    let dialog = session::questions::Dialog {
+        token: "fixture-answer-code".into(),
+        turn: Some("turn".into()),
+        questions: vec![session::questions::Question {
+            id: "format".into(),
+            header: "Format".into(),
+            text: "Choose format".into(),
+            options: vec![session::questions::OptionLabel {
+                label: "Brief".into(),
+                description: "Summary".into(),
+            }],
+            multiple: false,
+            other: false,
+            secret: false,
+        }],
+    };
+    std::fs::write(
+        binary.with_extension("dialog"),
+        serde_json::to_vec(&dialog).unwrap(),
+    )
+    .unwrap();
+    #[derive(Serialize)]
+    struct Text<'a> {
+        text: &'a str,
+    }
+    let content = serde_json::to_string(&Text {
+        text: "@_user_1 !answer fixture-answer-code\n1: Brief",
+    })
+    .unwrap();
+    assert!(
+        !service
+            .receive(&group_message(
+                "om_denied_answer",
+                "event_denied_answer",
+                "text",
+                &content,
+                "om_root",
+                "omt_thread",
+                false
+            ))
+            .await
+            .unwrap()
+    );
+    assert!(
+        service
+            .receive(&group_message(
+                "om_answer",
+                "event_answer",
+                "text",
+                &content,
+                "om_root",
+                "omt_thread",
+                true
+            ))
+            .await
+            .unwrap()
+    );
+    let row = service.store.next().await.unwrap().unwrap();
+    let input: Input = serde_json::from_str(&row.payload).unwrap();
+    service.process(&input, &row.config_hash).await.unwrap();
+    let calls = std::fs::read_to_string(binary.with_extension("calls")).unwrap();
+    assert_eq!(calls.lines().count(), 2);
+    let mutation: session::provider::Mutation =
+        serde_json::from_str(calls.lines().last().unwrap()).unwrap();
+    let session::provider::Mutation::Answer { thread, submission } = mutation else {
+        panic!("native answer expected")
+    };
+    assert_eq!(thread, "session");
+    assert_eq!(submission.answers[0].question, "format");
+    assert_eq!(submission.answers[0].values, ["Brief"]);
+    assert!(service.process(&input, &row.config_hash).await.is_err());
+    assert_eq!(
+        std::fs::read_to_string(binary.with_extension("calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
     );
 }

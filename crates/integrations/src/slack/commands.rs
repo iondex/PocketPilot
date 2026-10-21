@@ -235,7 +235,9 @@ impl Service {
                 .acquire_owned()
                 .await
                 .map_err(|_| Error::Request)?;
-            let history = provider.history(thread).await?.without_transient_errors();
+            let history = crate::questions::history(provider.as_ref(), thread, &self.locale())
+                .await?
+                .without_transient_errors();
             if !history.all_pages_read {
                 return Err(Error::Ui("slack.error.history"));
             }

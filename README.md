@@ -10,7 +10,7 @@ PocketPilot 是面向开发者的自托管会话入口，适合在电脑、手�
 | --- | --- | --- |
 | 消息入口 | Telegram、Slack、Discord、飞书 | 国际 Lark |
 | 执行环境 | 本机、通过 OpenSSH 连接的远程主机 | 继续完善现有连接方式 |
-| Agent runtime | Codex app-server、Claude Code 独立 server 首版 | Claude 结构化问答、Pi Coding Agent |
+| Agent runtime | Codex app-server、Claude Code 独立 server；均可显式回答结构化问题 | 原生问答控件、Pi Coding Agent |
 
 ## 使用体验
 
@@ -20,6 +20,8 @@ PocketPilot 是面向开发者的自托管会话入口，适合在电脑、手�
 - Slack：owner 与 App 私聊，每个会话使用独立 thread。
 - Discord：服务器 owner 通过 `/pp` 导航，每个会话使用独立 channel；支持原生新建表单。
 - 飞书：owner 私聊导航，每个会话绑定已授权群中的独立话题；安装步骤见接入方案。
+
+Agent 的结构化问题通过共用回答模板提交，普通文本仍按会话输入处理，详见[问答步骤](docs/integrations.md#回答-agent-的问题)。
 
 正文按平台能力呈现 Markdown、代码、表格与图片；用户文件可作为独立附件提交。绑定可暂停观察、恢复或解除。已有任务的执行独立于聊天桥接进程的启停。
 

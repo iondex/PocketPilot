@@ -152,7 +152,9 @@ impl Service {
                     )
                     .await
             } else {
-                let history = provider.history(&b.session).await?;
+                let history =
+                    crate::questions::history(provider.as_ref(), &b.session, &self.locale())
+                        .await?;
                 self.conversation(
                     &Destination {
                         chat: b.chat.clone(),
@@ -170,6 +172,22 @@ impl Service {
         }
         if !provider.capabilities().control_verified {
             return Err(Error::Ui("feishu.error.read_only"));
+        }
+        if let Some(mutation) =
+            crate::questions::prepare(provider.as_ref(), &b.session, text, !input.files.is_empty())
+                .await?
+        {
+            self.mutate(
+                input,
+                hash,
+                project,
+                Some(&b),
+                &b.session,
+                "answer",
+                mutation,
+            )
+            .await?;
+            return Ok(());
         }
         if session.status == RuntimeStatus::NotLoaded {
             self.mutate(

@@ -178,6 +178,25 @@ impl Service {
         if fresh.revision != binding.revision {
             return Err(Error::Expired);
         }
+        if let Some(mutation) = crate::questions::prepare(
+            provider.as_ref(),
+            &binding.thread_id,
+            text,
+            !input.uploads.is_empty(),
+        )
+        .await?
+        {
+            self.mutate(
+                input,
+                snapshot,
+                workspace,
+                "answer",
+                &binding.thread_id,
+                mutation,
+            )
+            .await?;
+            return Ok(());
+        }
         let client_id = format!("pp:{}:{}", self.bot, input.event_key);
         let (mutation, label) = match current.status {
             RuntimeStatus::Active {

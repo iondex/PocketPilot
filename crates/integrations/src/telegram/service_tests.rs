@@ -85,6 +85,8 @@ enum Method {
 }
 
 struct State {
+    question: bool,
+    answers: Vec<p::ToolRequestUserInputResponse>,
     uploads: Vec<p::FsWriteFileParams>,
     status: p::ThreadStatus,
     native_name: Option<String>,
@@ -223,7 +225,7 @@ telegram_messages_per_minute=60000
             .unwrap();
         let api =
             Api::local_fixture("1:abcdefghijklmnopqrstuvwxyz".into(), &telegram.uri()).unwrap();
-        let state=Arc::new(Mutex::new(State{uploads:Vec::new(),native_name:Some("Fixture title".into()),status:p::ThreadStatus::Active(vec![]),items:vec![
+        let state=Arc::new(Mutex::new(State{question:false,answers:Vec::new(),uploads:Vec::new(),native_name:Some("Fixture title".into()),status:p::ThreadStatus::Active(vec![]),items:vec![
             serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"original question"}]}"#).unwrap(),
             serde_json::from_str(r#"{"type":"agentMessage","id":"a","text":"original answer","phase":"final_answer"}"#).unwrap(),
             serde_json::from_str(r#"{"type":"reasoning","id":"r","summary":["must never appear in Telegram"]}"#).unwrap(),
@@ -235,7 +237,20 @@ telegram_messages_per_minute=60000
                 let state = server_state.clone();
                 tokio::spawn(async move {
                     let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    let mut question_sent = false;
                     while let Some(Ok(Message::Text(text))) = socket.next().await {
+                        #[derive(Deserialize)]
+                        struct Answered {
+                            id: String,
+                            result: p::ToolRequestUserInputResponse,
+                        }
+                        if let Ok(answer) = serde_json::from_str::<Answered>(&text) {
+                            assert_eq!(answer.id, "native-question");
+                            let mut state = state.lock().await;
+                            state.question = false;
+                            state.answers.push(answer.result);
+                            continue;
+                        }
                         let frame: Frame = serde_json::from_str(&text).unwrap();
                         let mut state = state.lock().await;
                         match frame.method {
@@ -274,6 +289,10 @@ telegram_messages_per_minute=60000
                                 .await;
                             }
                             Method::Read(params) => {
+                                if state.question && !question_sent {
+                                    question_sent = true;
+                                    socket.send(Message::Text(r#"{"id":"native-question","method":"item/tool/requestUserInput","params":{"threadId":"thread","turnId":"turn","itemId":"question-tool","isBlocking":true,"questions":[{"id":"format","header":"Format","question":"Choose format","options":[{"label":"Brief","description":"Summary"},{"label":"Detailed","description":"Full text"}]}]}}"#.into())).await.unwrap();
+                                }
                                 assert_eq!(params.thread_id, "thread");
                                 let mut thread = state.thread();
                                 if params.include_turns == Some(true) {
@@ -4850,3 +4869,6 @@ mod access;
 
 #[path = "discord_creation_tests.rs"]
 mod discord_creation;
+
+#[path = "question_flow_tests.rs"]
+mod question_flow_tests;

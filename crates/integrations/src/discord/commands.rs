@@ -112,6 +112,30 @@ impl Service {
                     .map_err(error)?;
                 let mut current = provider.read(&b.thread).await.map_err(error)?;
                 runtimes::require_workspace(&current.cwd, ws).map_err(error)?;
+                if let Some(mutation) = crate::questions::prepare(
+                    provider.as_ref(),
+                    &b.thread,
+                    text,
+                    !input.uploads.is_empty(),
+                )
+                .await
+                .map_err(error)?
+                {
+                    self.mutate(
+                        api,
+                        input,
+                        snapshot,
+                        "answer",
+                        Target {
+                            workspace: ws,
+                            thread: &b.thread,
+                            binding: Some(&b),
+                        },
+                        mutation,
+                    )
+                    .await?;
+                    return Ok(i18n::text(&locale, "common.question.accepted"));
+                }
                 if current.status == RuntimeStatus::NotLoaded {
                     self.mutate(
                         api,

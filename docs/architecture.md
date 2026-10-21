@@ -2,7 +2,7 @@
 
 PocketPilot 是连接消息平台与 AI 编程运行时的会话入口。它统一导航、用户授权、任务提交与结果展示，让同一个原生 session 能从不同设备和消息平台访问。
 
-当前实现包含 Telegram、Slack、Discord、国内飞书；runtime 包含 Codex 原生 app-server 和 PocketPilot 自己管理会话的 Claude Code server 首版。国际 Lark、Pi 与结构化问答见[后续支持](support.md)。以下描述当前代码，不将规划中的能力算作已支持。
+当前实现包含 Telegram、Slack、Discord、国内飞书；runtime 包含 Codex 原生 app-server 和 PocketPilot 自己管理会话的 Claude Code server 首版。国际 Lark、Pi 与后续问答控件见[后续支持](support.md)。以下描述当前代码，不将规划中的能力算作已支持。
 
 ## 概念与职责
 
@@ -131,7 +131,7 @@ Codex CLI 的默认构建来源是 PATH，`CODEX_SCHEMA_BIN` 仅用于指定构�
 
 server 只管理自己创建的 UUID session；创建空会话、list/read/history 不调用 Claude。首次显式输入或 resume 才启动长驻 stream-json child，使用 manual 权限模式；后续空闲输入复用同一 child。client/SSH 只拥有 proxy，断线不会关闭 agent stdin。输入发送前持久化 intent，匹配原生 user UUID 回显后保存 accepted receipt；未知结果不重发，server 重启也不自动恢复或继续任务。
 
-只发布主 assistant 的文本块；不混入 thinking、工具输出和子 agent 内容。文件限定在 server 私有上传根并记录 session 归属，图片按 MIME 签名和大小限制转为原生 image block。活跃 steer 和结构化问题回答尚未开放；权限请求仅体现等待状态，不自动代答。离线 fake CLI 覆盖协议与断线语义，不能据此宣称真实账号/模型全流程已经验证。
+只发布主 assistant 的文本块；不混入 thinking、工具输出和子 agent 内容。文件限定在 server 私有上传根并记录 session 归属，图片按 MIME 签名和大小限制转为原生 image block。活跃 steer 尚未开放；结构化 AskUserQuestion 通过原始请求回答，其他权限请求仅体现等待状态，不自动代答。离线 fake CLI 覆盖协议与断线语义，不能据此宣称真实账号/模型全流程已经验证。
 
 
 ## 飞书的消息与传输边界
@@ -145,3 +145,13 @@ HTTP 禁用系统代理、重定向和底层自动重试，WS 经现有有界 re
 回调在两秒内完成 scope/时效校验及持久化入队，再由 SDK ACK；最多四个后台输入 worker，不在 ACK 路径等待 SSH 或模型。动作 nonce 绑定原消息与聊天、配置 hash、owner 命名空间及五分钟有效期。发送前冻结 Card JSON 2.0，最终编码 payload 保守限制为 28 KB；自动输出与状态更新受绑定/观察偏好约束，未知回执不重发。
 
 群根消息和首次 thread 回复分别记录 provisioning 结果；中途断线标为 unknown，不悄悄补发根消息。已观察历史 cursor 与待投递输出在同一事务提交；首次进入只展示最近交互，后续发增量。队列、活跃绑定及单批卡片数量都有界，历史解绑记录保留用于状态与审计，不增加历史导出文件。
+
+## 结构化问题与显式回答
+
+`session::questions` 定义 `Dialog`、`Question`、`Submission`；`AgentProvider::questions` 只返回当前连接或原生进程拥有的问题。`Mutation::Answer` 复用现有的授权、绑定校验、会话 actor 和持久化操作账本。题目、选项及答案有数量与字节上限；不记录到日志。
+
+Codex RPC actor 直接跟踪 `item/tool/requestUserInput`，不依赖可能丢事件的 broadcast 订阅。回答发回同一连接上的原始 JSON-RPC ID；`serverRequest/resolved`、轮次结束和断线使原回答码失效。其他客户端的问题不会被接管。原生 ID 仅在 adapter 内保存，聊天端使用随机不透明回答码。
+
+Claude 独立 server 持有原生 stdin 与 pending requests。初始化快照与实时请求按 request ID 去重，取消和轮次结束使其失效；代理断开后原生进程仍拥有问题。仅匹配 `can_use_tool/AskUserQuestion` 的请求可构造专用响应，保留原输入与未知扩展字段，补充按完整题目文本索引的答案。多选按原生 SDK 的字符串约定连接；不修改权限规则。协议版本为 2，桥接和独立 server 需成套更新；不会自动重启已运行的旧 server。
+
+`integrations::questions` 统一问题投影、编号、显式 `!answer` 语法及字段校验。问题作为临时展示项进入各平台已有渲染/观察流程，不写入原生历史。普通消息继续走输入/steer；回答在分发前重新确认 runtime pending，先消耗一次性回答码再写传输，结果未知不重发。秘密问题只提示回原生界面，不展示题目/选项或接受聊天答案。各平台的原生选择器、草稿和已取消状态控件仍属后续改进。

@@ -23,7 +23,7 @@ pub use runtime::Discord;
 pub mod api;
 
 #[path = "render.rs"]
-mod render;
+pub(crate) mod render;
 
 pub mod native;
 

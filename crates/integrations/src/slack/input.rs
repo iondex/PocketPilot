@@ -77,6 +77,14 @@ impl Service {
         let provider = self.context.runtimes.get(&snapshot.config, ws).await?;
         let mut current = provider.read(&b.thread).await?;
         engine::runtimes::require_workspace(&current.cwd, ws)?;
+        if let Some(mutation) =
+            crate::questions::prepare(provider.as_ref(), &b.thread, text, !r.uploads.is_empty())
+                .await?
+        {
+            self.mutate(r, hash, ws, &b.thread, "answer", mutation)
+                .await?;
+            return Ok(());
+        }
         if current.status == RuntimeStatus::NotLoaded {
             self.mutate(
                 r,

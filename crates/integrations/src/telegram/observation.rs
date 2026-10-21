@@ -88,7 +88,7 @@ impl Service {
                 .acquire()
                 .await
                 .map_err(|_| ProviderError::Disconnected)?;
-            provider.history(thread).await
+            crate::questions::history(provider, thread, &snapshot.config.language).await
         };
         let history = tokio::time::timeout(
             Duration::from_secs(snapshot.config.delivery.history_barrier_timeout_seconds),

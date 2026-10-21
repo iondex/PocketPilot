@@ -149,6 +149,26 @@ proxy = "http://192.0.2.10:7890"
 
 当前支持无认证 HTTP CONNECT，并保持 TLS 证书检查。平台 HTTP、WebSocket 和附件下载按同一平台配置路由；SSH 的 ProxyJump / ProxyCommand 属于主机连接配置，是另一层连接。
 
+## 回答 Agent 的问题
+
+普通文本问题直接在绑定会话回复。Codex 活跃时仍使用 steer、空闲时 start；Claude 目前只支持空闲续轮，不会将活跃时排队输入冒充 steer。
+
+Codex 的 `request_user_input` 或 Claude 的 `AskUserQuestion` 会显示“❓ Agent 提问”、题目序号、选项说明及一段可复制的回答模板。将模板作为普通文本发送到同一个绑定会话，替换每个 `…`：
+
+```text
+!answer 回答模板中的回答码
+1: 选项的完整文字
+2: 自己的回答
+```
+
+每题必须填写一次，单选填写完整选项文字；允许自定义时可填自由文本。多选使用 JSON 字符串数组，例如 `1: ["Rust", "Python"]`。一次提交全部题目，不附加文件。多行自由文本可用单元素 JSON 数组，例如 `1: ["第一行\n第二行"]`。回答码只属于当前 pending 请求，不是原生 session/request ID。
+
+Telegram 在绑定 topic 发送；Slack 在绑定 session thread 发送；Discord 在该 session channel 将模板填入 `/pp-ask` 的 text；飞书在绑定群 thread @机器人发送。四端共用解析规则，保留各自 owner、群、thread/topic/channel 与绑定 revision 的授权校验。没有 `!answer` 前缀的文字按普通输入处理，不能用直接发送某个选项来隐式批准问题。
+
+问题取消、轮次结束、回答已发送或原生连接不可验证后，旧模板不可再提交。已显示的消息可能仍留在聊天历史中；以 runtime 当前 pending 为准，不从历史恢复回答权限。Codex 需原生模式实际提供 `request_user_input` 工具，PocketPilot 不自动切换模式或修改原生工具配置。Codex 只能回答投递给 PocketPilot 原连接的问题；其他 Desktop/CLI 界面的旧 pending 需回原生界面处理。Claude 代理重连可读取仍由独立 server 持有的问题，server 进程重启后旧回答码失效。
+
+秘密问题需回原生端回答，聊天中不展示题目和选项。普通工具权限审批仍留在原端。当前提供统一文本提交，原生选择器、表单和草稿控件尚未交付；飞书尚待真实应用安装验证。
+
 ## 日常维护
 
 使用服务管理器运行一份 `serve`，退出或重启只影响桥接。代理和平台凭据更改需重启；catalog 的项目管理可在运行中进行。日志支持终端/文件与轮转，不记录消息正文、token、OTP seed、认证提示或完整传输帧。
@@ -162,7 +182,7 @@ proxy = "http://192.0.2.10:7890"
 
 server 直接使用目标账号已有的 Claude CLI 模型与认证配置，包括 `~/.claude/settings.json` 中的 Anthropic 兼容接口。已配置 DeepSeek 的账号无需把模型密钥复制到 PocketPilot；远端账号需自行具备对应配置。桥接配置只声明 server 与连接，不重复保存模型 token。
 
-此入口只管理 PocketPilot 自己创建的 Claude session，不接管已打开的任意 Claude 终端。CLI 在目标机由目标账号正常安装并登录；不将 token 打包或随二进制上传。已静态核对 CLI **2.1.304** 和对应 SDK **0.3.304** 的 stream-json 类型；离线测试不调用真实模型。遇到需权限审批的工具时保持等待，聊天端的结构化问答与权限处理尚未开放。
+此入口只管理 PocketPilot 自己创建的 Claude session，不接管已打开的任意 Claude 终端。CLI 在目标机由目标账号正常安装并登录；不将 token 打包或随二进制上传。协议核对版本为 CLI **2.1.304** 和 SDK **0.3.304**，DeepSeek 兼容配置已实测普通文本问答及 `AskUserQuestion` 回答。平台输入路径以离线 fixture 覆盖，不等同于真实租户安装验收。遇到需权限审批的工具时保持等待，聊天端可显式回答结构化 AskUserQuestion；其他工具权限处理仍不开放。
 
 桥接主机准备 musl 目标与 C toolchain（Debian/Ubuntu 为 `musl-tools`），再打包：
 

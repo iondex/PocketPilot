@@ -56,8 +56,7 @@ impl Service {
             .acquire_owned()
             .await
             .map_err(|_| Error::Request)?;
-        let history = provider
-            .history(&b.thread)
+        let history = crate::questions::history(provider.as_ref(), &b.thread, &self.locale())
             .await?
             .without_transient_errors();
         if !history.all_pages_read {
