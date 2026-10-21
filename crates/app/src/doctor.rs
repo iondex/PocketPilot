@@ -20,6 +20,9 @@ pub(super) struct Options {
     /// Read Discord bot/application/guild identity without registering commands.
     #[arg(long)]
     pub(super) discord: bool,
+    /// Read Feishu bot identity without sending messages or creating sessions.
+    #[arg(long)]
+    pub(super) feishu: bool,
 }
 
 #[derive(Serialize)]
@@ -30,6 +33,7 @@ struct ConfigurationSummary {
     telegram_configured: bool,
     discord_configured: bool,
     slack_configured: bool,
+    feishu_configured: bool,
     credentials_checked: bool,
     control_enabled: bool,
 }
@@ -55,6 +59,7 @@ fn configuration_summary(config: &Config, check: bool) -> Result<ConfigurationSu
         telegram_configured: config.telegram.is_some(),
         discord_configured: config.discord.is_some(),
         slack_configured: config.slack.is_some(),
+        feishu_configured: config.feishu.is_some(),
         credentials_checked: check,
         control_enabled: config.providers.iter().any(|p| p.control_verified),
     })
@@ -78,6 +83,7 @@ pub(super) struct Report {
     hosts: Vec<HostCheck>,
     telegram: Option<integrations::telegram::Identity>,
     discord: Option<integrations::discord::Identity>,
+    feishu: Option<integrations::feishu::Identity>,
     control_enabled: bool,
     note: String,
 }
@@ -182,11 +188,17 @@ pub(super) async fn inspect(config: &Config, options: &Options) -> Result<Report
     } else {
         None
     };
+    let feishu = if options.feishu {
+        Some(integrations::feishu::inspect(config.feishu.as_ref().ok_or(Error::Selection)?).await?)
+    } else {
+        None
+    };
     Ok(Report {
         configuration,
         hosts,
         telegram,
         discord,
+        feishu,
         control_enabled: config.providers.iter().any(|p| p.control_verified),
         note: i18n::text(&config.language, "cli.doctor_note"),
     })

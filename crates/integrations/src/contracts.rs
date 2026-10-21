@@ -8,6 +8,7 @@ pub enum Platform {
     Telegram,
     Slack,
     Discord,
+    Feishu,
 }
 
 impl Platform {
@@ -16,6 +17,7 @@ impl Platform {
             Self::Telegram => "telegram",
             Self::Slack => "slack",
             Self::Discord => "discord",
+            Self::Feishu => "feishu",
         }
     }
 }

@@ -347,3 +347,34 @@ CREATE TABLE IF NOT EXISTS runtime_uploads (
     path TEXT PRIMARY KEY,
     session TEXT NOT NULL REFERENCES runtime_sessions(id)
 );
+
+-- Feishu state is namespaced by application, tenant and permitted operator.
+CREATE TABLE IF NOT EXISTS feishu_inbox (
+    namespace TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL,
+    config_hash TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+    PRIMARY KEY(namespace,id)
+);
+CREATE TABLE IF NOT EXISTS feishu_actions (
+    nonce TEXT PRIMARY KEY, namespace TEXT NOT NULL, chat TEXT NOT NULL,
+    message TEXT, payload TEXT NOT NULL, config_hash TEXT NOT NULL,
+    expires INTEGER NOT NULL, consumed INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS feishu_bindings (
+    id TEXT PRIMARY KEY, namespace TEXT NOT NULL, chat TEXT NOT NULL,
+    root TEXT NOT NULL DEFAULT '', topic TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL, instance TEXT NOT NULL, session TEXT NOT NULL,
+    cwd TEXT NOT NULL, endpoint TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
+    active INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL DEFAULT 'provisioning',
+    cursor TEXT NOT NULL DEFAULT '{}', ready INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT '',
+    UNIQUE(namespace,chat,instance,session)
+);
+CREATE TABLE IF NOT EXISTS feishu_outbox (
+    id TEXT PRIMARY KEY, namespace TEXT NOT NULL, destination TEXT NOT NULL,
+    edit TEXT, binding TEXT, revision INTEGER, content TEXT NOT NULL,
+    nonces TEXT NOT NULL DEFAULT '[]', automatic INTEGER NOT NULL DEFAULT 0,
+    config_hash TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+    created INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS feishu_inbox_pending ON feishu_inbox(namespace,state);
+CREATE INDEX IF NOT EXISTS feishu_outbox_pending ON feishu_outbox(namespace,state);

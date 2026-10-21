@@ -31,11 +31,32 @@ async fn seed(core: &Store, config: &Config, index: i32) {
     sqlx::query("INSERT INTO discord_bindings(bot,guild,channel,owner,workspace,instance,thread,cwd,endpoint) VALUES('1','2',?,'3','project','runtime',?,'/projects/example',?)")
         .bind(index.to_string()).bind(&thread).bind(&endpoint).execute(core.pool()).await.unwrap();
     sqlx::query("INSERT INTO slack_bindings(id,app,team,bot,channel,root,owner,workspace,instance,thread,cwd,endpoint) VALUES(?,'A','T','B','D',?,'U','project','runtime',?,'/projects/example',?)")
-        .bind(index.to_string()).bind(format!("{index}.000001")).bind(&thread).bind(endpoint).execute(core.pool()).await.unwrap();
+        .bind(index.to_string()).bind(format!("{index}.000001")).bind(&thread).bind(&endpoint).execute(core.pool()).await.unwrap();
+    sqlx::query("INSERT INTO feishu_bindings(id,namespace,chat,root,topic,project,instance,session,cwd,endpoint,state) VALUES(?,'feishu:cli_example:tenant:ou_owner','oc_group',?,?,'project','runtime',?,'/projects/example',?,'ready')")
+        .bind(index.to_string()).bind(format!("om_{index}")).bind(format!("omt_{index}")).bind(&thread).bind(endpoint).execute(core.pool()).await.unwrap();
 }
 
 fn repositories(core: &Store) -> Vec<(Box<dyn Repository>, Scope, Target)> {
     vec![
+        (
+            Box::new(crate::feishu::storage::Store::new(
+                core.clone(),
+                &crate::feishu::config::Config {
+                    app_id: "cli_example".into(),
+                    app_secret: "fixture".into(),
+                    tenant_key: "tenant".into(),
+                    owner_open_id: "ou_owner".into(),
+                    groups: vec![],
+                    proxy: Default::default(),
+                },
+            )),
+            Scope::Feishu {
+                app: "cli_example".into(),
+                tenant: "tenant".into(),
+                owner: "ou_owner".into(),
+            },
+            Target::Feishu { id: "1".into() },
+        ),
         (
             Box::new(crate::telegram::storage::Store::new(core.clone())),
             Scope::Telegram { bot: 1, chat: 10 },
@@ -187,7 +208,7 @@ async fn inventory_uses_cached_metadata_and_removed_projects_remain_manageable()
         assert!(entry.checked_at.is_some());
         assert_eq!(
             entry.jump_url(&scope).is_some(),
-            !matches!(scope, Scope::Telegram { .. })
+            !matches!(scope, Scope::Telegram { .. } | Scope::Feishu { .. })
         );
     }
     config.workspaces.clear();
@@ -212,6 +233,14 @@ async fn inventory_and_changes_are_isolated_by_native_account_and_owner() {
     for (repository, scope, target) in repositories(&core) {
         let mut wrong_scopes = Vec::new();
         match scope {
+            Scope::Feishu { app, tenant, owner } => {
+                for field in 0..3 {
+                    let mut values = [app.clone(), tenant.clone(), owner.clone()];
+                    values[field].push('X');
+                    let [app, tenant, owner] = values;
+                    wrong_scopes.push(Scope::Feishu { app, tenant, owner });
+                }
+            }
             Scope::Telegram { bot, chat } => {
                 wrong_scopes.push(Scope::Telegram { bot: bot + 1, chat });
                 wrong_scopes.push(Scope::Telegram {

@@ -15,6 +15,7 @@ async fn offline_report_sorts_hosts_and_skips_network_and_credential_checks() {
         connect: false,
         telegram: false,
         discord: false,
+        feishu: false,
     };
 
     let report = inspect(&config, &options).await.unwrap();

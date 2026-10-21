@@ -6,6 +6,7 @@ use session::markdown::{Format, TooLarge};
 #[serde(rename_all = "snake_case")]
 pub enum MessageFormat {
     TelegramRich,
+    FeishuCard,
     SlackBlocks,
     DiscordMarkdown,
     DiscordComponentsV2,
@@ -32,6 +33,16 @@ pub struct Capabilities {
 impl Capabilities {
     pub const fn for_platform(platform: crate::Platform) -> Self {
         match platform {
+            crate::Platform::Feishu => Self {
+                format: MessageFormat::FeishuCard,
+                text_budget: 6000,
+                block_budget: 128,
+                table_columns: 20,
+                tables: Support::Native,
+                mathematics: Support::Text,
+                footnotes: Support::Text,
+                collapsible: Support::Text,
+            },
             crate::Platform::Telegram => Self {
                 format: MessageFormat::TelegramRich,
                 text_budget: 12_000,

@@ -200,6 +200,14 @@ impl Document {
         })
     }
 
+    /// Parsed root blocks allow native renderers to allocate separate rich components.
+    pub fn blocks(&self) -> impl Iterator<Item = Self> + '_ {
+        self.nodes
+            .iter()
+            .cloned()
+            .map(|node| Self { nodes: vec![node] })
+    }
+
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
     }

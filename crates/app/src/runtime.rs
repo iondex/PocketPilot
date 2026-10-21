@@ -11,7 +11,7 @@ pub enum Error {
     Store(#[from] engine::storage::StoreError),
     #[error(transparent)]
     Integration(#[from] IntegrationError),
-    #[error("configure a Telegram, Discord or Slack integration")]
+    #[error("configure a Telegram, Discord, Slack or Feishu integration")]
     Missing,
     #[error("a runtime task stopped unexpectedly")]
     WorkerStopped,
@@ -57,6 +57,9 @@ pub async fn run(path: PathBuf) -> Result<(), Error> {
     }
     if let Some(settings) = root.slack {
         integrations.push(Arc::new(integrations::slack::Slack::new(settings)));
+    }
+    if let Some(settings) = root.feishu {
+        integrations.push(Arc::new(integrations::feishu::Feishu::new(settings)));
     }
     if integrations.is_empty() {
         return Err(Error::Missing);

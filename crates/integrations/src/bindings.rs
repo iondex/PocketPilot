@@ -10,6 +10,11 @@ use sqlx::{Row, Sqlite, Transaction};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Scope {
+    Feishu {
+        app: String,
+        tenant: String,
+        owner: String,
+    },
     Telegram {
         bot: i64,
         chat: i64,
@@ -30,6 +35,7 @@ pub enum Scope {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Target {
+    Feishu { id: String },
     Telegram { topic: i32 },
     Discord { channel: String },
     Slack { id: String },

@@ -128,6 +128,8 @@ pub enum Error {
     #[error(transparent)]
     Discord(#[from] integrations::discord::Error),
     #[error(transparent)]
+    Feishu(#[from] integrations::feishu::Error),
+    #[error(transparent)]
     Store(#[from] engine::storage::StoreError),
     #[error("no existing Codex control endpoint was discovered for this host")]
     SharedEndpoint,
@@ -156,6 +158,7 @@ impl ::i18n::LocalizedError for Error {
             Self::Provider(error) => ::i18n::LocalizedError::message(error),
             Self::Telegram(error) => ::i18n::LocalizedError::message(error),
             Self::Discord(error) => ::i18n::LocalizedError::message(error),
+            Self::Feishu(error) => ::i18n::LocalizedError::message(error),
             Self::Store(error) => ::i18n::LocalizedError::message(error),
         }
     }

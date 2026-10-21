@@ -18,6 +18,7 @@ fn doctor_combines_offline_checks_with_explicit_network_flags() {
             connect: true,
             telegram: true,
             discord: true,
+            feishu: false,
         })
     ));
     let args = Arguments::try_parse_from(["pocketpilot", "doctor"]).unwrap();
@@ -28,6 +29,7 @@ fn doctor_combines_offline_checks_with_explicit_network_flags() {
             connect: false,
             telegram: false,
             discord: false,
+            feishu: false,
         })
     ));
     assert!(Arguments::try_parse_from(["pocketpilot", "config-check"]).is_err());

@@ -4,6 +4,7 @@ use super::{Kind, Node};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Dialect {
     CommonMark,
+    Feishu,
     Discord,
 }
 
@@ -23,7 +24,14 @@ pub(super) fn render(input: &[Node], dialect: Dialect) -> Option<String> {
     let mut result = String::new();
     for node in input {
         match node {
-            Node::Text(text) | Node::RawHtml(text) => result.push_str(&literal(text)),
+            Node::Text(text) | Node::RawHtml(text) => {
+                let text = if dialect == Dialect::Feishu {
+                    text.replace('<', "&lt;").replace('>', "&gt;")
+                } else {
+                    text.clone()
+                };
+                result.push_str(&literal(&text));
+            }
             Node::Code(text) => {
                 // Unsupported Discord code syntax is shown literally by the caller.
                 if dialect == Dialect::Discord && text.contains('`') {
@@ -90,7 +98,9 @@ pub(super) fn render(input: &[Node], dialect: Dialect) -> Option<String> {
                             _ => "tg-spoiler",
                         };
                         result.push_str(&format!("<{tag}>{text}</{tag}>"));
-                    } else if matches!(kind, Kind::Underline | Kind::Spoiler) {
+                    } else if dialect == Dialect::Discord
+                        && matches!(kind, Kind::Underline | Kind::Spoiler)
+                    {
                         let marker = if *kind == Kind::Underline { "__" } else { "||" };
                         result.push_str(&format!("{marker}{text}{marker}"));
                     } else {
