@@ -73,6 +73,14 @@ max_attempts = 2
 # prompt_patterns = ['(?i)^(?:\([^\r\n()]{1,256}\)\s*)?verification code:\s*$', '(?i)^otp:\s*$']
 # password_prompt_patterns = ['(?i)^password:\s*$']
 
+# 可选独立 Claude Code server；只有 hosts bootstrap HOST_ID 才安装并启动。
+# 目标账号先正常安装/登录 Claude，artifact 是桥接主机上的 musl 二进制。
+# [[hosts.runtime_servers]]
+# kind = "claude_code"
+# artifact = "dist/pocketpilot-agent-server-x86_64-unknown-linux-musl"
+# directory = "~/.pocketpilot"
+# agent_binary = "/home/operator/.local/bin/claude"
+
 # Provider 和 workspace 持久化在应用 SQLite，运行时动态发现/管理。
 # Codex 可执行文件与现有控制 socket 自动探测，无需手填。
 

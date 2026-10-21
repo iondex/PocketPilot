@@ -2,7 +2,7 @@
 
 PocketPilot 是连接消息平台与 AI 编程运行时的会话入口。它统一导航、用户授权、任务提交与结果展示，让同一个原生 session 能从不同设备和消息平台访问。
 
-当前实现包含 Telegram、Slack、Discord，运行时适配为 Codex；Lark、Claude Code 和 Pi 属于[后续支持](support.md)。以下描述当前代码，不将规划中的能力算作已支持。
+当前实现包含 Telegram、Slack、Discord；runtime 包含 Codex 原生 app-server 和 PocketPilot 自己管理会话的 Claude Code server 首版。Lark、Pi 与结构化问答见[后续支持](support.md)。以下描述当前代码，不将规划中的能力算作已支持。
 
 ## 概念与职责
 
@@ -10,7 +10,7 @@ PocketPilot 是连接消息平台与 AI 编程运行时的会话入口。它统�
 | --- | --- |
 | Integration | 接收用户消息、提供控制界面和发送结果的消息接入端 |
 | Connection | 到执行主机的连接方式，主要为 local proxy 和 SSH proxy |
-| Adapter | agent runtime 的协议适配端；当前为 Codex app-server |
+| Adapter | agent runtime 的协议适配端；Codex app-server 与独立 Claude Code server |
 | Workspace | 用户界面里的执行环境或主机 |
 | Project | 该执行环境中允许访问的项目目录 |
 | Provider | 某个主机上的具体 agent 执行实例，包含身份、连接入口和控制资格 |
@@ -38,12 +38,13 @@ flowchart LR
 | `app` | 配置组合、Integration 装配、CLI、日志、catalog 刷新和进程退出 |
 | `integrations` | 三个平台的协议、身份校验、原生菜单、渲染、平台 SQL 和收发任务；内部 `network` 复用代理、relay 与受限下载 |
 | `engine` | 配置快照、catalog、runtime registry、会话锁、操作账本、文件暂存与共享执行编排 |
-| `adapters` | `Adapter` / `AdapterFactory` 契约，以及 `codex` 下的发现、生成 DTO、RPC 和原生操作映射 |
+| `adapters` | `Adapter` / `AdapterFactory` 契约，以及 Codex 原生协议和 Claude server 的 typed RPC 映射 |
 | `connections` | 主机命令与 endpoint；`ssh` 下的 OpenSSH 配置、认证、known_hosts 与 TOTP |
+| `agent-server` | 独立 Unix socket 服务、Claude 子进程所有权、会话/历史持久化和输入回执；与聊天桥接进程生命周期分开 |
 | `session` | `AgentProvider`、会话/历史/输入模型、展示语义、Markdown 文档和分段规则 |
 | `i18n` | 中英文资源、显式 locale、参数插值和类型化错误文案 |
 
-`engine` 不引用消息平台 SDK，`connections` 不解释 agent 协议。平台 SQL 留在各自目录。七个 crate 均不发布到 crates.io；三端默认编译，运行时按配置装配。
+`engine` 不引用消息平台 SDK，`connections` 不解释 agent 协议。平台 SQL 留在各自目录。八个 crate 均不发布到 crates.io；三端默认编译，运行时按配置装配。
 
 `session`、`engine`、`app`、`i18n` 的源码保持平铺；平台实现位于 `integrations/src/telegram`、`slack`、`discord`，OpenSSH 与 Codex 原生代码分别位于 `connections/src/ssh` 和 `adapters/src/codex`。测试放在独立源码文件。
 
@@ -120,3 +121,14 @@ Rust 工具链由仓库配置约束，所有 Cargo 构建、检查、测试和 C
 Codex CLI 的默认构建来源是 PATH，`CODEX_SCHEMA_BIN` 仅用于指定构建时导出 schema 的可执行文件，不覆盖运行时连接配置。缺少 CLI 或生成失败会使构建失败，不回退到旧协议快照。协议类型可生成不代表共享执行能力已经验证。
 
 开发标准见 [CONTRIBUTING.md](../CONTRIBUTING.md)，部署与平台操作见[接入方案](integrations.md)。
+
+
+## 独立 runtime server
+
+`session::server` 是版本化 typed JSONL 契约；它与 Claude 原生 stream-json 隔离，后续 Pi 可以复用安装与代理连接方式。`engine::bootstrap` 仅处理显式配置的 runtime artifact，通过同一 local/SSH 认证链上传、校验 hash、原子安装并启动独立服务；默认目录 `~/.pocketpilot`。后台 catalog 扫描与诊断不会调用 bootstrap。
+
+`agent-server` 在目标账号的私有目录维护 socket、`runtime.db`、输入账本和 uploads。安装锁与服务锁防止并发替换；现有 socket 保留其记录的二进制，不因桥接重启替换运行中的 server。catalog 为 runtime 类型和具体 endpoint 保留身份，控制资格仍需明确登记。
+
+server 只管理自己创建的 UUID session；创建空会话、list/read/history 不调用 Claude。首次显式输入或 resume 才启动长驻 stream-json child，使用 manual 权限模式；后续空闲输入复用同一 child。client/SSH 只拥有 proxy，断线不会关闭 agent stdin。输入发送前持久化 intent，匹配原生 user UUID 回显后保存 accepted receipt；未知结果不重发，server 重启也不自动恢复或继续任务。
+
+只发布主 assistant 的文本块；不混入 thinking、工具输出和子 agent 内容。文件限定在 server 私有上传根并记录 session 归属，图片按 MIME 签名和大小限制转为原生 image block。活跃 steer 和结构化问题回答尚未开放；权限请求仅体现等待状态，不自动代答。离线 fake CLI 覆盖协议与断线语义，不能据此宣称真实账号/模型全流程已经验证。

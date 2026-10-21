@@ -10,7 +10,7 @@ PocketPilot 是面向开发者的自托管会话入口，适合在电脑、手�
 | --- | --- | --- |
 | 消息入口 | Telegram、Slack、Discord | Lark / 飞书 |
 | 执行环境 | 本机、通过 OpenSSH 连接的远程主机 | 继续完善现有连接方式 |
-| Agent runtime | Codex app-server | Claude Code、Pi Coding Agent |
+| Agent runtime | Codex app-server、Claude Code 独立 server 首版 | Claude 结构化问答、Pi Coding Agent |
 
 ## 使用体验
 
@@ -20,11 +20,11 @@ PocketPilot 是面向开发者的自托管会话入口，适合在电脑、手�
 - Slack：owner 与 App 私聊，每个会话使用独立 thread。
 - Discord：服务器 owner 通过 `/pp` 导航，每个会话使用独立 channel；支持原生新建表单。
 
-正文按平台能力呈现 Markdown、代码、表格与图片；用户文件可作为独立附件提交。绑定可暂停观察、恢复或解除。已有任务的执行独立于 PocketPilot 的启停。
+正文按平台能力呈现 Markdown、代码、表格与图片；用户文件可作为独立附件提交。绑定可暂停观察、恢复或解除。已有任务的执行独立于聊天桥接进程的启停。
 
 ## 开始使用
 
-准备仓库指定的 Rust 工具链、系统 OpenSSH 和可共享连接的 Codex app-server。复制 [配置示例](pocketpilot.example.toml) 为私有 `pocketpilot.toml`，填写要启用的消息平台和主机配置。
+准备仓库指定的 Rust 工具链、系统 OpenSSH，以及可共享连接的 Codex app-server；Claude Code 独立 server 的 musl 打包与安装见接入方案。复制 [配置示例](pocketpilot.example.toml) 为私有 `pocketpilot.toml`，填写要启用的消息平台和主机配置。
 
 ```sh
 make package

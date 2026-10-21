@@ -39,7 +39,7 @@ pub(crate) async fn watch_catalog(
                         if context.config.snapshot().config.hosts.iter().all(|h|h.id!=host_id) {continue;}
                         match result {
                             Ok(endpoints)=>for endpoint in endpoints {
-                                if let Err(error)=catalog.discover(&host_id,endpoint).await {tracing::warn!(%error,%host_id,"provider catalog update failed");}
+                                if let Err(error)=catalog.discover(&host_id,adapters::RuntimeKind::Codex,endpoint).await {tracing::warn!(%error,%host_id,"provider catalog update failed");}
                             },
                             Err(error)=>tracing::warn!(%error,%host_id,"endpoint discovery unavailable; no server started"),
                         }

@@ -165,10 +165,7 @@ impl RuntimeRegistry {
         self.store
             .check_instance(&provider.id, &effective, false)
             .await?;
-        let factory: &dyn AdapterFactory = &adapters::codex::Factory;
-        if provider.kind != factory.kind().as_str() {
-            return Err(session::ProviderError::Unsupported.into());
-        }
+        let factory = factory(&provider.kind)?;
         let options = adapters::ConnectOptions {
             instance: provider.id.clone(),
             endpoint: endpoint(host, provider, config)?,
@@ -215,7 +212,7 @@ impl RuntimeRegistry {
 }
 
 pub fn fingerprint(host: &Host, provider: &Provider) -> String {
-    crate::digest(&format!(
+    let identity = format!(
         "{}\0{:?}\0{:?}\0{:?}\0{:?}\0{}",
         // Keep persisted identities compatible with the original enum Debug spelling.
         match host.transport {
@@ -231,7 +228,36 @@ pub fn fingerprint(host: &Host, provider: &Provider) -> String {
             .endpoint
             .as_ref()
             .map_or("codex", |e| e.binary.as_str())
-    ))
+    );
+    crate::digest(&if provider.kind == "codex" {
+        identity
+    } else {
+        format!("{identity}\0{}", provider.kind)
+    })
+}
+
+fn factory(kind: &str) -> Result<&'static dyn AdapterFactory, session::ProviderError> {
+    match kind {
+        "codex" => Ok(&adapters::codex::Factory),
+        "claude_code" => Ok(&adapters::claude::Factory),
+        _ => Err(session::ProviderError::Unsupported),
+    }
+}
+
+/// One read-only diagnostic connection; it never installs or starts a runtime server.
+pub async fn connect_adapter(
+    host: &Host,
+    provider: &Provider,
+    config: &Config,
+) -> Result<Arc<dyn Adapter>, Error> {
+    Ok(factory(&provider.kind)?
+        .connect(adapters::ConnectOptions {
+            instance: provider.id.clone(),
+            endpoint: endpoint(host, provider, config)?,
+            timeouts: timeouts(host),
+            control_verified: provider.control_verified,
+        })
+        .await?)
 }
 
 /// Native RPC access for deployment diagnostics and explicitly authorized control probes.
@@ -240,6 +266,9 @@ pub async fn connect(
     provider: &Provider,
     config: &Config,
 ) -> Result<adapters::codex::Client, adapters::codex::Error> {
+    if provider.kind != "codex" {
+        return Err(adapters::codex::Error::Unsupported);
+    }
     adapters::codex::connect(endpoint(host, provider, config)?, timeouts(host)).await
 }
 
@@ -250,6 +279,9 @@ fn endpoint(
     config: &Config,
 ) -> Result<Endpoint, adapters::codex::Error> {
     Ok(match host.transport {
+        TransportKind::Websocket if provider.kind != "codex" => {
+            return Err(adapters::codex::Error::Unsupported);
+        }
         TransportKind::Websocket => Endpoint::Websocket {
             endpoint: host
                 .endpoint
@@ -265,11 +297,21 @@ fn endpoint(
                 TransportKind::SSHProxy => connections::Host::SSH(ssh_options(host, config)?),
                 _ => connections::Host::Local,
             };
-            adapters::codex::proxy_endpoint(
-                transport,
-                endpoint.binary.clone(),
-                endpoint.socket.clone(),
-            )?
+            match provider.kind.as_str() {
+                "codex" => adapters::codex::proxy_endpoint(
+                    transport,
+                    endpoint.binary.clone(),
+                    endpoint.socket.clone(),
+                )?,
+                "claude_code" => Endpoint::Proxy {
+                    host: transport,
+                    program: connections::Program {
+                        binary: endpoint.binary.clone(),
+                        arguments: vec!["proxy".into(), "--socket".into(), endpoint.socket.clone()],
+                    },
+                },
+                _ => return Err(adapters::codex::Error::Unsupported),
+            }
         }
     })
 }

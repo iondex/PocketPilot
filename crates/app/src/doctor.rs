@@ -4,7 +4,7 @@ use app::config::{self, Config, Host};
 use engine::catalog::Catalog;
 use integrations::telegram::credentials;
 use serde::Serialize;
-use session::{AgentProvider, SessionQuery};
+use session::SessionQuery;
 use std::time::Duration;
 
 /// Offline validation is the default; each network probe is explicit.
@@ -85,7 +85,9 @@ pub(super) struct Report {
 async fn connect(host: &Host, config: &Config) -> Result<usize, Error> {
     for endpoint in engine::runtimes::discover(host, config).await? {
         let catalog = Catalog::open(&config.service.data_dir).await?;
-        catalog.discover(&host.id, endpoint).await?;
+        catalog
+            .discover(&host.id, adapters::RuntimeKind::Codex, endpoint)
+            .await?;
     }
     let mut effective = config.runtime.clone();
     Catalog::open(&config.service.data_dir)
@@ -97,8 +99,9 @@ async fn connect(host: &Host, config: &Config) -> Result<usize, Error> {
         .iter()
         .find(|p| p.host_id == host.id)
         .ok_or(Error::SharedEndpoint)?;
-    let client = engine::runtimes::connect(host, provider, &effective).await?;
-    let agent = adapters::codex::Codex::new(provider.id.clone(), client);
+    let agent = engine::runtimes::connect_adapter(host, provider, &effective)
+        .await
+        .map_err(|_| Error::SharedEndpoint)?;
     let page = agent
         .list(SessionQuery {
             cwd: None,

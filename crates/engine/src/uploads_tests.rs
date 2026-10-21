@@ -49,3 +49,35 @@ fn files_are_scoped_to_the_selected_execution_account_and_source() {
         .is_err()
     );
 }
+
+#[test]
+fn independent_runtime_files_stay_under_its_private_socket_directory() {
+    let provider = Provider {
+        id: "fixture".into(),
+        host_id: "host".into(),
+        kind: "claude_code".into(),
+        connection_mode: "existing_proxy".into(),
+        compatibility_profile: "pocketpilot-runtime-v1".into(),
+        control_verified: false,
+        endpoint: Some(adapters::ServerEndpoint {
+            binary: "/home/operator/.pocketpilot/bin/agent-server-fixture".into(),
+            socket: "/home/operator/.pocketpilot/claude-code/server.sock".into(),
+        }),
+    };
+    let (_, files) = prepare(
+        &provider,
+        "source",
+        "session",
+        vec![Downloaded {
+            name: "input.txt".into(),
+            bytes: b"fixture".to_vec(),
+            image: false,
+        }],
+    )
+    .unwrap();
+    assert!(
+        files[0]
+            .path
+            .starts_with("/home/operator/.pocketpilot/claude-code/uploads/")
+    );
+}

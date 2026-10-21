@@ -93,6 +93,7 @@ impl Catalog {
     pub async fn discover(
         &self,
         host: &str,
+        kind: adapters::RuntimeKind,
         endpoint: adapters::ServerEndpoint,
     ) -> Result<Provider, StoreError> {
         // Keep endpoint identity immutable. A changed socket is a new provider;
@@ -106,15 +107,23 @@ impl Catalog {
             let provider: Provider =
                 serde_json::from_str(row.get("payload")).map_err(|_| StoreError::Database)?;
             if provider.endpoint.as_ref() == Some(&endpoint) {
+                if provider.kind != kind.as_str() {
+                    return Err(StoreError::Database);
+                }
                 return Ok(provider);
             }
         }
         let provider = Provider {
             id: uuid::Uuid::new_v4().to_string(),
             host_id: host.into(),
-            kind: "codex".into(),
+            kind: kind.as_str().into(),
             connection_mode: "existing_proxy".into(),
-            compatibility_profile: "latest-tested-codex".into(),
+            compatibility_profile: if kind == adapters::RuntimeKind::Codex {
+                "latest-tested-codex"
+            } else {
+                "pocketpilot-runtime-v1"
+            }
+            .into(),
             control_verified: false,
             endpoint: Some(endpoint),
         };

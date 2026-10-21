@@ -1,4 +1,4 @@
-//! Build paths under the configured Codex account's private home, never a user-supplied path.
+//! Derive upload paths from the selected runtime endpoint, never from user-supplied filenames.
 use crate::config::Provider;
 use session::{
     ProviderError,
@@ -26,12 +26,14 @@ pub fn prepare(
     let root = socket
         .parent()
         .filter(|p| p.file_name().is_some_and(|n| n == "app-server-control"))
-        .and_then(|p| p.parent())
-        .ok_or(ProviderError::Unsupported)?;
-    let directory = root
-        .join("pocketpilot")
-        .join("uploads")
-        .join(crate::digest(source));
+        .and_then(|p| p.parent());
+    let root = match provider.kind.as_str() {
+        "codex" => root.map(|r| r.join("pocketpilot")),
+        "claude_code" => socket.parent().map(std::path::Path::to_path_buf),
+        _ => None,
+    }
+    .ok_or(ProviderError::Unsupported)?;
+    let directory = root.join("uploads").join(crate::digest(source));
     let mut mutations = Vec::new();
     let mut files = Vec::new();
     for (index, file) in downloaded.into_iter().enumerate() {

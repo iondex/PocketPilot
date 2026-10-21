@@ -1,6 +1,6 @@
 # 接入方案
 
-PocketPilot 在一台桥接主机运行，用消息平台接收用户操作，通过本机或 SSH 访问已有 agent runtime。Telegram、Slack、Discord 可以在同一个 `serve` 进程中启用，共享允许连接的执行实例与操作账本。当前 runtime 为 Codex；Lark / 飞书及其他 runtime 的方案见[后续支持](support.md)。
+PocketPilot 在一台桥接主机运行，用消息平台接收用户操作，通过本机或 SSH 访问已有 agent runtime。Telegram、Slack、Discord 可以在同一个 `serve` 进程中启用，共享允许连接的执行实例与操作账本。runtime 支持 Codex 原生入口及下面的 Claude Code 独立 server 首版；Lark / 飞书及其他 runtime 的方案见[后续支持](support.md)。
 
 ## 构建与启动
 
@@ -19,7 +19,7 @@ cargo clean
 
 配置和 token 只放私有根 TOML，文件权限建议 `0600`。程序不读取 `.env`，不包含其他配置文件。平台凭据、身份或代理更改后重启桥接。相对路径按配置文件所在目录解析；字段和默认值以公开配置示例为准。
 
-`doctor --credentials` 做离线凭据格式检查；`doctor --connect` 只读检查主机与 Codex 入口。Telegram / Discord 平台探测分别使用 `doctor --telegram`、`doctor --discord`，不会注册命令或创建 agent 任务。Slack 的 token、owner DM 和 Socket Mode 在 `serve` 启动时验证。
+`doctor --credentials` 做离线凭据格式检查；`doctor --connect` 只读检查主机与已登记 runtime 入口。Telegram / Discord 平台探测分别使用 `doctor --telegram`、`doctor --discord`，不会注册命令或创建 agent 任务。Slack 的 token、owner DM 和 Socket Mode 在 `serve` 启动时验证。
 
 ## 执行环境与控制资格
 
@@ -156,3 +156,43 @@ proxy = "http://192.0.2.10:7890"
 重启后的旧输入不会自动重放。结果未知时先核对原端，不反复创建会话、channel 或 thread。升级和迁移前备份私有配置与完整 data_dir，保留去重和回执记录；操作方法见[状态数据与迁移](architecture.md#状态数据与迁移)。
 
 独立自动续轮工具通过 `./dist/pocketpilot retry` 明确启用，可不配置聊天平台。它与 `serve` 分开运行，使用 data_dir/retry 下独立状态；错误选择、60 秒等待、资格复查和结果未知规则见[retry 架构](architecture.md#独立-retry-工具)。
+
+
+## Claude Code 独立 runtime server
+
+此入口只管理 PocketPilot 自己创建的 Claude session，不接管已打开的任意 Claude 终端。CLI 在目标机由目标账号正常安装并登录；不将 token 打包或随二进制上传。已静态核对 CLI **2.1.304** 和对应 SDK **0.3.304** 的 stream-json 类型；离线测试不调用真实模型。遇到需权限审批的工具时保持等待，聊天端的结构化问答与权限处理尚未开放。
+
+桥接主机准备 musl 目标与 C toolchain（Debian/Ubuntu 为 `musl-tools`），再打包：
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+make package
+make package-agent-server
+```
+
+`dist/pocketpilot-agent-server-x86_64-unknown-linux-musl` 是独立静态 server；它不包含 Claude CLI。aarch64 可在配置好对应交叉 C toolchain 后用 `RUNTIME_TARGET=aarch64-unknown-linux-musl` 重新打包。各目标都保存在同一个 target 根的 release 目录，不创建 debug 构建；保留 dist 后执行 `cargo clean`。
+
+在目标 host 下增加显式 server 配置。路径是示例，请使用目标账号真实存在且已授权的项目根；`artifact` 相对本机配置文件解析，`agent_binary` 是目标机 CLI 的路径，不是桥接主机路径。
+
+```toml
+[[hosts.runtime_servers]]
+kind = "claude_code"
+artifact = "dist/pocketpilot-agent-server-x86_64-unknown-linux-musl"
+directory = "~/.pocketpilot"
+agent_binary = "/home/operator/.local/bin/claude"
+```
+
+执行安装；local 与 SSH 使用相同命令，SSH 仍走既有密钥、known_hosts 和 TOTP 认证链：
+
+```sh
+./dist/pocketpilot hosts bootstrap HOST_ID
+./dist/pocketpilot providers list
+./dist/pocketpilot workspaces add --provider PROVIDER_ID --cwd /srv/code/project --name 示例项目
+./dist/pocketpilot doctor --connect
+```
+
+安装会核对 Linux 架构、传输 hash 和可执行文件，在 `~/.pocketpilot/bin/agent-server-HASH` 保存版本化二进制，并从 `~/.pocketpilot/claude-code/` 提供服务。目标需有 `sh`、`flock`、`sha256sum`、`nohup`。已有 socket 时只复用原入口，不更新/重启活跃 server 或任何 Claude 任务。后台扫描、doctor 与普通重连均不会安装或启动 daemon。
+
+新 provider 默认只读。Codex 的 `providers verify` 专用 steer 探针不适用于 Claude；它会拒绝非 Codex provider。用隔离环境验证本账号的 CLI 握手、空闲输入、断线后继续执行及回执后，再通过 `providers trust PROVIDER_ID` 明确登记控制资格。开启后仍不支持活跃轮次 steer；空闲会话可续轮。未知写入不能通过重复点击或自动重连重发。
+
+附件沿用四文件、单文件 20 MiB 的入口上限；Claude 图片另限单图 5 MiB，并只接受 PNG/JPEG/GIF/WebP。文件记录归属 session，不能用其他会话的上传路径。历史只包含 server 管理的已观察输入/主 assistant 文本，不导出文件，不生成 `session.md`。server 异常退出后状态标为未加载/未知，不自动 resume 原生执行。

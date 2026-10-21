@@ -27,3 +27,15 @@ release:
 
 clean:
 	cargo clean
+
+# The runtime binary is uploaded to the target account, independently of the bridge.
+RUNTIME_TARGET ?= x86_64-unknown-linux-musl
+
+.PHONY: package-agent-server
+
+package-agent-server:
+	cargo build --release --locked -p agent-server --target $(RUNTIME_TARGET)
+	mkdir -p dist
+	cp target/$(RUNTIME_TARGET)/release/pocketpilot-agent-server dist/pocketpilot-agent-server-$(RUNTIME_TARGET).new
+	mv -f dist/pocketpilot-agent-server-$(RUNTIME_TARGET).new dist/pocketpilot-agent-server-$(RUNTIME_TARGET)
+	sha256sum dist/pocketpilot-agent-server-$(RUNTIME_TARGET) > dist/pocketpilot-agent-server-$(RUNTIME_TARGET).sha256

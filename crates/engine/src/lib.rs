@@ -1,4 +1,6 @@
 //! Shared execution runtime, independent of chat-platform adapters.
+pub mod bootstrap;
+
 pub mod catalog;
 
 pub mod config;

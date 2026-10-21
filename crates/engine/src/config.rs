@@ -135,6 +135,28 @@ pub struct Host {
     pub timeouts: Timeouts,
     #[serde(default)]
     pub authentication: Authentication,
+    #[serde(default)]
+    pub runtime_servers: Vec<RuntimeServer>,
+}
+
+/// A local musl artifact and target-account installation; no credentials travel with it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeServer {
+    pub kind: adapters::RuntimeKind,
+    pub artifact: PathBuf,
+    #[serde(default = "runtime_directory")]
+    pub directory: String,
+    #[serde(default = "claude_binary")]
+    pub agent_binary: String,
+}
+
+fn runtime_directory() -> String {
+    "~/.pocketpilot".into()
+}
+
+fn claude_binary() -> String {
+    "claude".into()
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -256,6 +278,9 @@ impl Config {
         self.logging.directory = self.logging.directory.as_ref().map(|p| absolute(base, p));
         for host in &mut self.hosts {
             host.ssh_config = host.ssh_config.as_ref().map(|p| absolute(base, p));
+            for runtime in &mut host.runtime_servers {
+                runtime.artifact = absolute(base, &runtime.artifact);
+            }
         }
         self.validate()
     }
@@ -284,6 +309,17 @@ impl Config {
             return Err(ConfigError::Duplicate);
         }
         for host in &self.hosts {
+            if host.runtime_servers.len() > 1
+                || host.runtime_servers.iter().any(|r| {
+                    r.kind != adapters::RuntimeKind::ClaudeCode
+                        || matches!(host.transport, TransportKind::Websocket)
+                        || !(r.directory == "~/.pocketpilot" || valid_absolute(&r.directory))
+                        || r.agent_binary.is_empty()
+                        || r.agent_binary.contains(['\0', '\r', '\n'])
+                })
+            {
+                return Err(ConfigError::Invalid);
+            }
             connections::ssh::auth::validate(&host.authentication)
                 .map_err(|_| ConfigError::Invalid)?;
             let t = &host.timeouts;
@@ -343,7 +379,7 @@ impl Config {
             if self.hosts.iter().all(|h| h.id != provider.host_id) {
                 return Err(ConfigError::Reference);
             }
-            if provider.kind != "codex"
+            if !matches!(provider.kind.as_str(), "codex" | "claude_code")
                 || provider.connection_mode != "existing_proxy"
                 || provider.compatibility_profile.is_empty()
             {

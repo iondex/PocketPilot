@@ -9,7 +9,7 @@ use std::{io::Write, path::PathBuf, time::Duration};
 #[command(
     name = "pocketpilot",
     version,
-    about = "Chat bridge for shared Codex sessions"
+    about = "Control agent sessions from chat"
 )]
 struct Arguments {
     #[arg(long, global = true, default_value = "pocketpilot.toml")]
@@ -57,6 +57,10 @@ enum Command {
 #[derive(Subcommand)]
 enum Hosts {
     List,
+    /// Install explicitly configured runtime servers without starting a model task.
+    Bootstrap {
+        id: String,
+    },
     Discover {
         #[arg(long)]
         ssh_config: Option<PathBuf>,
@@ -252,6 +256,20 @@ async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Re
                         .join(".ssh/config"),
                 };
                 print(&connections::ssh::discover(&path)?)?;
+            }
+            Hosts::Bootstrap { id } => {
+                let host = config
+                    .hosts
+                    .iter()
+                    .find(|h| h.id == id)
+                    .ok_or(Error::Selection)?;
+                if host.runtime_servers.is_empty() {
+                    return Err(Error::Selection);
+                }
+                for runtime in &host.runtime_servers {
+                    let endpoint = engine::bootstrap::install(&config, host, runtime).await?;
+                    print(&catalog.discover(&host.id, runtime.kind, endpoint).await?)?;
+                }
             }
             Hosts::Resolve { id } => {
                 let host = config
