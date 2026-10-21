@@ -4,3 +4,5 @@ mod contracts;
 pub use contracts::{Adapter, AdapterFactory, ConnectOptions, RuntimeKind, ServerEndpoint};
 
 pub mod codex;
+
+pub mod claude;

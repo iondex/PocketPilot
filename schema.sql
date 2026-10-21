@@ -327,3 +327,23 @@ CREATE TABLE IF NOT EXISTS slack_channel_budget (
     namespace TEXT NOT NULL, channel TEXT NOT NULL, next_send INTEGER NOT NULL,
     PRIMARY KEY(namespace,channel)
 );
+
+-- PocketPilot-owned runtime server state. Its database is separate from the chat bridge ledger.
+CREATE TABLE IF NOT EXISTS runtime_sessions (
+    id TEXT PRIMARY KEY, payload TEXT NOT NULL, native_started INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS runtime_items (
+    session TEXT NOT NULL REFERENCES runtime_sessions(id), key TEXT NOT NULL,
+    payload TEXT NOT NULL, ordinal INTEGER NOT NULL,
+    PRIMARY KEY(session,key)
+);
+CREATE TABLE IF NOT EXISTS runtime_operations (
+    id TEXT PRIMARY KEY, digest TEXT NOT NULL, state TEXT NOT NULL,
+    receipt TEXT
+);
+
+-- Runtime uploads are scoped to the managed session, not merely a guessed pathname.
+CREATE TABLE IF NOT EXISTS runtime_uploads (
+    path TEXT PRIMARY KEY,
+    session TEXT NOT NULL REFERENCES runtime_sessions(id)
+);

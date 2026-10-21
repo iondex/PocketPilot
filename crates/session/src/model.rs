@@ -66,7 +66,7 @@ pub struct Session {
     pub updated_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SessionQuery {
     pub cwd: Option<String>,
     pub cursor: Option<String>,
@@ -74,7 +74,7 @@ pub struct SessionQuery {
     pub archived: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Page<T> {
     pub data: Vec<T>,
     pub next_cursor: Option<String>,
@@ -118,7 +118,7 @@ pub struct Attachment {
     pub name: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct History {
     pub items: Vec<TextItem>,
     /// True only when pagination completed, not a guarantee of an atomic snapshot.

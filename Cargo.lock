@@ -26,6 +26,7 @@ dependencies = [
  "tracing",
  "typify",
  "url",
+ "uuid",
  "wiremock",
 ]
 
@@ -34,6 +35,25 @@ name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
+name = "agent-server"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "clap",
+ "fs2",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "session",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
 
 [[package]]
 name = "aho-corasick"
