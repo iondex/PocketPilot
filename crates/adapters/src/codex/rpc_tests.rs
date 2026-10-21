@@ -138,3 +138,136 @@ async fn timeout_does_not_resend_or_cancel() {
     assert!(matches!(request.await.unwrap(), Err(Error::Timeout)));
     assert!(server.next().await.is_none());
 }
+
+#[tokio::test]
+async fn concurrent_project_listing_survives_an_unresponsive_loaded_thread() {
+    use session::{AgentProvider, SessionQuery};
+    let (local, remote) = tokio::io::duplex(65536);
+    let (read, write) = tokio::io::split(local);
+    let client = Client::spawn(
+        Box::new(JsonLines::new(read, write, None)),
+        Duration::from_millis(200),
+    );
+    let provider = crate::codex::Codex::new("fixture".into(), client);
+    let task = tokio::spawn(async move {
+        let mut server = Framed::new(remote, LinesCodec::new());
+        while let Some(Ok(line)) = server.next().await {
+            let request: Incoming = serde_json::from_str(&line).unwrap();
+            let id = request.id.unwrap();
+            let result = match request.method.as_deref() {
+                Some("thread/loaded/list") => r#"{"data":["unresponsive"]}"#.into(),
+                Some("thread/read") => continue,
+                Some("thread/list") => {
+                    let params: p::ThreadListParams =
+                        serde_json::from_str(request.params.unwrap().get()).unwrap();
+                    let Some(p::ThreadListCwdFilter::String(cwd)) = params.cwd else {
+                        panic!("project scope required");
+                    };
+                    let thread: p::Thread = serde_json::from_str(&format!(r#"{{"id":"session-{}","sessionId":"fixture-session","cliVersion":"fixture","projectId":null,"historyMode":"paginated","preview":"Scoped session","cwd":"{}","ephemeral":false,"source":"appServer","modelProvider":"fixture","createdAt":1,"updatedAt":1,"status":{{"type":"idle"}},"turns":[]}}"#, cwd.rsplit('/').next().unwrap(), cwd)).unwrap();
+                    serde_json::to_string(&p::ThreadListResponse {
+                        data: vec![thread],
+                        next_cursor: None,
+                        backwards_cursor: None,
+                    })
+                    .unwrap()
+                }
+                _ => panic!("unexpected method"),
+            };
+            server
+                .send(format!("{{\"id\":{id},\"result\":{result}}}"))
+                .await
+                .unwrap();
+        }
+    });
+    let query = |cwd: &str| SessionQuery {
+        cwd: Some(cwd.into()),
+        limit: 8,
+        ..Default::default()
+    };
+    let (first, second) = tokio::join!(
+        provider.list(query("/projects/first")),
+        provider.list(query("/projects/second"))
+    );
+    assert_eq!(
+        first.expect("first project must remain browsable").data[0].cwd,
+        "/projects/first"
+    );
+    assert_eq!(
+        second.expect("second project must remain browsable").data[0].cwd,
+        "/projects/second"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn loaded_sessions_missing_from_the_index_remain_scoped_and_deduplicated() {
+    use session::{AgentProvider, SessionQuery};
+    let (local, remote) = tokio::io::duplex(65536);
+    let (read, write) = tokio::io::split(local);
+    let client = Client::spawn(
+        Box::new(JsonLines::new(read, write, None)),
+        Duration::from_secs(1),
+    );
+    let provider = crate::codex::Codex::new("fixture".into(), client);
+    let task = tokio::spawn(async move {
+        let mut server = Framed::new(remote, LinesCodec::new());
+        while let Some(Ok(line)) = server.next().await {
+            let request: Incoming = serde_json::from_str(&line).unwrap();
+            let result = match request.method.as_deref() {
+                Some("thread/loaded/list") => r#"{"data":["first","second"]}"#.into(),
+                Some("thread/read") => {
+                    let params: p::ThreadReadParams =
+                        serde_json::from_str(request.params.unwrap().get()).unwrap();
+                    serde_json::to_string(&p::ThreadReadResponse {
+                        thread: listing_thread(&params.thread_id),
+                    })
+                    .unwrap()
+                }
+                Some("thread/list") => {
+                    let params: p::ThreadListParams =
+                        serde_json::from_str(request.params.unwrap().get()).unwrap();
+                    let data = match params.cwd {
+                        Some(p::ThreadListCwdFilter::String(cwd)) if cwd == "/projects/first" => {
+                            vec![listing_thread("first")]
+                        }
+                        _ => vec![], // The second loaded session has not been indexed yet.
+                    };
+                    serde_json::to_string(&p::ThreadListResponse {
+                        data,
+                        next_cursor: None,
+                        backwards_cursor: None,
+                    })
+                    .unwrap()
+                }
+                _ => panic!("unexpected method"),
+            };
+            server
+                .send(format!(
+                    "{{\"id\":{},\"result\":{result}}}",
+                    request.id.unwrap()
+                ))
+                .await
+                .unwrap();
+        }
+    });
+    let query = |name| SessionQuery {
+        cwd: Some(format!("/projects/{name}")),
+        limit: 8,
+        ..Default::default()
+    };
+    let (first, second) = tokio::join!(
+        provider.list(query("first")),
+        provider.list(query("second"))
+    );
+    for (name, result) in [("first", first), ("second", second)] {
+        let page = result.unwrap();
+        assert_eq!(page.data.len(), 1);
+        assert_eq!(page.data[0].reference.thread, name);
+        assert_eq!(page.data[0].cwd, format!("/projects/{name}"));
+    }
+    task.abort();
+}
+
+fn listing_thread(name: &str) -> p::Thread {
+    serde_json::from_str(&format!(r#"{{"id":"{name}","sessionId":"fixture-session","cliVersion":"fixture","projectId":null,"historyMode":"paginated","preview":"Scoped session","cwd":"/projects/{name}","ephemeral":false,"source":"appServer","modelProvider":"fixture","createdAt":1,"updatedAt":1,"status":{{"type":"idle"}},"turns":[]}}"#)).unwrap()
+}

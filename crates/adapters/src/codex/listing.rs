@@ -1,7 +1,10 @@
 //! Read loaded sessions before stored sessions, preserving scoped pagination.
 use super::{Codex, mapping::summary};
 use crate::codex::{Error, protocol as p};
+use futures_util::{StreamExt, stream};
 use session::{Page, ProviderError, Session, SessionQuery};
+use std::time::Duration;
+use tokio::time::Instant;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ListCursor {
@@ -43,6 +46,9 @@ impl Codex {
             }
         };
         let limit = query.limit.clamp(1, 100) as usize;
+        // Loaded objects can be blocked by work in another project. Discovery is
+        // best-effort enrichment; it must not prevent reading the scoped index.
+        let loaded_deadline = Instant::now() + Duration::from_secs(3);
         let mut data = vec![];
         let mut seen = std::collections::HashSet::new();
         for _ in 0..1000 {
@@ -52,25 +58,47 @@ impl Codex {
             if cursor.loaded {
                 // Newly active threads can precede rollout/state-DB indexing. Read the
                 // already-loaded objects first, without subscribing or resuming them.
-                let page = self
-                    .client
-                    .call(&p::ThreadLoadedListParams {
+                let page = match tokio::time::timeout_at(
+                    loaded_deadline,
+                    self.client.call(&p::ThreadLoadedListParams {
                         cursor: cursor.backend.clone(),
                         limit: Some((limit - data.len()) as u32),
+                    }),
+                )
+                .await
+                {
+                    Ok(Ok(page)) => page,
+                    Ok(Err(Error::Timeout)) | Err(_) => {
+                        cursor.loaded = false;
+                        cursor.backend = None;
+                        continue;
+                    }
+                    Ok(Err(error)) => return Err(error.into()),
+                };
+                let reads = stream::iter(page.data.into_iter().enumerate())
+                    .map(|(index, id)| async move {
+                        let deadline = loaded_deadline.min(Instant::now() + Duration::from_secs(1));
+                        let result = tokio::time::timeout_at(
+                            deadline,
+                            self.client.call(&p::ThreadReadParams {
+                                thread_id: id,
+                                include_turns: Some(false),
+                            }),
+                        )
+                        .await;
+                        (index, result)
                     })
-                    .await?;
-                for id in page.data {
-                    let result = match self
-                        .client
-                        .call(&p::ThreadReadParams {
-                            thread_id: id,
-                            include_turns: Some(false),
-                        })
-                        .await
-                    {
-                        Ok(thread) => thread,
-                        Err(Error::Rejected(_)) => continue, // closed during pagination
-                        Err(error) => return Err(error.into()),
+                    .buffer_unordered(8)
+                    .collect::<Vec<_>>()
+                    .await;
+                let mut reads = reads;
+                // RPCs may finish out of order; loaded pagination must remain stable.
+                reads.sort_by_key(|(index, _)| *index);
+                for (_, result) in reads {
+                    let result = match result {
+                        Ok(Ok(thread)) => thread,
+                        Ok(Err(Error::Rejected(_) | Error::Timeout)) | Err(_) => continue,
+                        Ok(Err(error)) => return Err(error.into()),
                     };
                     if !matches!(
                         result.thread.source,
