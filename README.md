@@ -8,7 +8,7 @@ PocketPilot 是面向开发者的自托管会话入口，适合在电脑、手�
 
 | 维度 | 当前支持 | 后续方向 |
 | --- | --- | --- |
-| 消息入口 | Telegram、Slack、Discord | Lark / 飞书 |
+| 消息入口 | Telegram、Slack、Discord、飞书 | 国际 Lark |
 | 执行环境 | 本机、通过 OpenSSH 连接的远程主机 | 继续完善现有连接方式 |
 | Agent runtime | Codex app-server、Claude Code 独立 server 首版 | Claude 结构化问答、Pi Coding Agent |
 
@@ -19,6 +19,7 @@ PocketPilot 是面向开发者的自托管会话入口，适合在电脑、手�
 - Telegram：指定用户在 bot 私聊中用 topic 区分会话。
 - Slack：owner 与 App 私聊，每个会话使用独立 thread。
 - Discord：服务器 owner 通过 `/pp` 导航，每个会话使用独立 channel；支持原生新建表单。
+- 飞书：owner 私聊导航，每个会话绑定已授权群中的独立话题；安装步骤见接入方案。
 
 正文按平台能力呈现 Markdown、代码、表格与图片；用户文件可作为独立附件提交。绑定可暂停观察、恢复或解除。已有任务的执行独立于聊天桥接进程的启停。
 
@@ -34,12 +35,12 @@ cargo clean
 ./dist/pocketpilot serve
 ```
 
-默认构建包含三个已实现的消息平台，配置决定运行哪些入口。新发现的运行实例默认只读；启用任务输入前需确认共享实例与控制能力。完整安装、授权和日常操作见接入方案。
+默认构建包含四个消息平台，配置决定运行哪些入口。新发现的运行实例默认只读；启用任务输入前需确认共享实例与控制能力。完整安装、授权和日常操作见接入方案。
 
 ## 文档
 
 - [当前架构](docs/architecture.md)：产品概念、crate 分工、会话控制、消息投递与状态数据。
-- [接入方案](docs/integrations.md)：运行准备、三个平台的安装使用、附件、代理与日常维护。
-- [后续支持](docs/support.md)：Lark / 飞书接入规划、Claude Code / Pi 的运行时适配方向及交付门槛。
+- [接入方案](docs/integrations.md)：运行准备、四个平台的安装使用、附件、代理与日常维护。
+- [后续支持](docs/support.md)：国际 Lark 与后续消息能力、Claude Code / Pi 的运行时适配方向及交付门槛。
 
 开发约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。旧设计、调研、安装 manifest 和实施记录可从 Git 历史查阅。

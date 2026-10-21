@@ -2,7 +2,7 @@
 
 PocketPilot 是连接消息平台与 AI 编程运行时的会话入口。它统一导航、用户授权、任务提交与结果展示，让同一个原生 session 能从不同设备和消息平台访问。
 
-当前实现包含 Telegram、Slack、Discord；runtime 包含 Codex 原生 app-server 和 PocketPilot 自己管理会话的 Claude Code server 首版。Lark、Pi 与结构化问答见[后续支持](support.md)。以下描述当前代码，不将规划中的能力算作已支持。
+当前实现包含 Telegram、Slack、Discord、国内飞书；runtime 包含 Codex 原生 app-server 和 PocketPilot 自己管理会话的 Claude Code server 首版。国际 Lark、Pi 与结构化问答见[后续支持](support.md)。以下描述当前代码，不将规划中的能力算作已支持。
 
 ## 概念与职责
 
@@ -23,7 +23,7 @@ PocketPilot 是连接消息平台与 AI 编程运行时的会话入口。它统�
 
 ```mermaid
 flowchart LR
-    U[Telegram / Slack / Discord] --> I[integrations]
+    U[Telegram / Slack / Discord / 飞书] --> I[integrations]
     A[app：装配与 CLI] --> I
     A --> E[engine]
     I --> E
@@ -36,7 +36,7 @@ flowchart LR
 | crate | 当前职责 |
 | --- | --- |
 | `app` | 配置组合、Integration 装配、CLI、日志、catalog 刷新和进程退出 |
-| `integrations` | 三个平台的协议、身份校验、原生菜单、渲染、平台 SQL 和收发任务；内部 `network` 复用代理、relay 与受限下载 |
+| `integrations` | 四个平台的协议、身份校验、原生菜单、渲染、平台 SQL 和收发任务；内部 `network` 复用代理、relay 与受限下载 |
 | `engine` | 配置快照、catalog、runtime registry、会话锁、操作账本、文件暂存与共享执行编排 |
 | `adapters` | `Adapter` / `AdapterFactory` 契约，以及 Codex 原生协议和 Claude server 的 typed RPC 映射 |
 | `connections` | 主机命令与 endpoint；`ssh` 下的 OpenSSH 配置、认证、known_hosts 与 TOTP |
@@ -44,9 +44,9 @@ flowchart LR
 | `session` | `AgentProvider`、会话/历史/输入模型、展示语义、Markdown 文档和分段规则 |
 | `i18n` | 中英文资源、显式 locale、参数插值和类型化错误文案 |
 
-`engine` 不引用消息平台 SDK，`connections` 不解释 agent 协议。平台 SQL 留在各自目录。八个 crate 均不发布到 crates.io；三端默认编译，运行时按配置装配。
+`engine` 不引用消息平台 SDK，`connections` 不解释 agent 协议。平台 SQL 留在各自目录。八个 crate 均不发布到 crates.io；四端默认编译，运行时按配置装配。
 
-`session`、`engine`、`app`、`i18n` 的源码保持平铺；平台实现位于 `integrations/src/telegram`、`slack`、`discord`，OpenSSH 与 Codex 原生代码分别位于 `connections/src/ssh` 和 `adapters/src/codex`。测试放在独立源码文件。
+`session`、`engine`、`app`、`i18n` 的源码保持平铺；平台实现位于 `integrations/src/telegram`、`slack`、`discord`、`feishu`，OpenSSH 与 Codex 原生代码分别位于 `connections/src/ssh` 和 `adapters/src/codex`。测试放在独立源码文件。
 
 ## 公共接口与平台实现
 
@@ -132,3 +132,16 @@ Codex CLI 的默认构建来源是 PATH，`CODEX_SCHEMA_BIN` 仅用于指定构�
 server 只管理自己创建的 UUID session；创建空会话、list/read/history 不调用 Claude。首次显式输入或 resume 才启动长驻 stream-json child，使用 manual 权限模式；后续空闲输入复用同一 child。client/SSH 只拥有 proxy，断线不会关闭 agent stdin。输入发送前持久化 intent，匹配原生 user UUID 回显后保存 accepted receipt；未知结果不重发，server 重启也不自动恢复或继续任务。
 
 只发布主 assistant 的文本块；不混入 thinking、工具输出和子 agent 内容。文件限定在 server 私有上传根并记录 session 归属，图片按 MIME 签名和大小限制转为原生 image block。活跃 steer 和结构化问题回答尚未开放；权限请求仅体现等待状态，不自动代答。离线 fake CLI 覆盖协议与断线语义，不能据此宣称真实账号/模型全流程已经验证。
+
+
+## 飞书的消息与传输边界
+
+国内飞书使用 `[feishu]`，身份 scope 为 app/tenant/owner；仅私聊提供目录，一个原生 session 绑定授权群中的 root + thread。导航和绑定管理复用 `Navigator` / `bindings::Manager`，平台 SQL 位于 `feishu` 目录。文字与富文本需 @机器人；独立文件允许 owner 在已绑定话题提交。更多平台事件读取权限不会扩大本地执行授权。
+
+OpenLark 0.21.0 提供认证、token 刷新、protobuf WebSocket 与新版卡片 ACK；REST 通过 core typed Transport，业务只处理具名 DTO。只对 client 做窄 vendor 修补并保留 Apache-2.0 来源：最多 32 分片、单事件 8 MiB、64 个未完成事件、合计 16 MiB 和 15 秒过期；连接日志不包含认证 URL。SDK 的传输日志另被进程级过滤器独立拒绝。入站业务事件再限制为 512 KiB。
+
+HTTP 禁用系统代理、重定向和底层自动重试，WS 经现有有界 relay 使用同一显式代理配置；loopback relay 需要随机访问路径。多个 HTTP SDK 带入不同 rustls provider 时，公共网络入口为进程安装一次默认 provider，保留宿主已有选择，避免影响未配置飞书的其他接入端。
+
+回调在两秒内完成 scope/时效校验及持久化入队，再由 SDK ACK；最多四个后台输入 worker，不在 ACK 路径等待 SSH 或模型。动作 nonce 绑定原消息与聊天、配置 hash、owner 命名空间及五分钟有效期。发送前冻结 Card JSON 2.0，最终编码 payload 保守限制为 28 KB；自动输出与状态更新受绑定/观察偏好约束，未知回执不重发。
+
+群根消息和首次 thread 回复分别记录 provisioning 结果；中途断线标为 unknown，不悄悄补发根消息。已观察历史 cursor 与待投递输出在同一事务提交；首次进入只展示最近交互，后续发增量。队列、活跃绑定及单批卡片数量都有界，历史解绑记录保留用于状态与审计，不增加历史导出文件。

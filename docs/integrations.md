@@ -1,6 +1,6 @@
 # 接入方案
 
-PocketPilot 在一台桥接主机运行，用消息平台接收用户操作，通过本机或 SSH 访问已有 agent runtime。Telegram、Slack、Discord 可以在同一个 `serve` 进程中启用，共享允许连接的执行实例与操作账本。runtime 支持 Codex 原生入口及下面的 Claude Code 独立 server 首版；Lark / 飞书及其他 runtime 的方案见[后续支持](support.md)。
+PocketPilot 在一台桥接主机运行，用消息平台接收用户操作，通过本机或 SSH 访问已有 agent runtime。Telegram、Slack、Discord、飞书可以在同一个 `serve` 进程中启用，共享允许连接的执行实例与操作账本。runtime 支持 Codex 原生入口及下面的 Claude Code 独立 server 首版；国际 Lark 及其他 runtime 的方案见[后续支持](support.md)。
 
 ## 构建与启动
 
@@ -15,11 +15,11 @@ cargo clean
 ./dist/pocketpilot serve
 ```
 
-默认构建包含三个已实现的消息平台，无需 features flag。所有构建/检查/测试使用 release profile；`make release` 可顺序执行完整检查、打包和清理。部署进程引用 `dist/pocketpilot`，不要引用会被清理的 `target/`。
+默认构建包含四个消息平台，无需 features flag。所有构建/检查/测试使用 release profile；`make release` 可顺序执行完整检查、打包和清理。部署进程引用 `dist/pocketpilot`，不要引用会被清理的 `target/`。
 
 配置和 token 只放私有根 TOML，文件权限建议 `0600`。程序不读取 `.env`，不包含其他配置文件。平台凭据、身份或代理更改后重启桥接。相对路径按配置文件所在目录解析；字段和默认值以公开配置示例为准。
 
-`doctor --credentials` 做离线凭据格式检查；`doctor --connect` 只读检查主机与已登记 runtime 入口。Telegram / Discord 平台探测分别使用 `doctor --telegram`、`doctor --discord`，不会注册命令或创建 agent 任务。Slack 的 token、owner DM 和 Socket Mode 在 `serve` 启动时验证。
+`doctor --credentials` 做离线凭据格式检查；`doctor --connect` 只读检查主机与已登记 runtime 入口。Telegram / Discord / 飞书平台探测分别使用 `doctor --telegram`、`doctor --discord`、`doctor --feishu`，不会注册命令或创建 agent 任务。Slack 的 token、owner DM 和 Socket Mode 在 `serve` 启动时验证。
 
 ## 执行环境与控制资格
 
@@ -160,6 +160,8 @@ proxy = "http://192.0.2.10:7890"
 
 ## Claude Code 独立 runtime server
 
+server 直接使用目标账号已有的 Claude CLI 模型与认证配置，包括 `~/.claude/settings.json` 中的 Anthropic 兼容接口。已配置 DeepSeek 的账号无需把模型密钥复制到 PocketPilot；远端账号需自行具备对应配置。桥接配置只声明 server 与连接，不重复保存模型 token。
+
 此入口只管理 PocketPilot 自己创建的 Claude session，不接管已打开的任意 Claude 终端。CLI 在目标机由目标账号正常安装并登录；不将 token 打包或随二进制上传。已静态核对 CLI **2.1.304** 和对应 SDK **0.3.304** 的 stream-json 类型；离线测试不调用真实模型。遇到需权限审批的工具时保持等待，聊天端的结构化问答与权限处理尚未开放。
 
 桥接主机准备 musl 目标与 C toolchain（Debian/Ubuntu 为 `musl-tools`），再打包：
@@ -196,3 +198,113 @@ agent_binary = "/home/operator/.local/bin/claude"
 新 provider 默认只读。Codex 的 `providers verify` 专用 steer 探针不适用于 Claude；它会拒绝非 Codex provider。用隔离环境验证本账号的 CLI 握手、空闲输入、断线后继续执行及回执后，再通过 `providers trust PROVIDER_ID` 明确登记控制资格。开启后仍不支持活跃轮次 steer；空闲会话可续轮。未知写入不能通过重复点击或自动重连重发。
 
 附件沿用四文件、单文件 20 MiB 的入口上限；Claude 图片另限单图 5 MiB，并只接受 PNG/JPEG/GIF/WebP。文件记录归属 session，不能用其他会话的上传路径。历史只包含 server 管理的已观察输入/主 assistant 文本，不导出文件，不生成 `session.md`。server 异常退出后状态标为未加载/未知，不自动 resume 原生执行。
+
+
+## 飞书企业自建应用
+
+本接入使用**国内飞书**开发平台 [open.feishu.cn/app](https://open.feishu.cn/app)，REST 固定为 `https://open.feishu.cn`，配置段为 `[feishu]`。不使用国际 Lark 应用、群自定义 Webhook 机器人或公网回调服务器。认证、token 缓存和 WebSocket/卡片 ACK 复用 OpenLark 0.21.0；没有第二个 Python/Node 消息 sidecar。
+
+当前代码提供私聊目录、执行环境 → 项目 → session、命名空会话创建、已授权群中的独立 session 话题、文字/图片/文件输入、状态和最近历史、增量观察及公共绑定管理。已覆盖离线协议与隔离测试；真实应用的授权、客户端显示和事件投递仍需安装后验收。
+
+### 1. 创建应用并开启机器人
+
+1. 用目标企业账号进入开发平台，选择**创建企业自建应用**，填写名称、图标和描述。
+2. 在“应用能力 / 添加应用能力”中开启**机器人**。不要创建只有 Webhook 地址的群自定义机器人。
+3. 设置应用可用范围，至少包含你本人及后续添加机器人的操作者。PocketPilot 另行限制 `owner_open_id`，群内其他成员不能因此获得原生任务控制权。
+4. 在“凭证与基础信息”取得 App ID 和 App Secret。Secret 只写入本机私有配置，不贴到聊天或提交到 Git。
+
+### 2. 申请权限
+
+推荐本项目的完整附件模式；控制台若提供 `im:message.group_msg:readonly`，优先使用该只读项，否则申请同页列出的 `im:message.group_msg`。
+
+| 权限 | 用途 |
+| --- | --- |
+| `im:message:send_as_bot` | 以机器人身份发送根卡片、回复话题和更新自己的状态卡片 |
+| `im:message.p2p_msg:readonly` | 接收你发给机器人的私聊目录请求 |
+| `im:message.group_msg:readonly` 或 `im:message.group_msg` | 接收群里的用户消息，包含没有 @ 的独立文件和图片；这是较宽的群读取权限 |
+| `im:message:readonly` | 下载属于入站消息的图片和文件资源 |
+
+若准备通过“获取企业信息”取得 tenant_key，可在基础版本一并临时申请 `tenant:tenant:readonly`，配置完成后移除。
+
+只测试文字时，可以用 `im:message.group_at_msg:readonly` 替代全用户群消息权限，并暂不申请资源下载权限；这时**无法保证收到没有 @ 的独立附件**。全用户群消息权限已覆盖 @bot 输入，不必再重复申请 `group_at_msg`。不用申请 `include_bot`、通讯录、历史导出或用户身份发消息权限。新版卡片回调和获取机器人自身信息没有单独的权限要求。
+
+即使平台推送了全群用户消息，代码也只处理指定企业、指定 owner、已配置群及已绑定 root/thread 的输入；普通群消息、其他人的消息和其他机器人的消息不进入 agent。文字与富文本任务必须明确 @本机器人；文件/图片允许 owner 在绑定话题中独立上传。
+
+### 3. 先发布基础版本，取得所需 ID
+
+先在“版本管理与发布”发布一个包含机器人能力、权限和可用范围的基础版本，等待管理员审核。程序启动会读取机器人身份；飞书要求机器人能力已发布，不能把所有步骤都留到长连接订阅之后。
+
+- **owner_open_id**：在本应用上下文的 API 调试台打开“发送消息”，把 `receive_id_type` 选为 `open_id`，使用“快速复制 open_id”选择本人并复制。只复制即可，不需要发送消息，也不需要通讯录权限。它通常以 `ou_` 开头；不要填 `user_id`。
+- **群 chat_id**：在飞书客户端 7.60+ 的目标内部测试群中，打开群设置并复制群 ID，通常以 `oc_` 开头。群名只作显示，不作为路由身份。
+- **tenant_key**：使用已有可信事件中的 `header.tenant_key`，或在 API 调试台一次性调用“获取企业信息” `GET /open-apis/tenant/v2/tenant/query`，复制 `data.tenant.tenant_key`。后一方法需临时申请 `tenant:tenant:readonly`；完成初始化后可移除该权限并再次发布。企业编号 `display_id`、App ID、企业域名都不是 tenant_key。
+
+不要为初始化开放匿名模型输入。PocketPilot 不提供“第一个发消息的人自动成为 owner”的绑定方式。
+
+### 4. 写入私有配置并保持程序在线
+
+在根 `pocketpilot.toml` 增加以下段落；不使用的平台段可省略。程序不自动读取 `.env.feishu` 或其他 `.env` 文件。
+
+```toml
+[feishu]
+app_id = "cli_REPLACE_IN_PRIVATE_CONFIG"
+app_secret = "REPLACE_IN_PRIVATE_CONFIG"
+tenant_key = "REPLACE_WITH_TENANT_KEY"
+owner_open_id = "ou_REPLACE_WITH_OWNER_OPEN_ID"
+proxy = ""
+
+[[feishu.groups]]
+chat_id = "oc_REPLACE_WITH_ALLOWED_GROUP_ID"
+name = "开发测试群"
+```
+
+`groups` 至少配置一个已明确授权的群，可以重复添加表项配置多个群；`name` 是菜单中的友好名称。Secret 和身份字段更改后需要重启桥接。空代理不使用系统代理环境变量；如需代理，填写 `http://代理主机:端口`，HTTP 与 WebSocket 均走这一配置。
+
+```sh
+chmod 600 pocketpilot.toml
+make check
+make package
+cargo clean
+./dist/pocketpilot doctor --credentials
+./dist/pocketpilot doctor --feishu
+./dist/pocketpilot serve
+```
+
+`doctor --feishu` 只获取机器人身份，不发聊天消息、不注册任务；先确保这一步成功。长连接保存时 `serve` 必须保持运行。若已有 systemd 管理的实例，更新配置并重启该桥接实例即可，不要再启动第二个 `serve` 竞争数据目录锁，也不需要停止 Codex/Claude 执行服务。
+
+### 5. 配置事件与新版卡片回调，再发布
+
+在开发平台“开发配置 → 事件与回调”中分别完成：
+
+1. **事件配置**：选择“使用长连接接收事件”，保持本机程序在线后保存；添加 **接收消息 v2.0**，事件标识 `im.message.receive_v1`。
+2. **回调配置**：选择长连接接收回调并保存；添加新版 **卡片回传交互**，标识 `card.action.trigger`。不要选择旧版回调或重复添加两个版本。
+3. 创建并发布新版本，等待管理员审核，使事件、回调和权限变更生效。若临时增加过企业信息读取权限，可在收尾时移除并一起发布。
+
+同一应用保持一个活动的 PocketPilot 接收实例；不要与使用同一凭据的官方示例 WS 程序同时接收，平台会随机分配事件而非广播。
+
+长连接只需要 App ID / App Secret，不需要公网域名、HTTP 回调 URL 或内网穿透；不把 HTTP 回调的 Verification Token / Encrypt Key 填入本项目配置。平台要求回调快速响应，代码先持久化入队再 ACK，SSH、模型和附件下载不占用回调的等待时间。
+
+采用两次发布是为了适配“启动先读取已发布的机器人身份”和“保存长连接前程序必须在线”的顺序，并非每个飞书应用都必须固定发布两次。
+
+### 6. 加群并验证使用流程
+
+1. 在目标测试群的群设置 → 群机器人中，手动添加已发布的 PocketPilot 应用机器人，确认它能发言；程序不创建群、改群模式或添加成员。
+2. 用配置的 owner 私聊机器人，发送 `/start` 或任意文字打开目录。
+3. 选择 workspace（执行主机）→ 项目 → session；也可用“新建会话”表单创建命名空会话，名称不会作为模型任务发送。
+4. 选择已配置群。程序发送根状态卡片，并以 `reply_in_thread=true` 打开独立话题，保存对应 thread ID。普通群即可使用，无需改成“话题群”。
+5. 在该话题中 **@PocketPilot + 任务文字**；混合文字和图片的富文本同样需要 @。不要用群主聊天流或普通引用回复代替话题回复。
+6. 在同一话题上传独立文件/图片，不必再补一条 @ 消息；先确认完整附件模式的群消息和资源权限已批准。单条富文本最多四个附件，单文件上限 20 MiB；Claude 图片另受其 adapter 的 5 MiB 限制。
+7. `@PocketPilot /status` 只读查看状态；`@PocketPilot /history` 显示最近交互。结果采用 Card JSON 2.0，以角色 emoji、Markdown、代码和表格分段展示；不会生成 `session.md` 或历史导出文件。
+8. 私聊“已绑定会话”可查看、刷新、暂停/恢复观察，或确认解绑。解绑保留原生会话、任务、群话题及消息。
+
+输入控制仍取决于 provider 的既有验证资格；飞书安装不会自动授予 runtime 控制权。Codex 支持原生 start/steer，Claude 当前仅支持空闲续轮。首次进入只展示最近交互，读取历史仅为建立增量 cursor，不意味着发送完整历史。
+
+### 常见配置问题与边界
+
+- **保存长连接提示客户端未连接**：先确认基础版本已发布、`doctor --feishu` 成功、`serve` 在线，且国内 App 的凭据未混入 Lark 国际应用。
+- **文字能收，独立文件收不到**：检查是否只有 `group_at_msg` 权限；无 @ 附件需要全用户群消息事件权限。收到事件后下载失败，再核对 `im:message:readonly`、机器人是否仍在群中和消息资源是否仍可见。
+- **点击没有生效**：确认订阅新版 `card.action.trigger` 并发布；菜单只有指定 owner 在原消息/原聊天点击才有效，操作有效期五分钟，转发、复制、陈旧或重复点击不会执行任务。重新私聊打开目录。
+- **有消息但不进入 agent**：检查 owner 的应用内 open_id、tenant_key、群 allowlist 和 root/thread。不存在自动“当前会话”兜底。
+- **绑定或写入结果未知**：不会自动重发。先检查群中的根消息或原生会话；核对后可从私聊解绑该记录，再发起新的明确操作。重启不会偷偷再建一个话题或续一轮。
+- **旧状态卡片无法更新**：飞书按 message ID 更新卡片有 14 天限制；话题路由仍保留，可用私聊刷新或话题 `/status` 获取新状态，不自动重建根话题。JSON 2.0 卡片要求兼容的飞书客户端（官方最低版本 7.20）。
+
+官方参考：[长连接事件](https://open.feishu.cn/document/ukTMukTMukTM/uYDNxYjL2QTM24iN0EjN/event-subscription-configure-/request-url-configuration-case)、[长连接回调](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/event-subscription-guide/callback-subscription/configure-callback-request-address)、[接收消息及权限](https://open.feishu.cn/document/server-docs/im-v1/message/events/receive)、[卡片回传交互](https://open.feishu.cn/document/feishu-cards/card-callback-communication)、[话题概述](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/thread-introduction)、[资源下载](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message-resource/get)、[用户 ID](https://open.feishu.cn/document/home/user-identity-introduction/open-id)、[群 ID](https://open.feishu.cn/document/server-docs/group/chat/chat-id-description)、[企业信息](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/tenant-v2/tenant/query)。
