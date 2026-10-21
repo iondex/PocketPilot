@@ -16,8 +16,18 @@ pub(super) struct Menu {
 }
 
 enum Button {
-    Navigate { label: &'static str, view: View },
-    Link { label: &'static str, url: String },
+    Navigate {
+        label: &'static str,
+        view: View,
+    },
+    Form {
+        label: &'static str,
+        project: String,
+    },
+    Link {
+        label: &'static str,
+        url: String,
+    },
 }
 
 impl Menu {
@@ -49,6 +59,10 @@ impl Menu {
         self.buttons.push(Button::Navigate { label, view });
     }
 
+    pub fn form(&mut self, label: &'static str, project: String) {
+        self.buttons.push(Button::Form { label, project });
+    }
+
     pub fn link(&mut self, label: &'static str, url: String) {
         self.buttons.push(Button::Link { label, url });
     }
@@ -78,6 +92,15 @@ impl Menu {
                         .await
                         .map_err(error)?;
                     ui::button(&token, &i18n::text(locale, label))
+                }
+                Button::Form { label, project } => {
+                    let token = store
+                        .ui_action(input, hash, Action::Navigate(View::NewSession { project }))
+                        .await
+                        .map_err(error)?;
+                    let mut button = ui::button(&token, &i18n::text(locale, label));
+                    button = button.custom_id(format!("pp-form:{token}"));
+                    button
                 }
                 Button::Link { label, url } => ui::link(url, &i18n::text(locale, label)),
             });

@@ -16,7 +16,7 @@ impl Service {
         let r = &navigation;
         let locale = self.locale();
         let page = Manager::new(&self.store, self.binding_scope())
-            .page(&snapshot.config, offset, &locale)
+            .page(&snapshot.config, offset, 8, &locale)
             .await?;
         let mut content = render::message(i18n::text(&locale, "bindings.heading"));
         content.blocks = vec![

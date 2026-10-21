@@ -367,6 +367,14 @@ pub async fn list_workspace(
     Ok(session::Page { data, next_cursor })
 }
 
+/// Native menus need the resolved page, including snapshot expiry/reset behavior.
+pub struct PickerPage {
+    pub data: Vec<session::Session>,
+    pub next_cursor: Option<String>,
+    pub offset: usize,
+    pub total: usize,
+}
+
 /// Hide only dedicated probes proven by this bridge's durable create receipts.
 /// Never infer a test session from its title or mutate/archive it remotely.
 pub async fn list_picker(
@@ -375,7 +383,7 @@ pub async fn list_picker(
     workspace: &Workspace,
     cursor: Option<String>,
     limit: u32,
-) -> Result<session::Page<session::Session>, session::ProviderError> {
+) -> Result<PickerPage, session::ProviderError> {
     session_picker::list(store, provider, workspace, cursor, limit).await
 }
 

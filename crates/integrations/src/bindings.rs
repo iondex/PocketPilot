@@ -227,6 +227,7 @@ impl<'a> Manager<'a> {
         &self,
         config: &Config,
         offset: usize,
+        size: usize,
         locale: &str,
     ) -> Result<navigation::Page<Entry>, StoreError> {
         let mut records = self.repository.records(&self.scope).await?;
@@ -237,7 +238,7 @@ impl<'a> Manager<'a> {
                 &b.reference.thread,
             ))
         });
-        let page = navigation::page(records, offset, 8);
+        let page = navigation::page(records, offset, size);
         let mut entries = Vec::new();
         for record in page.items {
             entries.push(self.describe(config, record, locale).await?);

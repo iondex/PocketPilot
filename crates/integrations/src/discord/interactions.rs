@@ -25,6 +25,10 @@ impl EventHandler for Handler {
             self.component(&ctx.http, component).await;
             return;
         }
+        if let Interaction::Modal(modal) = &interaction {
+            self.modal(&ctx.http, modal).await;
+            return;
+        }
         if let Interaction::Command(command) = interaction {
             self.command(&ctx.http, command).await;
         }
@@ -153,6 +157,10 @@ impl Handler {
     }
 
     async fn component(&self, http: &serenity::http::Http, interaction: &ComponentInteraction) {
+        if let Some(token) = interaction.data.custom_id.strip_prefix("pp-form:") {
+            self.open_form(http, interaction, token).await;
+            return;
+        }
         let Some(token) = interaction.data.custom_id.strip_prefix("pp:") else {
             return;
         };
@@ -234,3 +242,6 @@ async fn update_menu(
 #[cfg(test)]
 #[path = "interaction_tests.rs"]
 mod tests;
+
+#[path = "creation_interactions.rs"]
+mod creation;

@@ -25,6 +25,17 @@ pub enum View {
         version: crate::bindings::Version,
         change: crate::bindings::Change,
     },
+    NewSession {
+        project: String,
+    },
+    ConfirmCreate {
+        project: String,
+        text: String,
+    },
+    Create {
+        project: String,
+        text: String,
+    },
     Workspaces {
         offset: usize,
     },
@@ -47,6 +58,12 @@ pub enum View {
 pub enum Action {
     Navigate(View),
     Select(Vec<View>),
+    Draft { project: String },
+}
+
+pub struct NewSessionForm {
+    pub token: String,
+    pub title: String,
 }
 
 /// Only opaque action handles cross the platform boundary; IDs/cursors stay in SQLite.

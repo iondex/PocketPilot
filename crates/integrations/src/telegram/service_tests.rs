@@ -1508,9 +1508,7 @@ async fn a_steer_race_preserves_text_and_waits_for_confirmation_before_starting_
     );
 }
 
-#[tokio::test]
-async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receipts() {
-    use discord::{Backend, Command as DCommand, Input as DInput};
+async fn discord_fixture() -> (Fixture, MockServer, discord::Api, discord::runtime::Service) {
     use wiremock::matchers::body_string_contains;
     let fixture = Fixture::new().await;
     let http = MockServer::start().await;
@@ -1547,6 +1545,13 @@ async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receip
         fixture.service.runtimes.clone(),
         receiver,
     );
+    (fixture, http, api, service)
+}
+
+#[tokio::test]
+async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receipts() {
+    use discord::{Backend, Command as DCommand, Input as DInput};
+    let (fixture, _http, api, service) = discord_fixture().await;
     let make = |id, channel, command| DInput {
         uploads: Vec::new(),
         locale: None,
@@ -4842,3 +4847,6 @@ mod bindings;
 
 #[path = "access_tests.rs"]
 mod access;
+
+#[path = "discord_creation_tests.rs"]
+mod discord_creation;

@@ -134,6 +134,15 @@ pub async fn run(
 
 #[async_trait::async_trait]
 impl Backend for Service {
+    async fn new_session_form(
+        &self,
+        api: &Api,
+        input: Input,
+        token: &str,
+    ) -> Result<crate::discord::ui::NewSessionForm> {
+        self.prepare_new_session_form(api, &input, token).await
+    }
+
     async fn menu(
         &self,
         api: &Api,

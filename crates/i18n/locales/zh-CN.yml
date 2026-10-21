@@ -390,3 +390,13 @@ error.telegram.icon_unavailable: "话题图标暂不可用，将在 %{seconds} �
 "bindings.topic_hint": "请在聊天的话题列表中打开对应会话话题。"
 
 "bindings.manage": "管理"
+
+"discord.ui.new_session": "✨ 新建会话"
+
+"discord.ui.create_confirm": "✨ 确认新建会话"
+
+"discord.ui.create_notice": "确认后将在此项目中创建会话，并发送以下首轮任务。"
+
+"discord.ui.create_submit": "创建并发送任务"
+
+"discord.ui.create_placeholder": "描述要交给 agent 的首轮任务"

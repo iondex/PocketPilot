@@ -390,3 +390,13 @@ error.telegram.icon_unavailable: "Topic icons are temporarily unavailable; retry
 "bindings.topic_hint": "Open the matching session topic in this chat’s topic list."
 
 "bindings.manage": "Manage"
+
+"discord.ui.new_session": "✨ New session"
+
+"discord.ui.create_confirm": "✨ Confirm new session"
+
+"discord.ui.create_notice": "Confirm to create a session in this project and send the first task."
+
+"discord.ui.create_submit": "Create and send task"
+
+"discord.ui.create_placeholder": "Describe the first task for the agent"

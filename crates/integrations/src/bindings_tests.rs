@@ -172,9 +172,9 @@ async fn inventory_uses_cached_metadata_and_removed_projects_remain_manageable()
     .unwrap();
     for (repository, scope, target) in repositories(&core) {
         let manager = Manager::new(repository.as_ref(), scope.clone());
-        let page = manager.page(&config, 0, "en").await.unwrap();
+        let page = manager.page(&config, 0, 8, "en").await.unwrap();
         assert_eq!((page.total, page.items.len(), page.next), (10, 8, Some(8)));
-        let last = manager.page(&config, 8, "en").await.unwrap();
+        let last = manager.page(&config, 8, 8, "en").await.unwrap();
         assert_eq!(
             (last.items.len(), last.previous, last.next),
             (2, Some(0), None)
@@ -265,7 +265,7 @@ async fn inventory_and_changes_are_isolated_by_native_account_and_owner() {
         }
         for scope in wrong_scopes {
             let manager = Manager::new(repository.as_ref(), scope);
-            assert!(match manager.page(&config, 0, "en").await {
+            assert!(match manager.page(&config, 0, 8, "en").await {
                 Ok(page) => page.total == 0,
                 Err(_) => true,
             });

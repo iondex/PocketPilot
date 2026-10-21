@@ -14,7 +14,10 @@ use model::Menu;
 #[path = "binding_menu.rs"]
 mod bindings;
 
-const PAGE_SIZE: usize = 20;
+#[path = "new_session.rs"]
+mod creation;
+
+const PAGE_SIZE: usize = 25;
 
 impl Service {
     pub(super) async fn menu_screen(
@@ -76,6 +79,25 @@ impl Service {
             }
         };
         let menu = match view {
+            View::NewSession { .. } => return Err("discord.ui.expired".into()),
+            View::ConfirmCreate { project, text } => {
+                self.creation_confirmation(&input, &snapshot, &project, &text)?
+            }
+            View::Create { project, text } => {
+                let selected = Navigator::new(&snapshot.config)
+                    .parent(&project)
+                    .map_err(error)?;
+                input.command = Command::New {
+                    workspace: selected.host.id.clone(),
+                    project: project.clone(),
+                    text,
+                    confirmed: true,
+                };
+                let thread = self.create_session(api, &input, &snapshot).await?;
+                let text = self.open(api, &input, &snapshot, &project, &thread).await?;
+                self.opened_menu(&input, &project, &thread, text, vec![None])
+                    .await?
+            }
             View::Bindings { offset } => self.binding_list(&input, &snapshot, offset).await?,
             View::Binding { target } => self.binding_detail(&input, &snapshot, target).await?,
             View::BindingConfirm { target, version } => {
@@ -116,29 +138,8 @@ impl Service {
                     thread: thread.clone(),
                 };
                 let text = self.open(api, &input, &snapshot, &project, &thread).await?;
-                // The only raw platform markup in this response is the generated numeric channel link.
-                let mut menu = Menu::new(text, "");
-                let b = self
-                    .store
-                    .discord_bindings(input.bot, input.guild)
-                    .await
-                    .map_err(error)?
-                    .into_iter()
-                    .find(|b| b.workspace == project && b.thread == thread)
-                    .ok_or("discord.error.binding_missing")?;
-                let channel = b
-                    .channel
-                    .parse::<u64>()
-                    .map_err(|_| i18n::Message::new("error.discord.backend"))?;
-                menu.link(
-                    "discord.ui.channel",
-                    format!("https://discord.com/channels/{}/{channel}", input.guild),
-                );
-                menu.button(
-                    "discord.ui.back_sessions",
-                    View::Sessions { project, cursors },
-                );
-                menu
+                self.opened_menu(&input, &project, &thread, text, cursors)
+                    .await?
             }
         };
         let screen = menu
@@ -272,7 +273,6 @@ impl Service {
         project: &str,
         mut cursors: Vec<Option<String>>,
     ) -> Result<Menu> {
-        let locale = self.locale(input);
         if cursors.is_empty() {
             cursors.push(None);
         }
@@ -282,13 +282,30 @@ impl Service {
                 &self.runtimes,
                 project,
                 cursors.last().cloned().flatten(),
-                8,
+                PAGE_SIZE as u32,
             )
             .await
             .map_err(error)?;
+        self.session_page(input, snapshot, loaded, cursors)
+    }
+
+    fn session_page(
+        &self,
+        input: &Input,
+        snapshot: &Snapshot,
+        loaded: crate::navigation::SessionPage<'_>,
+        mut cursors: Vec<Option<String>>,
+    ) -> Result<Menu> {
+        let locale = self.locale(input);
         let selected = loaded.selection;
         let ws = selected.project;
+        let project = ws.id.as_str();
         let page = loaded.sessions;
+        // The picker may restart an expired snapshot at page one. Drop the old
+        // breadcrumb stack so stale pages cannot invent a Previous button.
+        if page.offset == 0 {
+            cursors = vec![None];
+        }
         let mut menu = Menu::new(
             format!(
                 "**💬 {}**\n{} › {}\n{}",
@@ -320,7 +337,7 @@ impl Service {
                 format!(
                     "{} · {}",
                     ui::short(&session.title, 80),
-                    (cursors.len() - 1) * 8 + index + 1
+                    page.offset + index + 1
                 )
             } else {
                 labels[index].clone()
@@ -337,6 +354,17 @@ impl Service {
             );
         }
         menu.empty_hint(&locale, "discord.sessions.empty");
+        if page.total > 0 {
+            menu.text.push_str(&format!(
+                "\n{}",
+                i18n::Message::new("discord.ui.range")
+                    .arg("first", page.offset + 1)
+                    .arg("last", (page.offset + PAGE_SIZE).min(page.total))
+                    .arg("total", page.total)
+                    .render(&locale)
+            ));
+        }
+        menu.form("discord.ui.new_session", project.into());
         let project_offset = Navigator::new(&snapshot.config)
             .project_offset(&ws.id, PAGE_SIZE)
             .map_err(error)?;
@@ -347,7 +375,7 @@ impl Service {
                 offset: project_offset,
             },
         );
-        if cursors.len() > 1 {
+        if page.offset > 0 && cursors.len() > 1 {
             let mut previous = cursors.clone();
             previous.pop();
             menu.button(
@@ -359,6 +387,7 @@ impl Service {
             );
         }
         if let Some(cursor) = page.next_cursor
+            && page.total > PAGE_SIZE
             && cursors.len() < 100
         {
             let mut next = cursors.clone();

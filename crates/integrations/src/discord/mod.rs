@@ -119,6 +119,16 @@ pub trait Backend: Send + Sync + 'static {
     /// Called after a guild-owner check and ephemeral interaction ACK.
     async fn handle(&self, api: &Api, input: Input) -> Result<String, i18n::Message>;
 
+    /// Only local catalog/authorization work is permitted before a modal ACK.
+    async fn new_session_form(
+        &self,
+        _api: &Api,
+        _input: Input,
+        _token: &str,
+    ) -> Result<ui::NewSessionForm, i18n::Message> {
+        Err("discord.ui.expired".into())
+    }
+
     async fn menu(
         &self,
         _api: &Api,

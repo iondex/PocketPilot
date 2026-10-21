@@ -1,4 +1,5 @@
 use super::*;
+use session::Page;
 use std::sync::Mutex;
 
 struct Agent(Mutex<Vec<Session>>);
@@ -92,4 +93,70 @@ async fn sorts_all_paths_and_backend_pages_then_preserves_the_snapshot_during_ne
             .thread,
         "newly-active"
     );
+}
+
+#[tokio::test]
+async fn a_cursor_at_the_end_of_a_snapshot_restarts_instead_of_showing_an_empty_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::storage::Store::open(dir.path()).await.unwrap();
+    let workspace = Workspace {
+        id: "ws".into(),
+        provider_id: "instance".into(),
+        name: "Example".into(),
+        short_name: "example".into(),
+        cwd: "/base".into(),
+        additional_cwds: vec![],
+        updated_at: None,
+    };
+    let agent = Agent(Mutex::new(vec![
+        entry("first", "/base", 2),
+        entry("second", "/base", 1),
+    ]));
+    let first = list(&store, &agent, &workspace, None, 1).await.unwrap();
+    let encoded = first.next_cursor.unwrap();
+    let mut cursor: Cursor = serde_json::from_str(encoded.strip_prefix("sp2:").unwrap()).unwrap();
+    cursor.offset = 2;
+    let encoded = format!("sp2:{}", serde_json::to_string(&cursor).unwrap());
+    let page = list(&store, &agent, &workspace, Some(encoded), 25)
+        .await
+        .unwrap();
+    assert_eq!(
+        page.data.len(),
+        2,
+        "an out-of-range page must restart with visible sessions"
+    );
+    assert!(page.next_cursor.is_none());
+}
+
+#[tokio::test]
+async fn expired_snapshots_report_page_one_with_the_new_total() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::storage::Store::open(dir.path()).await.unwrap();
+    let workspace = Workspace {
+        id: "ws".into(),
+        provider_id: "instance".into(),
+        name: "Example".into(),
+        short_name: "example".into(),
+        cwd: "/base".into(),
+        additional_cwds: vec![],
+        updated_at: None,
+    };
+    let agent = Agent(Mutex::new(
+        (0..26)
+            .map(|index| entry(&index.to_string(), "/base", index))
+            .collect(),
+    ));
+    let first = list(&store, &agent, &workspace, None, 25).await.unwrap();
+    assert_eq!((first.offset, first.total, first.data.len()), (0, 26, 25));
+    let cursor = first.next_cursor.unwrap();
+    sqlx::query("UPDATE session_list_snapshots SET expires_at=0")
+        .execute(store.pool())
+        .await
+        .unwrap();
+    agent.0.lock().unwrap().truncate(3);
+    let page = list(&store, &agent, &workspace, Some(cursor), 25)
+        .await
+        .unwrap();
+    assert_eq!((page.offset, page.total, page.data.len()), (0, 3, 3));
+    assert!(page.next_cursor.is_none());
 }

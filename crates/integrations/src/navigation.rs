@@ -39,7 +39,7 @@ pub struct ProjectPage<'a> {
 /// Read-only session navigation shares provider selection and the bounded picker query.
 pub struct SessionPage<'a> {
     pub selection: ProjectSelection<'a>,
-    pub sessions: session::Page<session::Session>,
+    pub sessions: runtimes::PickerPage,
 }
 
 pub struct Navigator<'a> {
@@ -234,7 +234,11 @@ pub struct Page<T> {
 pub fn page<T>(items: Vec<T>, offset: usize, size: usize) -> Page<T> {
     let size = size.clamp(1, 100);
     let total = items.len();
-    let offset = if offset < total { offset } else { 0 };
+    let offset = if offset < total {
+        offset / size * size
+    } else {
+        0
+    };
     Page {
         items: items.into_iter().skip(offset).take(size).collect(),
         total,

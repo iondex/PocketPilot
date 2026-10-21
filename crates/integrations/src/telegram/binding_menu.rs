@@ -11,7 +11,7 @@ impl Service {
     ) -> Result<(), Error> {
         let locale = crate::telegram::i18n::lang(input);
         let page = Manager::new(&self.store, self.binding_scope(input.chat))
-            .page(&snapshot.config, offset, locale)
+            .page(&snapshot.config, offset, 8, locale)
             .await?;
         let mut choices: Vec<_> = page
             .items

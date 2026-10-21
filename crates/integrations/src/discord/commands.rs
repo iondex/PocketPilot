@@ -8,6 +8,67 @@ use session::RuntimeStatus;
 use session::provider::Mutation;
 
 impl Service {
+    pub(super) async fn create_session(
+        &self,
+        api: &Api,
+        input: &Input,
+        snapshot: &Snapshot,
+    ) -> Result<String> {
+        let Command::New {
+            workspace,
+            project,
+            text,
+            confirmed,
+        } = &input.command
+        else {
+            return Err("discord.error.create_confirmation".into());
+        };
+        if !confirmed || text.trim().is_empty() {
+            return Err("discord.error.create_confirmation".into());
+        }
+        let ws = self.project(&snapshot.config, workspace, project)?;
+        let actor = self.runtimes.actor(&ws.provider_id, "__create").await;
+        let _guard = actor.lock().await;
+        let receipt = self
+            .mutate(
+                api,
+                input,
+                snapshot,
+                "create",
+                Target {
+                    workspace: ws,
+                    thread: "__new",
+                    binding: None,
+                },
+                Mutation::Create {
+                    cwd: ws.cwd.clone(),
+                },
+            )
+            .await?;
+        let actor = self.runtimes.actor(&ws.provider_id, &receipt.thread).await;
+        {
+            let _guard = actor.lock().await;
+            self.mutate(
+                api,
+                input,
+                snapshot,
+                "first-turn",
+                Target {
+                    workspace: ws,
+                    thread: &receipt.thread,
+                    binding: None,
+                },
+                Mutation::Start {
+                    thread: receipt.thread.clone(),
+                    text: text.clone(),
+                    client_id: format!("pp:discord:{}:{}", input.bot, input.id),
+                },
+            )
+            .await?;
+        }
+        Ok(receipt.thread)
+    }
+
     pub(super) async fn command(
         &self,
         api: &Api,
@@ -30,56 +91,11 @@ impl Service {
                 self.open(api, input, snapshot, &ws.id, thread).await
             }
             Command::New {
-                workspace,
-                project,
-                text,
-                confirmed,
+                workspace, project, ..
             } => {
-                if !confirmed || text.trim().is_empty() {
-                    return Err("discord.error.create_confirmation".into());
-                }
+                let thread = self.create_session(api, input, snapshot).await?;
                 let ws = self.project(&snapshot.config, workspace, project)?;
-                let actor = self.runtimes.actor(&ws.provider_id, "__create").await;
-                let _guard = actor.lock().await;
-                let receipt = self
-                    .mutate(
-                        api,
-                        input,
-                        snapshot,
-                        "create",
-                        Target {
-                            workspace: ws,
-                            thread: "__new",
-                            binding: None,
-                        },
-                        Mutation::Create {
-                            cwd: ws.cwd.clone(),
-                        },
-                    )
-                    .await?;
-                let actor = self.runtimes.actor(&ws.provider_id, &receipt.thread).await;
-                {
-                    let _guard = actor.lock().await;
-                    self.mutate(
-                        api,
-                        input,
-                        snapshot,
-                        "first-turn",
-                        Target {
-                            workspace: ws,
-                            thread: &receipt.thread,
-                            binding: None,
-                        },
-                        Mutation::Start {
-                            thread: receipt.thread.clone(),
-                            text: text.clone(),
-                            client_id: format!("pp:discord:{}:{}", input.bot, input.id),
-                        },
-                    )
-                    .await?;
-                }
-                self.open(api, input, snapshot, &ws.id, &receipt.thread)
-                    .await
+                self.open(api, input, snapshot, &ws.id, &thread).await
             }
             Command::Ask { text } => {
                 if text.trim().is_empty() {

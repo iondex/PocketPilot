@@ -11,7 +11,7 @@ impl Service {
     ) -> Result<Menu> {
         let locale = self.locale(input);
         let page = Manager::new(&self.store, self.binding_scope(input))
-            .page(&snapshot.config, offset, &locale)
+            .page(&snapshot.config, offset, 25, &locale)
             .await
             .map_err(error)?;
         let mut menu = Menu::new(

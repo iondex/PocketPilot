@@ -79,7 +79,11 @@ impl Store {
             .execute(&mut *tx).await.map_err(|_| Error::Database)?;
         let ttl = if matches!(
             &action,
-            crate::discord::ui::Action::Navigate(crate::discord::ui::View::BindingChange { .. })
+            crate::discord::ui::Action::Navigate(
+                crate::discord::ui::View::BindingChange { .. }
+                    | crate::discord::ui::View::Create { .. }
+                    | crate::discord::ui::View::NewSession { .. }
+            ) | crate::discord::ui::Action::Draft { .. }
         ) {
             300
         } else {
@@ -110,21 +114,34 @@ impl Store {
         };
         let action: crate::discord::ui::Action =
             serde_json::from_str(row.get("action")).map_err(|_| Error::Database)?;
+        let draft = matches!(&action, crate::discord::ui::Action::Draft { .. });
         let view = match (action, value) {
             (crate::discord::ui::Action::Navigate(view), None) => Some(view),
+            (crate::discord::ui::Action::Draft { project }, Some(text))
+                if !text.trim().is_empty() && text.chars().count() <= 4000 =>
+            {
+                Some(crate::discord::ui::View::ConfirmCreate {
+                    project,
+                    text: text.trim().into(),
+                })
+            }
             (crate::discord::ui::Action::Select(choices), Some(value)) => value
                 .parse::<usize>()
                 .ok()
                 .and_then(|index| choices.get(index).cloned()),
             _ => None,
         };
-        if matches!(
-            view,
-            Some(
-                crate::discord::ui::View::Open { .. }
-                    | crate::discord::ui::View::BindingChange { .. }
+        if draft && view.is_some()
+            || matches!(
+                view,
+                Some(
+                    crate::discord::ui::View::Open { .. }
+                        | crate::discord::ui::View::BindingChange { .. }
+                        | crate::discord::ui::View::Create { .. }
+                        | crate::discord::ui::View::NewSession { .. }
+                )
             )
-        ) {
+        {
             sqlx::query("UPDATE discord_ui_actions SET consumed=1 WHERE nonce=? AND consumed=0")
                 .bind(nonce)
                 .execute(&mut *tx)

@@ -167,3 +167,13 @@ async fn session_navigation_rejects_a_removed_host_before_connecting() {
         Err(runtimes::Error::Selection)
     ));
 }
+
+#[test]
+fn old_offsets_do_not_show_paging_when_the_list_fits_the_current_page_size() {
+    let page = page((0..23).collect::<Vec<_>>(), 20, 25);
+    assert_eq!(
+        (page.offset, page.total, page.previous, page.next),
+        (0, 23, None, None)
+    );
+    assert_eq!(page.items.len(), 23);
+}

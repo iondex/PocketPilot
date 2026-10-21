@@ -37,9 +37,9 @@ cargo clean
 
 命令先收到 ephemeral ACK，再处理慢 SSH。操作回执仅发送给调用者，实际会话历史与输出进入其 session channel。新 category 对 @everyone 隐藏，owner 和 bot 有显式访问权限；已有服务器管理员仍遵循 Discord 自身权限规则。
 
-用户先选 workspace（执行环境/主机），再选项目目录，最后选 session。目录选择、归属校验与排序复用 integrations::navigation；平台只负责原生 select/buttons 呈现。菜单默认对调用者私有，使用传统消息组件，不启用 Components V2。工作空间和项目每页最多 20 项，会话每页 8 项。选择、返回、分页与刷新更新同一条菜单消息，不追加长列表。项目目录在 option description 中显示，过长保留末尾；会话标题是 option label，状态与相对更新时间是说明，emoji 只辅助状态文字；当前页存在重名标题时增加可读序号。UUID、turn ID、分页 cursor 不作为可见信息。
+用户先选 workspace（执行环境/主机），再选项目目录，最后选 session。目录选择、归属校验与排序复用 integrations::navigation；平台只负责原生 select/buttons 呈现。菜单默认对调用者私有，使用 Components V2 文本、下拉框和按钮。工作空间、项目、会话与已绑定入口均优先单页展示，每页最多 25 项，只有超过时才分页。选择、返回、分页与刷新更新同一条菜单消息，不追加长列表。项目目录在 option description 中显示，过长保留末尾；会话标题是 option label，状态与相对更新时间是说明，emoji 只辅助状态文字；当前页存在重名标题时增加可读序号。UUID、turn ID、分页 cursor 不作为可见信息。
 
-一个项目一个 PP category，一个 session 一个短名 channel；短名只使用标题，不附加 thread ID。Discord 允许同名 channel，实际绑定仍由唯一 ID 和账本区分。channel 内状态卡展示标题、状态与项目，操作回执不显示原始 turn ID。进入会话显示最后用户输入与对应 final；正文通过公共 Markdown 解析，在 Components V2 的 Text Display 中输出 Discord 支持的子集，菜单和动态标题按字面转义。V2 正文按最终渲染后的 3,600 个 UTF-16 单元预算合并和分段，包含重复角色标题；该值是应用的保守总预算。Markdown 节点数仅用于解析资源保护，不等同于原生组件数。相邻 Agent 文本只在同一 turn 和 phase 内合并，角色、阶段与轮次边界保留；图库每条最多十张图。传统提示消息仍保留 1,800 单元预算；不能保真的语法保留为文字，不生成 `session.md`，也不提供完整历史导出。三端共用 session::presentation；每条会话消息首行用 👤 用户或 🤖 Agent 标识角色，并用 💭 / ✅ / ❌ 区分 Agent 过程、最终结果与错误，长消息的每一段重复角色标题，并为标题预留长度；提示信息使用 ℹ️。角色标题与分段正文在入队时一起保存，已确认段号持久保存。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
+一个项目一个 PP category，一个 session 一个短名 channel；短名只使用标题，不附加 thread ID；创建和重命名统一将空格、换行等分隔符收束为单个 `-`，不保留首尾 `-`，菜单和状态卡继续显示可读标题。Discord 允许同名 channel，实际绑定仍由唯一 ID 和账本区分。channel 内状态卡展示标题、状态与项目，操作回执不显示原始 turn ID。进入会话显示最后用户输入与对应 final；正文通过公共 Markdown 解析，在 Components V2 的 Text Display 中输出 Discord 支持的子集，菜单和动态标题按字面转义。V2 正文按最终渲染后的 3,600 个 UTF-16 单元预算合并和分段，包含重复角色标题；该值是应用的保守总预算。Markdown 节点数仅用于解析资源保护，不等同于原生组件数。相邻 Agent 文本只在同一 turn 和 phase 内合并，角色、阶段与轮次边界保留；图库每条最多十张图。传统提示消息仍保留 1,800 单元预算；不能保真的语法保留为文字，不生成 `session.md`，也不提供完整历史导出。三端共用 session::presentation；每条会话消息首行用 👤 用户或 🤖 Agent 标识角色，并用 💭 / ✅ / ❌ 区分 Agent 过程、最终结果与错误，长消息的每一段重复角色标题，并为标题预留长度；提示信息使用 ℹ️。角色标题与分段正文在入队时一起保存，已确认段号持久保存。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
 
 ## 持久化与生命周期
 
@@ -70,3 +70,11 @@ agent 输入使用与 Telegram 相同的 operations 状态机：Received → Pre
 绑定清单和暂停语义见 [公共绑定管理](integrations.md#已绑定会话管理)。暂停时仍可使用 `/pp-ask`、`/pp-status` 和 `/pp-recent`；清单状态来自带时间标记的缓存。
 
 目录查询中的已加载会话发现是有界补充：总预算三秒、最多八个并发只读请求，单会话最多一秒。超时或已关闭的已加载会话不阻断按项目 cwd 查询存储索引；普通输入和写回执仍使用原超时与不重发规则。
+
+## 菜单新建会话
+
+在 `/pp` 中选择执行环境和项目后，会话页始终提供“新建会话”，空列表也可进入。点击打开原生表单，填写必选首轮任务；提交后显示项目归属、任务预览和“创建并发送任务”确认。表单和预览不连接 agent；只有明确点击确认才创建会话、发送首轮并建立 channel，行为与 `/pp-new ... confirm:true` 共用同一操作账本。成功后显示“进入会话”链接。
+
+表单打开、草稿提交和最终创建分别使用 bot/guild/owner/channel/config 作用域内的五分钟一次性句柄。空白或超过 4,000 字符的草稿被拒绝；其他账号、过期或配置变化的控件不能使用。结果未知不自动重发创建或任务。
+
+列表返回实际 offset 和总数；快照过期或游标越界时回首页并清空旧翻页记录。旧菜单沿用的 offset 也会对齐到当前页大小，避免不足一页仍显示“上一页”。

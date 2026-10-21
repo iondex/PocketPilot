@@ -1,6 +1,6 @@
 //! Sort the whole workspace session collection before paginating a stable snapshot.
 use super::*;
-use session::{Page, ProviderError, Session};
+use session::{ProviderError, Session};
 use sqlx::Row;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -15,7 +15,7 @@ pub(super) async fn list(
     workspace: &Workspace,
     cursor: Option<String>,
     limit: u32,
-) -> Result<Page<Session>, ProviderError> {
+) -> Result<PickerPage, ProviderError> {
     let size = limit.clamp(1, 100) as usize;
     let paths = serde_json::to_string(&(workspace.cwd.clone(), workspace.additional_cwds.clone()))
         .map_err(|_| ProviderError::Incompatible)?;
@@ -27,7 +27,7 @@ pub(super) async fn list(
         if let Some(row) = row {
             let data: Vec<Session> = serde_json::from_str(row.get("payload"))
                 .map_err(|_| ProviderError::Incompatible)?;
-            if cursor.offset <= data.len() {
+            if cursor.offset < data.len() {
                 return page(data, cursor.id, cursor.offset, size);
             }
         }
@@ -95,7 +95,13 @@ fn page(
     id: String,
     offset: usize,
     size: usize,
-) -> Result<Page<Session>, ProviderError> {
+) -> Result<PickerPage, ProviderError> {
+    let total = data.len();
+    let offset = if total <= size {
+        0
+    } else {
+        offset / size * size
+    };
     let next = offset.saturating_add(size);
     let cursor = if next < data.len() {
         Some(format!(
@@ -106,9 +112,11 @@ fn page(
     } else {
         None
     };
-    Ok(Page {
+    Ok(PickerPage {
         data: data.into_iter().skip(offset).take(size).collect(),
         next_cursor: cursor,
+        offset,
+        total,
     })
 }
 

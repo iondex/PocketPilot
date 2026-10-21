@@ -24,7 +24,7 @@ fn parse(
             control_verified: false,
             endpoint: None,
         });
-        let count = if host.ends_with("alpha") { 23 } else { 1 };
+        let count = if host.ends_with("alpha") { 28 } else { 1 };
         for index in 0..count {
             config.workspaces.push(engine::model::Workspace {
                 id: format!("raw-project-{host}-{index}"),
@@ -124,11 +124,11 @@ async fn native_menus_page_in_place_without_displaying_ids_or_long_project_lists
         .menu_screen(&api, input(), Some(token.clone()), Some("0".into()))
         .await
         .unwrap();
-    assert!(projects.text.contains("1–20") && projects.text.contains("23"));
+    assert!(projects.text.contains("1–25") && projects.text.contains("28"));
     assert!(!projects.text.contains("raw-project") && !projects.text.contains("Project 00"));
     assert!(projects.text.encode_utf16().count() < 300);
     let (_, options) = selector(&projects);
-    assert_eq!(options.as_array().unwrap().len(), 20);
+    assert_eq!(options.as_array().unwrap().len(), 25);
     assert_eq!(options[0]["label"], "Project 00");
     assert_eq!(options[0]["value"], "0");
     let next = service
@@ -137,12 +137,12 @@ async fn native_menus_page_in_place_without_displaying_ids_or_long_project_lists
         .unwrap();
     let (_, options) = selector(&next);
     assert_eq!(options.as_array().unwrap().len(), 3);
-    assert_eq!(options[0]["label"], "Project 20");
+    assert_eq!(options[0]["label"], "Project 25");
     let previous = service
         .menu_screen(&api, input(), Some(button_token(&next, "上一页")), None)
         .await
         .unwrap();
-    assert_eq!(selector(&previous).1.as_array().unwrap().len(), 20);
+    assert_eq!(selector(&previous).1.as_array().unwrap().len(), 25);
     let mut other = input();
     other.user = 99;
     assert!(
@@ -310,3 +310,6 @@ async fn project_controls_follow_the_shared_activity_order() {
 
 #[path = "binding_menu_tests.rs"]
 mod bindings;
+
+#[path = "creation_tests.rs"]
+mod creation;
