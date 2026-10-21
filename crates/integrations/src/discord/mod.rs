@@ -146,24 +146,7 @@ pub fn authorized(expected_guild: u64, actual_guild: Option<u64>, owner: u64, us
 }
 
 pub fn channel_name(title: &str) -> String {
-    let title = session::delivery::short_title(title, 65)
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    let title = title
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-    let title = title.as_str();
-    let title = if title.is_empty() { "session" } else { title };
-    title.into()
+    title.replace(' ', "")
 }
 
 pub(crate) fn parse(

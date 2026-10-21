@@ -30,11 +30,11 @@ fn pp_ask_requires_nonempty_text() {
 }
 
 #[test]
-fn channel_names_are_short_and_cannot_ping_members() {
-    let name = channel_name("Hello @everyone / Test");
-    assert!(!name.contains('@'));
-    assert_eq!(name, "hello-everyone-test");
-    assert!(channel_name(&"好".repeat(500)).chars().count() < 100);
+fn channel_names_only_remove_spaces() {
+    assert_eq!(channel_name("Hello World-Test"), "HelloWorld-Test");
+    assert_eq!(channel_name(" 中文 项目_ABC-123 "), "中文项目_ABC-123");
+    assert_eq!(channel_name("A @Name / B"), "A@Name/B");
+    assert_eq!(channel_name("A\tB\nC"), "A\tB\nC");
 }
 
 #[test]
