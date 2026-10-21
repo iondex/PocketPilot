@@ -52,19 +52,6 @@ enum Command {
         #[command(subcommand)]
         command: Providers,
     },
-    /// Manage private-chat pairing. Approval is available only from this CLI.
-    Pair {
-        #[command(subcommand)]
-        command: Pair,
-    },
-}
-
-#[derive(Subcommand)]
-enum Pair {
-    Pending,
-    Approve { code: String },
-    List,
-    Revoke { bot_id: i64, user_id: u64 },
 }
 
 #[derive(Subcommand)]
@@ -138,8 +125,6 @@ pub enum Error {
     Discord(#[from] integrations::discord::Error),
     #[error(transparent)]
     Store(#[from] engine::storage::StoreError),
-    #[error(transparent)]
-    Pairing(#[from] integrations::telegram::pairing::Error),
     #[error("no existing Codex control endpoint was discovered for this host")]
     SharedEndpoint,
     #[error("unknown or unsupported configured host/workspace")]
@@ -168,7 +153,6 @@ impl ::i18n::LocalizedError for Error {
             Self::Telegram(error) => ::i18n::LocalizedError::message(error),
             Self::Discord(error) => ::i18n::LocalizedError::message(error),
             Self::Store(error) => ::i18n::LocalizedError::message(error),
-            Self::Pairing(error) => ::i18n::LocalizedError::message(error),
         }
     }
 }
@@ -240,23 +224,6 @@ async fn run_configured(args: Arguments, mut config: Config, locale: &str) -> Re
         Command::Serve => app::runtime::run(args.config).await?,
         Command::Retry => app::retry::run(args.config).await?,
         Command::Doctor(options) => print(&crate::doctor::inspect(&config, &options).await?)?,
-        Command::Pair { command } => {
-            let store =
-                integrations::telegram::pairing::Registry::open(&config.service.data_dir).await?;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| Error::Selection)?
-                .as_secs() as i64;
-            match command {
-                Pair::Pending => print(&store.pending_pairings(now).await?)?,
-                Pair::Approve { code } => print(&store.approve_pairing(&code, now).await?)?,
-                Pair::List => print(&store.paired_users().await?)?,
-                Pair::Revoke { bot_id, user_id } => {
-                    store.revoke_pairing(bot_id, user_id).await?;
-                    println!("{}", i18n::text(locale, "cli.pair_revoked"));
-                }
-            }
-        }
         Command::Hosts { command } => match command {
             Hosts::List => {
                 #[derive(Serialize)]

@@ -1,40 +1,20 @@
-# Telegram 私聊与配对
+# Telegram 私聊接入
 
 ## 1. 访问模型
 
-Telegram 只接收私聊业务，不支持群、supergroup、channel 或在群中的 callback。即使某个已配对用户在群中发送命令，也必须拒绝。无需配置 chat/user 允许列表；真实 sender 与 private chat 身份来自 Telegram 更新，不以 username、转发来源或用户输入的 ID 授权。
+仅编译时指定的 `telegram::OWNER_USER_ID` 可在本人私聊中使用 bot。sender 必须等于该 ID，private chat ID 必须等于 sender；群、supergroup、channel、其他用户和借用其他聊天消息的 callback 均静默拒绝。不以 username、转发来源、用户输入的 ID 或数据库记录授予权限。
 
-配对按 `(bot_id, user_id)` 持久化在自有 SQLite，chat_id 必须是该用户自己的私聊地址。配对后可使用当前配置允许的所有 host/workspace；不同用户各有自己的私聊 topic/状态缓存/绑定，同一 Codex session 的操作仍由同一 actor 串行化。
+指定用户 ID 已在源码中固定；调整时修改常量并重新构建、部署。测试使用合成账号，不从真实账号复制聊天内容。无需配置 chat/user 允许列表，也无需配对申请、批准或撤销。
 
-私聊访问判定、持久 poller、配对账本、CLI 批准/撤销、菜单、topic、历史和输入处理已接通。自动测试覆盖本地 API fixtures；实际手机联调步骤见 [测试入口](../testing.md)。
+## 2. 入口与授权检查
 
-## 2. CLI 配对
+指定用户发送 `/start`，直接进入固定「管理」topic，再选择执行环境 → 项目 → session。管理 topic 不绑定 agent；选中的原生会话绑定独立 session topic。
 
-`/start` 流程：
-
-1. 验证消息是用户本人的私聊；群聊静默忽略，不创建配对申请、不泄漏 workspace 信息。
-2. 未配对用户只获得一个短期一次性码和“请在运行 PocketPilot 的机器上批准”的提示；此时不能列会话或触发 agent。
-3. 管理员在本机执行 `pocketpilot pair approve CODE`。只有 CLI 管理入口可以批准，Telegram 按钮/消息不能自助批准。
-4. 成功后再次 /start，复用固定的「管理」topic，在其中显示管理菜单；不创建 Codex session。
-
-当前 CLI：
-
-```sh
-cargo run -p app --bin pocketpilot -- pair pending
-cargo run -p app --bin pocketpilot -- pair approve CODE
-cargo run -p app --bin pocketpilot -- pair list
-cargo run -p app --bin pocketpilot -- pair revoke BOT_ID USER_ID
-```
-
-申请码采用随机 UUID，只存 SHA-256 hash，10 分钟过期，批准事务会消费申请；再次批准同码失败。新申请替换该 bot/user 的旧码；后续 poller 对重复申请做限速，不能让陌生私聊无限刷提醒。
-
-CLI 使用独立的配对管理数据库连接，不获取服务主锁、不执行 operations/deliveries 的恢复逻辑。服务持锁运行时仍可批准；授权变更不写入 TOML 的用户列表，也不改变任何 Codex session。
-
-撤销配对立即禁用对应本地绑定；后续 dispatch/deliver 重新检查配对状态，未开始的输入/输出不再执行。已经被服务端接受的输入不能撤回，不通过 interrupt 实现授权回滚。
+更新解析、命令处理、回调执行、任务 dispatch、投递和后台观察统一检查指定用户。私聊身份来自 Telegram 原生更新，不存在 Telegram 自助授权或 `pocketpilot pair` CLI。schema 不再创建配对表；已有原型数据库中的旧表不会自动删除，也不会再被读取。
 
 ## 3. 私聊中的 Session Topic
 
-每个已配对用户有一个固定的「管理」topic，只用于管理。/start、/workspaces、/sessions、/new、/open 和 /topics 都路由到这里；/help 按话题类型显示说明；一个具体 Codex thread 对应另一个 session topic。管理 topic 通过数据库约束禁止绑定 agent。使用 Telegram 支持的 bot 私聊 topic 模式，不创建群聊作为替代。
+指定用户有一个固定的「管理」topic，只用于管理。/start、/workspaces、/sessions、/new、/open 和 /topics 都路由到这里；/help 按话题类型显示说明；一个具体 Codex thread 对应另一个 session topic。管理 topic 通过数据库约束禁止绑定 agent。使用 Telegram 支持的 bot 私聊 topic 模式，不创建群聊作为替代。
 
 getMe 的 has_topics_enabled 必须为 true，当前 SDK 已通过私聊 thread_id 保留测试。未启用时明确提示需开启相应 bot topic 模式；不能声称所有普通私聊 bot 默认都可创建 topic。SDK 必须保留正确的 message_thread_id/thread_id 类型。
 
@@ -47,7 +27,7 @@ PocketPilot 私聊
 
 topic 名只保留截短的原始标题，最多 40 个 grapheme，且内部截断同时限制 Unicode 码点数量；不拼工作区、路径、thread 短 ID 或状态字样。原生 emoji icon 单独表达状态，不用改标题表达运行中。/status 返回主机、工作区、cwd、完整 thread/provider/turn ID 和实际运行状态。
 
-未绑定 topic、General 入口或管理 topic 的普通任务文本只获得拒绝提示，不复述正文、不发送给 agent；已绑定 session topic 中的普通文本只发给该 session。全部 Off-topic 文字输入在配对后先归一到管理上下文；命令、按钮和返回/刷新共享同一份管理导航。普通任务文本按管理规则拒绝，不把默认输入猜测成“最近会话”。转发是服务端路由，Bot API 无法强制客户端切换页面。
+未绑定 topic、General 入口或管理 topic 的普通任务文本只获得拒绝提示，不复述正文、不发送给 agent；已绑定 session topic 中的普通文本只发给该 session。全部 Off-topic 文字输入在授权后先归一到管理上下文；命令、按钮和返回/刷新共享同一份管理导航。普通任务文本按管理规则拒绝，不把默认输入猜测成“最近会话”。转发是服务端路由，Bot API 无法强制客户端切换页面。
 
 Telegram 的「允许用户创建 topic」开关开启时，客户端会先为入口消息（包括 /start）创建 topic，再把消息发给 bot，这是平台行为。固定入口需要在 BotFather 开启 **Disallow users to create new threads**，保留 bot 的 Topics 功能。程序通过 getMe.allows_users_to_create_topics 诊断此设置，但 Bot API 不提供本项目可调用的对应设置方法；不会自动删除用户已有 topic。官方说明见 [Bot forums](https://core.telegram.org/api/forum#bot-forums)。
 
@@ -55,7 +35,7 @@ Telegram 的「允许用户创建 topic」开关开启时，客户端会先为�
 
 管理界面用 MarkdownV2 展示标题、说明和当前范围，内联按钮承载选择。主机和工作区尽量两列排列，会话和确认项使用单行；分页与返回、首页、刷新有独立按钮。按钮只显示名称和必要 emoji，详细路径留在标题输入、确认页或 /status。动态正文经 SDK 转义，agent 正文使用独立渲染模式。
 
-导航依次选择主机 → 工作区 → 会话，或主机 → 工作区 → 标题 → 创建确认。当前页面、选项和已确认的菜单消息 ID 保存在 SQLite，回调仅包含不透明页面 ID 与选项索引，不携带执行参数。每次选择按 bot/user/chat/topic、当前页面、消息 ID、配对及允许范围复核；参数从本地类型化页面读取。
+导航依次选择主机 → 工作区 → 会话，或主机 → 工作区 → 标题 → 创建确认。当前页面、选项和已确认的菜单消息 ID 保存在 SQLite，回调仅包含不透明页面 ID 与选项索引，不携带执行参数。每次选择按 bot/user/chat/topic、当前页面、消息 ID、指定用户及允许范围复核；参数从本地类型化页面读取。
 
 正常切页编辑同一条菜单消息，不新增一串菜单。确认消息不存在或无法编辑时发送新菜单并更新指针；网络结果未知不自动补发。显式 /start 总是发送新的可见首页，以便清空客户端记录后恢复入口。过时的排队页面在发送前失效，快速点击不能让旧页面覆盖当前页面。
 
@@ -94,9 +74,9 @@ Telegram 初次进入会话仅展示最近输入及本轮最终结果、最新�
 
 ## 7. 配置和账号变化
 
-根目录 pocketpilot.toml 的 `[telegram].token` 为唯一凭据输入，default_locale 控制缺省语言，不读取 .env、不 include 其他配置。不需要 chat/user ID 配置。bot ID 由 getMe 确认，同 bot token 轮换保留配对；不同 bot 的旧配对、nonce、绑定、状态卡和积压不会自动继承。
+根目录 pocketpilot.toml 的 `[telegram].token` 为唯一凭据输入，default_locale 控制缺省语言，不读取 .env、不 include 其他配置。不需要 chat/user ID 配置。bot ID 由 getMe 确认，同 bot token 轮换保留绑定；不同 bot 的旧 nonce、绑定、状态卡和积压不会自动继承。
 
-用户删除 topic 或阻止 bot 时仅调整本地映射/投递，不停止 agent。关闭话题不等于删除，不能据此清除映射。解绑、撤销配对、退出 PocketPilot 和配置 reload 都不能发 unsubscribe/cancel 或重启服务。
+用户删除 topic 或阻止 bot 时仅调整本地映射/投递，不停止 agent。关闭话题不等于删除，不能据此清除映射。解绑、退出 PocketPilot 和配置 reload 都不能发 unsubscribe/cancel 或重启服务。
 
 
 ## 8. 清空历史与话题恢复
@@ -118,7 +98,7 @@ Telegram 官方说明：删除包含创建 topic 根服务消息的历史时，�
 
 状态更新是没有正文的元数据投递，不产生“空闲”消息。升级时仅删除账本明确记录的旧 bot 状态卡，不删除用户消息或 agent 正文。标题和 icon 分开更新，正常状态切换不改标题。
 
-运行中（不含等待审批/用户输入）建立 typing lease，独立任务每约 3–4 秒续期 sendChatAction。接受新输入后可立即唤醒；不依赖历史读取完成或新文本到达。每次发送重新检查配对、配置范围和绑定版本，解绑/撤销/离线/空闲停止续期，429 尊重 retry_after。停止此任务仅影响 Telegram 提示，绝不控制 agent。
+运行中（不含等待审批/用户输入）建立 typing lease，独立任务每约 3–4 秒续期 sendChatAction。接受新输入后可立即唤醒；不依赖历史读取完成或新文本到达。每次发送重新检查指定用户、配置范围和绑定版本，解绑/离线/空闲停止续期，429 尊重 retry_after。停止此任务仅影响 Telegram 提示，绝不控制 agent。
 
 共享 i18n crate 通过 rust-i18n 编译中英文 YAML，使用稳定 ID，调用始终显式传 locale，不修改进程全局 locale。preferences 按 bot/user 保存偏好；默认 zh-CN，可用 /language en 或 /language zh-CN，default_locale=auto 才跟随 Telegram 用户语言。只翻译产品文案，用户标题、路径与 agent 正文不翻译。
 
@@ -131,7 +111,7 @@ Agent Markdown 使用 pulldown-cmark 解析为公共文档，再转换为类型�
 
 Bot API 没有获取全部 topics 或单个 topic 的读取方法，也没有 forum_topic_deleted 更新。不能发现程序从未记录的 topic，不能保证用户在客户端删除后即时同步。/topics 和 /refresh 会检查当前页最多六个已知 ID：editForumTopic 不指定 name/icon，保留现有元数据；已在真实私聊管理 topic 验证返回 True。明确的 missing-topic 响应才使本地关联和待投递失效；TOPIC_CLOSED 单独处理，超时/限流/不明错误保留记录。发送正文或元数据时发现 topic 不存在也执行同样清理。
 
-删除前在本地事务中复核配对与当前私聊归属，排除管理 topic，并持久登记 dispatching；禁用 binding、递增 revision、退役未开始的输入/输出及草稿按钮。bind 拒绝正在删除、结果未知或已删除的旧 topic。已经通过 dispatch 的原生请求不撤回。删除确认绑定已投递且未消费的当前菜单；延迟/重启后旧确认重新询问。
+删除前在本地事务中复核指定用户与当前私聊归属，排除管理 topic，并持久登记 dispatching；禁用 binding、递增 revision、退役未开始的输入/输出及草稿按钮。bind 拒绝正在删除、结果未知或已删除的旧 topic。已经通过 dispatch 的原生请求不撤回。删除确认绑定已投递且未消费的当前菜单；延迟/重启后旧确认重新询问。
 
 已确认删除或明确不存在时，topic provisioning 指针退役，后续可以为同一个 Codex thread 创建新 topic。未知结果保留 outcome_unknown 和暂停转发状态，重启不重发删除；只有用户重新选择并确认后才可再尝试。单一根 schema.sql 中维护 topic_removals，无 migration。
 
@@ -140,7 +120,7 @@ Bot API 没有获取全部 topics 或单个 topic 的读取方法，也没有 fo
 
 ## 11. 命令菜单与批量清理
 
-启动时通过 setMyCommands 注册私聊命令，提供 default/zh/en 三套说明。范围仅 AllPrivateChats；命令建议不代表已经配对，也不绕过现有权限检查。注册失败只记录日志，仍可手动输入命令；每套注册有五秒预算。菜单含 start/workspaces/topics/new/status/history/rename/refresh/language/help，没有停止会话命令。
+启动时通过 setMyCommands 注册私聊命令，提供 default/zh/en 三套说明。范围仅 AllPrivateChats；命令建议不代表已经授权，也不绕过现有权限检查。注册失败只记录日志，仍可手动输入命令；每套注册有五秒预算。菜单含 start/workspaces/topics/new/status/history/rename/refresh/language/help，没有停止会话命令。
 
 /topics clear 或话题列表中的「🧹 清除全部会话话题」打开独立确认页，显示当前已记录的 topic 数量。确认范围保存为具体 ID 集合，不会把确认后新增的话题一起删除。仅删除本私聊中已记录的 session topics（包括已解绑的），保留固定管理入口及全部原生 Codex 会话。Bot API 无列表接口，程序从未记录的话题不在本次范围内。
 

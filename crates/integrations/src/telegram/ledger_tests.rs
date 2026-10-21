@@ -39,41 +39,9 @@ async fn long_markdown_is_split_into_durable_messages_and_completed_prefixes_are
     assert!(store.pending_deliveries(1, 0).await.unwrap().is_empty());
 }
 
-#[tokio::test]
-async fn terminal_pairing_delivery_drops_the_plaintext_code() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).await.unwrap();
-    let mut body = Outbound::text("fixture-once-only-code");
-    body.require_pairing = false;
-    body.expires_at = Some(600);
-    store.enqueue(1, 10, 0, "pairing", &body).await.unwrap();
-    let rows = store.pending_deliveries(1, 1).await.unwrap();
-    let id = &rows[0].id;
-    store
-        .delivery_state(id, "pending", "dispatching", None, 0)
-        .await
-        .unwrap();
-    store
-        .delivery_state(id, "dispatching", "delivered", Some(1), 0)
-        .await
-        .unwrap();
-    let payload: String = sqlx::query_scalar("SELECT payload FROM deliveries WHERE id=?")
-        .bind(id)
-        .fetch_one(&store.pool)
-        .await
-        .unwrap();
-    assert!(!payload.contains("fixture-once-only-code"));
-}
-
 async fn setup() -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).await.unwrap();
-    let code = store
-        .pairing()
-        .request_pairing(1, 10, 10, true, 100)
-        .await
-        .unwrap();
-    store.pairing().approve_pairing(&code, 101).await.unwrap();
     (dir, store)
 }
 
@@ -317,7 +285,7 @@ async fn burst_members_share_one_durable_batch_with_a_fixed_deadline() {
 }
 
 #[tokio::test]
-async fn revoked_pairing_fails_at_the_dispatch_transaction() {
+async fn a_different_user_fails_at_the_dispatch_transaction() {
     let (_dir, store) = setup().await;
     store.bind(1, 10, 11, "host", "thread").await.unwrap();
     let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
@@ -333,12 +301,13 @@ async fn revoked_pairing_fails_at_the_dispatch_transaction() {
         )
         .await
         .unwrap();
-    store.pairing().revoke_pairing(1, 10).await.unwrap();
+    let mut denied = input(1);
+    denied.user = 20;
     assert!(matches!(
         store
-            .dispatch_authorized(&id, 1, &input(1), Some(&binding))
+            .dispatch_authorized(&id, 1, &denied, Some(&binding))
             .await,
-        Err(Error::NotPaired)
+        Err(Error::Unauthorized)
     ));
     assert_eq!(
         store.operation_state(&id).await.unwrap(),

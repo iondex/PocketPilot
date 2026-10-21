@@ -7,7 +7,7 @@
 1. 在 Discord Developer Portal 为应用使用 Guild Install，授权 `bot` 与 `applications.commands`。在 Bot → Authorization Flow 关闭 Requires OAuth2 Code Grant；PocketPilot 不提供 OAuth 回调服务器。若授权提示 `integration requires code grant`，关闭该开关并保存后再安装。若 bot 已入群但命令授权缺失，重新授权安装。
 2. bot 需要 View Channels、Manage Channels、Send Messages、Read Message History、Attach Files。可以在独立测试服务器先授予 Administrator 排查，但最终应以这些权限验收。新建的 PP category 通过覆盖权限对 `@everyone` 隐藏；服务器管理员仍能看到。
 3. 可使用权限值 `101392`（View Channels、Manage Channels、Send Messages、Read Message History、Attach Files）生成安装链接，安装到目标测试服务器。本机开启开发者模式，从服务器菜单复制 Server ID，填入私有根配置的 `[discord].guild_id`；`token` 使用 Bot Token，不是 Application ID、Public Key 或 client secret。字段示例只维护在 [公开配置](../pocketpilot.example.toml)。
-4. **使用服务器 owner 账号测试。** 程序每次从 Discord 读取 owner 身份；其他 Administrator 也会被拒绝。不需要 Telegram 配对。
+4. **使用服务器 owner 账号测试。** 程序每次从 Discord 读取 owner 身份；其他 Administrator 也会被拒绝。与 Telegram 的指定用户授权独立。
 5. 本实现只使用 `GUILDS` intent，不开启 Message Content / Server Members / Presence 特权 intents。应用的 Interactions Endpoint URL 应留空，避免把交互切换到 HTTP 回调；也不需要 ngrok。Gateway 与 HTTP 接收交互互斥，见 [官方交互文档](https://docs.discord.com/developers/interactions/receiving-and-responding#receiving-an-interaction)。
 6. 选择专用测试项目和会话；agent 必须是已经运行、可共享连接的执行实例。不要在日常工作会话中测试写入或断连。
 
@@ -77,7 +77,7 @@ NotLoaded 会话仅在明确 `/pp-ask` 时 resume。等待审批/用户输入的
 | 菜单与移动端 | 下拉框选择执行环境 → 项目 → session，返回/分页刷新同一条消息；超长标题和 emoji 不超出 native option 限制，不显示 UUID 或 cursor |
 | 旧菜单 | 配置或范围变化后旧控件拒绝；过期时提示 /pp；读取失败保留上次菜单并给调用者错误提示 |
 | 长输出 | 专用测试会话产生超过 3,600 个 UTF-16 单元的合成文本，收到多条普通消息；中文、代码块内容完整，不出现自动生成的历史文件 |
-| 文件上传 | 在已绑定 channel 执行 `/pp-ask file:附件 text:查看此文件`；也可只填 file。Codex 收到执行主机上的文件路径，图片使用原生图片输入；没有 text 和 file 时会提示“请提供文字或上传附件”；无历史导出命令 |
+| 文件上传 | 在已绑定 channel 执行 `/pp-ask file:附件 text:查看此文件`；text 必填，file 可选。Codex 收到执行主机上的文件路径，图片使用原生图片输入；未填写 text 时不能提交命令；无历史导出命令 |
 | mentions | 合成输出包含 `@everyone`、`<@123>` 和 `<@&123>`，不触发用户、角色或全体通知 |
 | 非 owner | 普通成员看不到 PP category；非 owner 管理员即便能看见或调用命令，也不能操作会话 |
 | 错误上下文 | 私信、其他 guild、未绑定 channel 不得把输入发送到原会话 |

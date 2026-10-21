@@ -12,14 +12,10 @@ use engine::{
 };
 use serde::{Deserialize, Serialize};
 use session::{History, ProviderError};
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 use tokio::{
-    sync::{Mutex, Semaphore, watch},
+    sync::{Semaphore, watch},
     task::JoinSet,
-    time::Instant,
 };
 
 #[path = "management.rs"]
@@ -203,7 +199,6 @@ pub struct Service {
     api: Api,
     pub(crate) bot: i64,
     topics_enabled: bool,
-    pair_attempts: Mutex<HashMap<(u64, bool), Instant>>,
     history_slots: Semaphore,
     started_at: i64,
 }
@@ -273,7 +268,6 @@ async fn run_adapter(
         api,
         bot,
         topics_enabled: identity.topics_enabled,
-        pair_attempts: Mutex::new(HashMap::new()),
         history_slots: Semaphore::new(4),
         started_at: now().saturating_add(1),
     });

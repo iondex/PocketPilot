@@ -53,7 +53,7 @@ impl Service {
         self.store
             .save_navigation(self.bot, input, &id, &menu)
             .await?;
-        // Pairing is checked again by the sender. Scope is checked when selecting
+        // The designated user is checked again by the sender. Scope is checked when selecting
         // a choice, so display/rate changes do not expire a harmless menu.
         self.store
             .enqueue(

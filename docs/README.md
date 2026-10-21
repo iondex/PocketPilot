@@ -6,17 +6,17 @@
 
 | 目的 | 文档 | 负责维护的内容 |
 | --- | --- | --- |
-| 开始测试 | [测试入口](testing.md) | 启动、CLI 配对、共享实例准备、测试顺序与当前限制 |
+| 开始测试 | [测试入口](testing.md) | 启动、指定用户授权、共享实例准备、测试顺序与当前限制 |
 | 开始实现 | [实施计划](planning/implementation.md) | crate 边界、任务依赖、提交粒度、阶段门禁与当前状态 |
 | 确认验收 | [验收清单](planning/acceptance.md)、[逐项审计](research/acceptance-audit.md) | A01–A52 的行为条件、当前证据与未验证项 |
 | 协议生成 | [构建时生成](design/protocol-generation.md) | build.rs、Codex binary 选择与生成物边界 |
 | 理解接口 | [架构](design/architecture.md) | 领域模型、provider/platform 接口、操作许可、数据与恢复 |
-| 做 Telegram 交互 | [Telegram](design/telegram.md)、[Topics 行为边界](research/telegram-topics.md) | 菜单、topic、绑定、新建、状态与用户可见异常 |
+| 做 Telegram 交互 | [Telegram](design/telegram.md)、[Topics 行为边界](research/telegram-topics.md) | 指定用户、菜单、topic、绑定、新建、状态与用户可见异常 |
 | 做 Discord 交互 | [Discord 原型](design/discord.md) | category/channel、owner slash、可选运行与原型限制 |
 | 测试 Discord 服务器 | [Discord 验收](testing-discord.md) | bot 安装、owner、只读/写入测试、展示与断连 |
 | 接入 Slack | [安装与测试](slack-setup.md)、[Slack 方案](design/slack.md)、[平台边界](research/slack-platform-boundaries.md) | Socket Mode、owner 私聊/thread、权限、ACK 与去重 |
 | 接入本地 Desktop | [本地会话说明](design/local-desktop.md) | 当前限制、已确认入口与后续共享部署验证 |
-| 做配置和连接 | [连接与配置](design/connections-and-config.md) | 根目录单一 TOML、内联 token、CLI 私聊配对、SSH config、OTP、热更新、生命周期 |
+| 做配置和连接 | [连接与配置](design/connections-and-config.md) | 根目录单一 TOML、内联 token、指定用户私聊、SSH config、OTP、热更新、生命周期 |
 | 处理 Markdown 与 emoji | [三端格式核对](research/chat-formatting.md)、[Slack 富消息](research/slack-rich-messages.md)、[Discord 富消息](research/discord-rich-messages.md)、[Telegram 富消息](research/telegram-rich-messages.md) | 平台语法、结构化消息、正文渲染、状态图标、mention 与当前实现差距 |
 | 做历史与投递 | [历史与消息](design/history-and-delivery.md) | 最后输入/最终输出、单条历史集合、合并、附件与限速 |
 | 查事实与限制 | [Codex 探索](research/codex-app-server.md)、[资料](research/sources.md) | 静态观察、来源、版本差异和未验证能力 |

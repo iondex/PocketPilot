@@ -6,7 +6,7 @@
 
 三端使用同一配置快照、catalog、会话操作账本和连接协调，已有相同的“执行环境 → 项目 → session”导航与角色展示语义。收进一个 integrations crate 可让 app 只依赖一个入口，消除原来跨平台 fixture 的 crate 级循环依赖，并集中消息能力、长度预算、渲染结果和附件下载契约。
 
-仅做一个转发旧 crate 的 facade，不能收拢这些共同契约；相反，把三个平台都实现为同一个万能 SDK 接口，又会把 ephemeral 回调、Telegram topic、Slack DM/thread、配对和 owner 校验压成大量无效参数。选择一个 crate、分平台模块、少量公共 trait。
+仅做一个转发旧 crate 的 facade，不能收拢这些共同契约；相反，把三个平台都实现为同一个万能 SDK 接口，又会把 ephemeral 回调、Telegram topic、Slack DM/thread、指定用户和 owner 校验压成大量无效参数。选择一个 crate、分平台模块、少量公共 trait。
 
 ## 目录与依赖
 
@@ -18,7 +18,7 @@ crates/integrations/src/
   navigation.rs      三端共享的目录选择、分页与只读 session 加载
   bindings.rs        绑定清单、缓存状态与观察/解绑规则
   network/           三端共享的 HTTP CONNECT、WS relay、受限下载
-  telegram/          Telegram 协议、topic、配对、菜单、SQL 与投递
+  telegram/          Telegram 协议、topic、指定用户、菜单、SQL 与投递
   discord/           Discord 协议、Gateway、V2、菜单、SQL 与投递
   slack/             Slack 协议、Socket Mode、Block Kit、SQL 与投递
 ```
@@ -60,9 +60,9 @@ Renderer 的关联 Part 类型保留平台完整表达能力；公共层不持�
 
 一个 crate 会扩大单次平台改动的重编译范围；目录拆分本身不能承诺缩小 binary 或加快 LTO。收益来自依赖单向、公共约束集中、平台实现局部化，以及所有支持端始终经过同一检查。
 
-不在第一轮抽象平台特有的 callback、topic 和 owner/pairing 流程，也不让 engine 操作 SDK DTO。后续只有在至少两个平台共享同一行为及错误/恢复语义时，才继续合并该流程。
+不在第一轮抽象平台特有的 callback、topic 和 owner/指定用户校验流程，也不让 engine 操作 SDK DTO。后续只有在至少两个平台共享同一行为及错误/恢复语义时，才继续合并该流程。
 
-验证沿用三端 protocol/HTTP fixtures、公共渲染长度和结构测试、owner/配对隔离、一次性动作、未知结果保护及重启分段恢复；统一由 make check 和默认全平台 make package 执行。视觉和新 API 的真实投递由用户触发，文档中的平台能力不替代客户端验收。
+验证沿用三端 protocol/HTTP fixtures、公共渲染长度和结构测试、owner/指定用户隔离、一次性动作、未知结果保护及重启分段恢复；统一由 make check 和默认全平台 make package 执行。视觉和新 API 的真实投递由用户触发，文档中的平台能力不替代客户端验收。
 
 ## 公共导航
 
@@ -78,7 +78,7 @@ Renderer 的关联 Part 类型保留平台完整表达能力；公共层不持�
 
 ## 已绑定会话管理
 
-`integrations::bindings` 集中绑定清单、状态、分页、跳转地址、观察偏好与带版本检查的变更。`Repository` 保留三端原生 SQL，`Manager` 接收已通过平台授权的作用域：Telegram bot/私聊、Discord bot/guild/owner、Slack app/team/bot/DM/owner。目标仍是对应 topic、channel 或 thread 绑定；公共模块不接管配对、owner 校验或 agent 写权限。
+`integrations::bindings` 集中绑定清单、状态、分页、跳转地址、观察偏好与带版本检查的变更。`Repository` 保留三端原生 SQL，`Manager` 接收已通过平台授权的作用域：Telegram bot/私聊、Discord bot/guild/owner、Slack app/team/bot/DM/owner。目标仍是对应 topic、channel 或 thread 绑定；公共模块不接管指定用户、owner 校验或 agent 写权限。
 
 三端首页的“已绑定会话”每页最多显示八个入口，包含执行环境、项目和绑定状态。详情显示上次读取到的会话状态及缓存年龄，不能把缓存当作实时状态；清单不连接运行时，元数据由现有打开与观察路径填充。移除项目、变更 endpoint 等使绑定标为失效，仍允许用户明确解绑。解除绑定的记录保留在清单中，不删除聊天历史或停止原生任务。
 

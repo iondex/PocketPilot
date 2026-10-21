@@ -83,13 +83,7 @@ pub fn input(update: &Update) -> Option<Input> {
         }
         _ => return None,
     };
-    if crate::telegram::access(
-        user.id.0,
-        message.chat.id.0,
-        message.chat.is_private(),
-        false,
-    ) == crate::telegram::Access::Denied
-    {
+    if !crate::telegram::authorized(user.id.0, message.chat.id.0, message.chat.is_private()) {
         return None;
     }
     Some(Input {

@@ -11,7 +11,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use session::provider::Receipt;
 use std::time::Duration;
-use tokio::{net::TcpStream, task::JoinHandle};
+use tokio::{net::TcpStream, sync::Mutex, task::JoinHandle, time::Instant};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
@@ -465,7 +465,6 @@ telegram_messages_per_minute=60000
             api,
             bot: 1,
             topics_enabled: true,
-            pair_attempts: Mutex::new(HashMap::new()),
             history_slots: Semaphore::new(4),
             started_at: 0,
         });
@@ -499,22 +498,6 @@ telegram_messages_per_minute=60000
             state,
             _server: server,
         }
-    }
-
-    async fn pair(&self) {
-        let code = self
-            .service
-            .store
-            .pairing()
-            .request_pairing(1, 10, 10, true, now())
-            .await
-            .unwrap();
-        self.service
-            .store
-            .pairing()
-            .approve_pairing(&code, now())
-            .await
-            .unwrap();
     }
 
     async fn choose(&self, id: u32, number: &str) {
@@ -632,7 +615,6 @@ fn input(id: u32, topic: i32, text: &str) -> Input {
 #[tokio::test]
 async fn failed_history_does_not_flip_a_known_runtime_or_repeatedly_rename_the_topic() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .store
@@ -716,7 +698,6 @@ async fn failed_history_does_not_flip_a_known_runtime_or_repeatedly_rename_the_t
 #[tokio::test]
 async fn management_topic_is_separate_and_unbound_messages_never_reach_an_agent() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(200, 0, "/start"))
@@ -807,7 +788,6 @@ async fn management_topic_is_separate_and_unbound_messages_never_reach_an_agent(
 #[tokio::test]
 async fn management_buttons_edit_the_same_message_and_keep_a_compact_workspace_layout() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(210, 0, "/start"))
@@ -886,7 +866,6 @@ async fn management_buttons_edit_the_same_message_and_keep_a_compact_workspace_l
 #[tokio::test]
 async fn workspace_and_session_buttons_only_contain_actual_entries() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let file = &fixture.service.config.path;
     let mut text = std::fs::read_to_string(file).unwrap();
     for id in ["second", "third"] {
@@ -938,7 +917,6 @@ async fn workspace_and_session_buttons_only_contain_actual_entries() {
 #[tokio::test]
 async fn management_navigation_survives_recovery_and_non_authority_config_changes() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(300, 0, "/start"))
@@ -975,7 +953,6 @@ async fn management_navigation_survives_recovery_and_non_authority_config_change
 #[tokio::test]
 async fn numbered_confirmation_never_replays_a_stale_input_or_ignores_changed_scope() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(310, 9, "/new workspace task"))
@@ -1033,7 +1010,6 @@ async fn numbered_confirmation_never_replays_a_stale_input_or_ignores_changed_sc
 #[tokio::test]
 async fn replying_to_an_old_management_screen_refreshes_instead_of_selecting_its_number() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(320, 9, "/new workspace task"))
@@ -1074,7 +1050,6 @@ async fn replying_to_an_old_management_screen_refreshes_instead_of_selecting_its
 #[tokio::test]
 async fn session_messages_are_quiet_and_own_inputs_are_not_echoed() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     store.set_workspace(1, 10, 11, "workspace").await.unwrap();
@@ -1133,7 +1108,6 @@ async fn session_messages_are_quiet_and_own_inputs_are_not_echoed() {
 #[tokio::test]
 async fn opening_a_session_without_agent_text_does_not_send_an_empty_history() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture.state.lock().await.items.clear();
     fixture
         .service
@@ -1167,7 +1141,6 @@ async fn opening_a_session_without_agent_text_does_not_send_an_empty_history() {
 #[tokio::test]
 async fn menus_do_not_depend_on_editing_deleted_management_messages() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(350, 0, "/start"))
@@ -1219,7 +1192,6 @@ async fn menus_do_not_depend_on_editing_deleted_management_messages() {
 #[tokio::test]
 async fn picker_hides_only_sessions_proven_to_be_local_operator_probes() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     let id = store
         .reserve_operation("probe:fixture:create", "instance", "__new")
@@ -1279,7 +1251,6 @@ async fn picker_hides_only_sessions_proven_to_be_local_operator_probes() {
 #[tokio::test]
 async fn old_queued_title_updates_and_stale_keyboards_are_not_replayed_after_restart() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     let binding = store.binding(1, 10, 11).await.unwrap().unwrap();
@@ -1303,7 +1274,6 @@ async fn old_queued_title_updates_and_stale_keyboards_are_not_replayed_after_res
 #[tokio::test]
 async fn a_management_creation_with_a_lost_reply_is_not_retried_or_bound_to_an_agent() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture.telegram.reset().await;
     Mock::given(method("POST"))
         .and(path_regex("(?i).*/createforumtopic$"))
@@ -1338,7 +1308,6 @@ async fn a_management_creation_with_a_lost_reply_is_not_retried_or_bound_to_an_a
 #[tokio::test]
 async fn queued_input_after_restart_requires_a_fresh_binding_scoped_confirmation() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     store.set_workspace(1, 10, 11, "workspace").await.unwrap();
@@ -1425,7 +1394,6 @@ async fn a_message_older_than_the_new_process_is_a_draft_even_within_five_minute
     let mut fixture = Fixture::new().await;
     let boot = now();
     Arc::get_mut(&mut fixture.service).unwrap().started_at = boot;
-    fixture.pair().await;
     fixture
         .service
         .store
@@ -1486,7 +1454,6 @@ async fn updates_fetched_after_a_poll_outage_are_drafts_without_replaying_agent_
 #[tokio::test]
 async fn a_steer_race_preserves_text_and_waits_for_confirmation_before_starting_another_turn() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .store
@@ -1858,29 +1825,8 @@ async fn discord_formats_output_as_messages_and_disables_mentions_on_edits() {
 }
 
 #[tokio::test]
-async fn private_pairing_topic_history_and_steer_form_a_durable_workflow() {
+async fn private_owner_topic_history_and_steer_form_a_durable_workflow() {
     let fixture = Fixture::new().await;
-    fixture
-        .service
-        .handle(&input(1, 0, "/workspaces"))
-        .await
-        .unwrap();
-    assert!(fixture.state.lock().await.requests.is_empty());
-    fixture
-        .service
-        .handle(&input(2, 0, "/start"))
-        .await
-        .unwrap();
-    assert!(
-        !fixture
-            .service
-            .store
-            .pairing()
-            .is_paired(1, 10, 10)
-            .await
-            .unwrap()
-    );
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(3, 0, "/sessions workspace"))
@@ -1954,7 +1900,6 @@ async fn private_pairing_topic_history_and_steer_form_a_durable_workflow() {
 #[tokio::test]
 async fn a_lost_write_receipt_cannot_cause_a_second_steer() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .store
@@ -1993,7 +1938,6 @@ async fn a_lost_write_receipt_cannot_cause_a_second_steer() {
 #[tokio::test]
 async fn new_session_requires_confirmation_and_an_unloaded_session_resumes_only_on_user_input() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1, 0, "/new workspace first task"))
@@ -2058,7 +2002,6 @@ async fn new_session_requires_confirmation_and_an_unloaded_session_resumes_only_
 #[tokio::test]
 async fn waiting_approval_still_accepts_steer_without_answering_the_approval() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .store
@@ -2098,7 +2041,6 @@ async fn waiting_approval_still_accepts_steer_without_answering_the_approval() {
 #[tokio::test]
 async fn display_and_rate_changes_preserve_authorized_live_outputs() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1, 0, "/open workspace thread"))
@@ -2143,7 +2085,6 @@ async fn display_and_rate_changes_preserve_authorized_live_outputs() {
 #[tokio::test]
 async fn declared_legacy_history_uses_only_read_and_steer_without_resume() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture.state.lock().await.legacy = true;
     fixture
         .service
@@ -2165,7 +2106,6 @@ async fn declared_legacy_history_uses_only_read_and_steer_without_resume() {
 #[tokio::test]
 async fn management_adds_and_removes_catalog_entries_without_agent_operations() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let catalog = engine::catalog::Catalog::new(fixture.service.store.pool().clone());
     let initial = fixture.service.config.snapshot();
     catalog
@@ -2211,7 +2151,6 @@ async fn management_adds_and_removes_catalog_entries_without_agent_operations() 
 #[tokio::test]
 async fn each_off_topic_start_has_a_visible_reply_even_when_the_management_menu_exists() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let (stop, receiver) = watch::channel(false);
     let worker = tokio::spawn(fixture.service.clone().deliver(receiver));
 
@@ -2299,7 +2238,6 @@ async fn each_off_topic_start_has_a_visible_reply_even_when_the_management_menu_
 #[tokio::test]
 async fn off_topic_numbers_use_the_management_navigation_and_task_text_stays_rejected() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1100, 0, "/start"))
@@ -2341,7 +2279,6 @@ async fn off_topic_numbers_use_the_management_navigation_and_task_text_stays_rej
 #[tokio::test]
 async fn start_posts_a_fresh_menu_after_client_history_clear_even_if_old_edits_would_succeed() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1200, 0, "/start"))
@@ -2383,7 +2320,6 @@ async fn start_posts_a_fresh_menu_after_client_history_clear_even_if_old_edits_w
 #[tokio::test]
 async fn explicit_start_replaces_only_a_definitively_missing_management_topic() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1300, 0, "/start"))
@@ -2415,7 +2351,6 @@ async fn explicit_start_replaces_only_a_definitively_missing_management_topic() 
 #[tokio::test]
 async fn uncertain_management_topic_check_does_not_create_another_topic() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1400, 0, "/start"))
@@ -2456,7 +2391,6 @@ async fn uncertain_management_topic_check_does_not_create_another_topic() {
 #[tokio::test]
 async fn english_and_chinese_preferences_are_persistent_and_peer_scoped() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1500, 0, "/language en"))
@@ -2477,34 +2411,12 @@ async fn english_and_chinese_preferences_are_persistent_and_peer_scoped() {
             .text
             .contains("Hosts")
     );
-    let code = fixture
-        .service
-        .store
-        .pairing()
-        .request_pairing(1, 20, 20, true, now())
-        .await
-        .unwrap();
-    fixture
-        .service
-        .store
-        .pairing()
-        .approve_pairing(&code, now())
-        .await
-        .unwrap();
+    let before = fixture.outputs().await.len();
     let mut other = input(1502, 0, "/start");
     other.user = 20;
     other.chat = 20;
-    other.locale = Some("zh-CN".into());
     fixture.service.handle(&other).await.unwrap();
-    assert!(
-        fixture
-            .outputs()
-            .await
-            .last()
-            .unwrap()
-            .text
-            .contains("主机")
-    );
+    assert_eq!(fixture.outputs().await.len(), before);
     assert_eq!(
         fixture
             .service
@@ -2515,22 +2427,12 @@ async fn english_and_chinese_preferences_are_persistent_and_peer_scoped() {
             .as_deref(),
         Some("en")
     );
-    assert_eq!(
-        fixture
-            .service
-            .store
-            .locale(1, 20)
-            .await
-            .unwrap()
-            .as_deref(),
-        Some("zh-CN")
-    );
+    assert_eq!(fixture.service.store.locale(1, 20).await.unwrap(), None);
 }
 
 #[tokio::test]
 async fn management_creation_and_existing_topic_repair_keep_the_icon_out_of_the_title() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1800, 0, "/start"))
@@ -2587,7 +2489,6 @@ async fn management_creation_and_existing_topic_repair_keep_the_icon_out_of_the_
 #[tokio::test]
 async fn topic_removal_requires_confirmation_and_only_removes_the_telegram_association() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1900, 0, "/open workspace thread"))
@@ -2705,7 +2606,6 @@ async fn manually_deleted_topics_sync_without_treating_closed_or_uncertain_topic
         ("Bad Request: unrelated failure", false),
     ] {
         let fixture = Fixture::new().await;
-        fixture.pair().await;
         fixture
             .service
             .handle(&input(1920, 0, "/open workspace thread"))
@@ -2775,7 +2675,6 @@ async fn manually_deleted_topics_sync_without_treating_closed_or_uncertain_topic
 #[tokio::test]
 async fn uncertain_topic_deletion_is_not_replayed_and_cannot_reactivate_the_old_binding() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1940, 0, "/open workspace thread"))
@@ -2831,7 +2730,6 @@ async fn uncertain_topic_deletion_is_not_replayed_and_cannot_reactivate_the_old_
 #[tokio::test]
 async fn delayed_topic_removal_confirmation_needs_a_new_confirmation() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1960, 0, "/open workspace thread"))
@@ -2892,24 +2790,9 @@ async fn delayed_topic_removal_confirmation_needs_a_new_confirmation() {
 #[tokio::test]
 async fn topic_removal_cannot_target_another_private_chat_or_the_management_topic() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1980, 0, "/open workspace thread"))
-        .await
-        .unwrap();
-    let code = fixture
-        .service
-        .store
-        .pairing()
-        .request_pairing(1, 20, 20, true, now())
-        .await
-        .unwrap();
-    fixture
-        .service
-        .store
-        .pairing()
-        .approve_pairing(&code, now())
         .await
         .unwrap();
     fixture
@@ -3036,7 +2919,6 @@ async fn localized_command_menus_are_registered_only_for_private_chats() {
 async fn bulk_topic_cleanup_confirms_a_snapshot_and_preserves_new_topics_management_and_native_sessions()
  {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(2000, 0, "/open workspace thread"))
@@ -3159,7 +3041,6 @@ async fn bulk_topic_cleanup_confirms_a_snapshot_and_preserves_new_topics_managem
 #[tokio::test]
 async fn bulk_topic_cleanup_stops_at_an_uncertain_result_without_replaying_or_touching_the_rest() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(2020, 0, "/open workspace thread"))
@@ -3226,7 +3107,6 @@ async fn bulk_topic_cleanup_stops_at_an_uncertain_result_without_replaying_or_to
 #[tokio::test]
 async fn explicit_history_reads_native_changes_and_shows_only_the_latest_input_and_final_result() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .store
@@ -3316,7 +3196,6 @@ async fn explicit_history_reads_native_changes_and_shows_only_the_latest_input_a
 #[tokio::test]
 async fn new_session_selects_host_and_workspace_ids_when_names_and_paths_match() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let config = fixture.service.config.snapshot().config.clone();
     let endpoint = config.hosts[0].endpoint.as_deref().unwrap();
     let file = &fixture.service.config.path;
@@ -3410,7 +3289,6 @@ cwd="/workspace"
 #[tokio::test]
 async fn help_is_topic_aware_refresh_is_read_only_and_removed_commands_do_not_detach() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .store
@@ -3493,7 +3371,6 @@ async fn help_is_topic_aware_refresh_is_read_only_and_removed_commands_do_not_de
 #[tokio::test]
 async fn message_ids_localize_ui_and_errors_without_translating_literal_user_content() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let mut input = input(2130, 9, "/help");
     input.locale = Some("en".into());
     fixture
@@ -3524,7 +3401,6 @@ async fn message_ids_localize_ui_and_errors_without_translating_literal_user_con
 #[tokio::test]
 async fn host_workspace_menu_pages_all_registered_projects_including_paged_project() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let file = &fixture.service.config.path;
     let mut text = std::fs::read_to_string(file).unwrap();
     for index in 0..8 {
@@ -3583,7 +3459,6 @@ async fn host_workspace_menu_pages_all_registered_projects_including_paged_proje
 #[tokio::test]
 async fn refreshing_a_host_reads_workspace_metadata_without_loading_history_or_starting_turns() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let catalog = engine::catalog::Catalog::new(fixture.service.store.pool().clone());
     let initial = fixture.service.config.snapshot();
     catalog
@@ -3617,7 +3492,6 @@ async fn refreshing_a_host_reads_workspace_metadata_without_loading_history_or_s
 #[tokio::test]
 async fn native_topic_icons_replace_automatic_status_bubbles_and_agent_markdown_is_rendered() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture.state.lock().await.items=vec![serde_json::from_str(r##"{"type":"agentMessage","id":"m","text":"# 推荐\n\n**字段说明： **示例。\n\n**结论。**后续中文。 [链接](https://example.com)\n\n| 客户端 | 平台 |\n|---|---|\n| **Example** | Android |","phase":"final_answer"}"##).unwrap()];
     fixture
         .service
@@ -3705,7 +3579,6 @@ async fn native_topic_icons_replace_automatic_status_bubbles_and_agent_markdown_
 #[tokio::test]
 async fn typing_is_renewed_without_new_text_and_stops_after_unbinding() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(1700, 0, "/open workspace thread"))
@@ -3779,7 +3652,6 @@ async fn typing_is_renewed_without_new_text_and_stops_after_unbinding() {
 #[tokio::test]
 async fn an_untitled_thread_outside_the_selected_workspace_is_not_renamed_or_loaded() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture.state.lock().await.native_name = None;
     let file = &fixture.service.config.path;
     let text = std::fs::read_to_string(file)
@@ -3824,7 +3696,6 @@ fn visible_item(
 #[tokio::test]
 async fn external_inputs_and_phase_changes_are_visible_once_and_keep_original_attachment_input() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     store.set_workspace(1, 10, 11, "workspace").await.unwrap();
@@ -3990,7 +3861,6 @@ async fn errors_survive_reopening_storage_and_history_keeps_turn_attribution() {
 #[tokio::test]
 async fn legacy_cursors_upgrade_without_replaying_old_text_or_sending_transient_errors() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     store.set_workspace(1, 10, 11, "workspace").await.unwrap();
@@ -4050,7 +3920,6 @@ async fn legacy_cursors_upgrade_without_replaying_old_text_or_sending_transient_
 async fn legacy_attachment_inputs_without_file_references_require_reupload_without_starting_turns()
 {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     store.set_workspace(1, 10, 11, "workspace").await.unwrap();
@@ -4084,7 +3953,6 @@ async fn authorized_file_only_messages_are_downloaded_staged_and_submitted_to_th
     let config = std::fs::read_to_string(path).unwrap().replace("control_verified=true", "control_verified=true\nendpoint={binary='/fixture/codex',socket='/private/account/.codex/app-server-control/app-server-control.sock'}");
     std::fs::write(path, config).unwrap();
     fixture.service.config.reload().unwrap();
-    fixture.pair().await;
     fixture
         .service
         .store
@@ -4133,7 +4001,6 @@ async fn authorized_file_only_messages_are_downloaded_staged_and_submitted_to_th
 #[tokio::test]
 async fn workspace_pages_use_recency_before_name_in_both_navigation_flows() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let file = &fixture.service.config.path;
     let mut text = std::fs::read_to_string(file).unwrap();
     text.push_str("\n[[workspaces]]\nid='newer'\nprovider_id='instance'\nname='zzz recent'\nshort_name='RECENT'\ncwd='/workspace/recent'\nupdated_at=500\n");
@@ -4160,7 +4027,6 @@ async fn workspace_pages_use_recency_before_name_in_both_navigation_flows() {
 #[tokio::test]
 async fn offline_status_before_first_history_does_not_mark_history_delivered() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     store.set_workspace(1, 10, 11, "workspace").await.unwrap();
@@ -4195,7 +4061,6 @@ async fn offline_status_before_first_history_does_not_mark_history_delivered() {
 #[tokio::test]
 async fn native_turn_errors_reach_the_live_outbox_and_explicit_history_without_replay() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     store.set_workspace(1, 10, 11, "workspace").await.unwrap();
@@ -4253,7 +4118,6 @@ async fn native_turn_errors_reach_the_live_outbox_and_explicit_history_without_r
 #[tokio::test]
 async fn completing_a_turn_does_not_replay_unchanged_commentary_in_the_final_delivery() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     store.set_workspace(1, 10, 11, "workspace").await.unwrap();
@@ -4309,7 +4173,6 @@ fn visible_cursor_upgrade_ignores_completion_flags_but_preserves_content_and_pha
 #[tokio::test]
 async fn icon_discovery_backoff_does_not_confirm_the_icon_or_block_session_messages() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     store.set_workspace(1, 10, 11, "workspace").await.unwrap();
@@ -4357,7 +4220,6 @@ async fn icon_discovery_backoff_does_not_confirm_the_icon_or_block_session_messa
 #[tokio::test]
 async fn unverified_appearance_receipts_are_repaired_once_without_replaying_history() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let store = &fixture.service.store;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     store.set_workspace(1, 10, 11, "workspace").await.unwrap();
@@ -4434,7 +4296,6 @@ fn navigation_click(menu: &Outbound, id: u32, selection: &str, message: i32) -> 
 #[tokio::test]
 async fn read_only_buttons_survive_recovery_and_display_changes_without_an_expiry_error() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(5000, 0, "/start"))
@@ -4469,7 +4330,6 @@ async fn read_only_buttons_survive_recovery_and_display_changes_without_an_expir
 #[tokio::test]
 async fn expired_or_recovered_create_clicks_reconfirm_and_duplicate_buttons_never_create_again() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(5010, 9, "/new workspace Synthetic title"))
@@ -4522,7 +4382,6 @@ async fn expired_or_recovered_create_clicks_reconfirm_and_duplicate_buttons_neve
 #[tokio::test]
 async fn menu_buttons_cannot_authorize_a_changed_workspace_scope_or_another_topic() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(5020, 9, "/new workspace Synthetic title"))
@@ -4579,7 +4438,6 @@ async fn menu_buttons_cannot_authorize_a_changed_workspace_scope_or_another_topi
 #[tokio::test]
 async fn queued_obsolete_menus_do_not_overwrite_the_current_page() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(5030, 0, "/start"))
@@ -4613,7 +4471,6 @@ async fn queued_obsolete_menus_do_not_overwrite_the_current_page() {
 #[tokio::test]
 async fn consumed_write_buttons_do_not_recreate_confirmation_after_an_interrupted_ui_update() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(5040, 9, "/new workspace Synthetic title"))
@@ -4645,7 +4502,6 @@ async fn consumed_write_buttons_do_not_recreate_confirmation_after_an_interrupte
 #[tokio::test]
 async fn entering_a_long_running_session_sends_a_preview_instead_of_a_history_document() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     {
         let mut state = fixture.state.lock().await;
         state.items=vec![serde_json::from_str(r#"{"type":"userMessage","id":"u","content":[{"type":"text","text":"Synthetic latest request"}]}"#).unwrap()];
@@ -4699,7 +4555,6 @@ async fn entering_a_long_running_session_sends_a_preview_instead_of_a_history_do
 #[tokio::test]
 async fn reopening_a_bound_session_keeps_its_cursor_and_pending_live_output() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(5110, 0, "/open workspace thread"))
@@ -4750,7 +4605,6 @@ async fn reopening_a_bound_session_keeps_its_cursor_and_pending_live_output() {
 #[tokio::test]
 async fn history_export_is_rejected_without_sending_a_document() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(5120, 0, "/open workspace thread"))
@@ -4952,7 +4806,6 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
 #[tokio::test]
 async fn host_pages_are_bounded_in_both_browsing_and_creation_without_agent_requests() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     let file = &fixture.service.config.path;
     let mut text = std::fs::read_to_string(file).unwrap();
     for index in 0..9 {
@@ -4986,3 +4839,6 @@ async fn host_pages_are_bounded_in_both_browsing_and_creation_without_agent_requ
 
 #[path = "binding_menu_tests.rs"]
 mod bindings;
+
+#[path = "access_tests.rs"]
+mod access;

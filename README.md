@@ -2,7 +2,7 @@
 
 Rust 实现的 Codex 会话桥接器，在本机启动，通过 Telegram 私聊 topic 管理本地/SSH app-server 会话。同时支持 Discord 和 Slack；Claude Code 与 Pi runtime server 保留后续规划。
 
-**当前主要支持 Telegram + Codex，完整部署验收仍需按目标环境执行。** 包括 CLI 配对、工作区与会话菜单、topic 绑定、历史集合、创建/续轮/steer、topic emoji、持久收发与消息合并、OpenSSH/TOTP 和根配置热更新。使用步骤与验证边界见 [测试入口](docs/testing.md) 和 [验证记录](docs/research/implementation-checks.md)。
+**当前主要支持 Telegram + Codex，完整部署验收仍需按目标环境执行。** 包括 Telegram 指定用户授权、工作区与会话菜单、topic 绑定、历史集合、创建/续轮/steer、topic emoji、持久收发与消息合并、OpenSSH/TOTP 和根配置热更新。使用步骤与验证边界见 [测试入口](docs/testing.md) 和 [验证记录](docs/research/implementation-checks.md)。
 
 ## 运行
 
@@ -21,16 +21,7 @@ cargo build --release --workspace --locked
 
 ## Telegram
 
-只接受用户本人的私聊。发送 /start 取得申请码，然后在本机另一个终端批准：
-
-```sh
-./target/release/pocketpilot pair approve CODE
-./target/release/pocketpilot pair pending
-./target/release/pocketpilot pair list
-./target/release/pocketpilot pair revoke BOT_ID USER_ID
-```
-
-批准后再次 /start，在固定的「管理」topic 中选择主机、工作区和会话。管理界面使用内联按钮导航，在同一条菜单消息中切换页面；主机和工作区按钮紧凑排列，工作区每页 8 项并显示登记总数，提供返回、首页和刷新。/start 重新发送可见首页，菜单消息被删除时会补发。项目来自手工登记和 Codex 活跃、普通及归档会话的工作目录，按完整 provider/cwd 去重。后台定期补齐；在工作区页 /refresh 会重新扫描会话元数据。普通任务文本会被拒绝；只有明确进入新建流程后，下一条文字才作为会话标题。
+仅源码 `telegram::OWNER_USER_ID` 指定的用户可在本人私聊使用，发送 /start 后，在固定的「管理」topic 中选择主机、工作区和会话。管理界面使用内联按钮导航，在同一条菜单消息中切换页面；主机和工作区按钮紧凑排列，工作区每页 8 项并显示登记总数，提供返回、首页和刷新。/start 重新发送可见首页，菜单消息被删除时会补发。项目来自手工登记和 Codex 活跃、普通及归档会话的工作目录，按完整 provider/cwd 去重。后台定期补齐；在工作区页 /refresh 会重新扫描会话元数据。普通任务文本会被拒绝；只有明确进入新建流程后，下一条文字才作为会话标题。
 
 /new 按「主机 → 工作区 → 标题 → 确认」创建空会话；也可用 /new HOST/WORKSPACE 标题 或 /new WORKSPACE_ID 标题 快捷创建。同名工作区需指定主机或完整 ID，不会默认挑选一个。首条任务由用户在新话题中发送，活跃会话的输入直接 steer。
 

@@ -39,7 +39,7 @@ impl Store {
             .execute(&self.pool)
             .await
             .map_err(|_| StoreError::Database)?;
-        self.redact_pairing_codes().await
+        Ok(())
     }
 
     pub async fn bind(
@@ -50,14 +50,8 @@ impl Store {
         instance: &str,
         thread: &str,
     ) -> Result<(), StoreError> {
-        if chat <= 0
-            || !self
-                .pairing()
-                .is_paired(bot, chat as u64, chat)
-                .await
-                .map_err(|_| StoreError::Database)?
-        {
-            return Err(StoreError::NotPaired);
+        if !crate::telegram::authorized_chat(chat) {
+            return Err(StoreError::Unauthorized);
         }
         let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;
         let removing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM topic_removals WHERE bot_id=? AND chat_id=? AND topic_id=? AND state<>'rejected')")

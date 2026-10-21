@@ -24,8 +24,8 @@ pub enum StoreError {
         "platform resource creation outcome is unknown; inspect platform resources before retrying"
     )]
     ProvisionUnknown,
-    #[error("a paired private chat is required")]
-    NotPaired,
+    #[error("an authorized private chat is required")]
+    Unauthorized,
 }
 
 impl ::i18n::LocalizedError for StoreError {
@@ -38,7 +38,7 @@ impl ::i18n::LocalizedError for StoreError {
             Self::Locked => ::i18n::Message::new("error.store.locked"),
             Self::SourceConflict => ::i18n::Message::new("error.store.source_conflict"),
             Self::ProvisionUnknown => ::i18n::Message::new("error.store.provision_unknown"),
-            Self::NotPaired => ::i18n::Message::new("error.store.not_paired"),
+            Self::Unauthorized => ::i18n::Message::new("error.store.unauthorized"),
         }
     }
 }

@@ -14,8 +14,8 @@ impl Repository for Store {
         let Scope::Telegram { bot, chat } = scope else {
             return Err(StoreError::ContainerConflict);
         };
-        if *chat <= 0 {
-            return Err(StoreError::NotPaired);
+        if !crate::telegram::authorized_chat(*chat) {
+            return Err(StoreError::Unauthorized);
         }
         let rows = sqlx::query(
             "SELECT topic_id,instance_id,thread_id,workspace_id,active,revision,display_name,topic_title FROM
@@ -61,8 +61,8 @@ impl Repository for Store {
         let (Scope::Telegram { bot, chat }, Target::Telegram { topic }) = (scope, target) else {
             return Err(StoreError::ContainerConflict);
         };
-        if *chat <= 0 {
-            return Err(StoreError::NotPaired);
+        if !crate::telegram::authorized_chat(*chat) {
+            return Err(StoreError::Unauthorized);
         }
         let detach = matches!(change, Change::Detach);
         let changed = sqlx::query(

@@ -104,13 +104,7 @@ impl Service {
         let snapshot = self.config.snapshot();
         let valid = binding.revision == lease.revision
             && self.binding_workspace(&snapshot.config, &binding).is_ok();
-        let paired = self
-            .store
-            .pairing()
-            .is_paired(self.bot, lease.chat as u64, lease.chat)
-            .await
-            .unwrap_or(false);
-        if !valid || !paired {
+        if !valid || !crate::telegram::authorized_chat(lease.chat) {
             self.presence.clear(&binding).await;
             return;
         }

@@ -28,12 +28,6 @@ impl Service {
                 if let Some(id) = body.text_id.take() {
                     body.text = self.ui_text(row.chat_id, &id).await;
                 }
-                let paired = self
-                    .store
-                    .pairing()
-                    .is_paired(self.bot, row.chat_id as u64, row.chat_id)
-                    .await
-                    .unwrap_or(false);
                 let binding_valid = if let Some(revision) = body.binding_revision {
                     self.store
                         .binding(self.bot, row.chat_id, row.topic_id)
@@ -53,7 +47,7 @@ impl Service {
                     true
                 };
                 if !navigation_valid
-                    || (body.require_pairing && !paired)
+                    || !crate::telegram::authorized_chat(row.chat_id)
                     || row.chat_id <= 0
                     || !binding_valid
                     || body.expires_at.is_some_and(|expiry| expiry <= now())

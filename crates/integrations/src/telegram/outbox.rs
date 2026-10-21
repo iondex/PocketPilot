@@ -2,28 +2,6 @@
 use super::*;
 
 impl Store {
-    pub(crate) async fn redact_pairing_codes(&self) -> Result<(), Error> {
-        let rows=sqlx::query("SELECT id,payload FROM deliveries WHERE state IN ('delivered','rejected','outcome_unknown')")
-            .fetch_all(&self.pool).await.map_err(|_|Error::Database)?;
-        for row in rows {
-            if let Ok(mut body) = serde_json::from_str::<Outbound>(row.get("payload"))
-                && !body.require_pairing
-                && body.expires_at.is_some()
-                && body.text != "[pairing code redacted]"
-            {
-                body.text = "[pairing code redacted]".into();
-                body.buttons.clear();
-                sqlx::query("UPDATE deliveries SET payload=? WHERE id=?")
-                    .bind(serde_json::to_string(&body).map_err(|_| Error::Database)?)
-                    .bind(row.get::<String, _>("id"))
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|_| Error::Database)?;
-            }
-        }
-        Ok(())
-    }
-
     pub async fn enqueue(
         &self,
         bot: i64,
@@ -70,9 +48,6 @@ impl Store {
         if changed != 1 {
             return Err(Error::Transition);
         }
-        if !more {
-            self.redact_pairing_codes().await?;
-        }
         Ok(())
     }
 
@@ -108,32 +83,6 @@ impl Store {
         .rows_affected();
         if n != 1 {
             return Err(Error::Transition);
-        }
-        // The delivery queue briefly needs the pairing code to send it. Remove
-        // that plaintext once terminal; the pairing registry retains only a hash.
-        if matches!(to, "delivered" | "rejected" | "outcome_unknown") {
-            let payload: Option<String> =
-                sqlx::query_scalar("SELECT payload FROM deliveries WHERE id=?")
-                    .bind(id)
-                    .fetch_optional(&self.pool)
-                    .await
-                    .map_err(|_| Error::Database)?;
-            if let Some(payload) = payload {
-                let mut body: Outbound =
-                    serde_json::from_str(&payload).map_err(|_| Error::Database)?;
-                if !body.require_pairing && body.expires_at.is_some() {
-                    body.text = "[pairing code redacted]".into();
-                    body.buttons.clear();
-                    let payload = serde_json::to_string(&body).map_err(|_| Error::Database)?;
-                    sqlx::query("UPDATE deliveries SET payload=? WHERE id=? AND state=?")
-                        .bind(payload)
-                        .bind(id)
-                        .bind(to)
-                        .execute(&self.pool)
-                        .await
-                        .map_err(|_| Error::Database)?;
-                }
-            }
         }
         Ok(())
     }

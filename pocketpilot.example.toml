@@ -25,14 +25,14 @@ proxy = ""
 # zh-CN / en / auto；用户可通过 /language 独立覆盖。
 default_locale = "zh-CN"
 
-# 可选 Discord 原型，编译时启用 --features discord。
+# 可选 Discord；默认编译支持。
 # 只允许此服务器的 owner 使用。
 # [discord]
 # token = "REPLACE_WITH_DISCORD_BOT_TOKEN"
 # guild_id = 123456789012345678
 # proxy = ""
 
-# 可选 Slack：仅与 owner 私聊；从 docs/slack-manifest.json 创建内部 app，编译 --features slack。
+# 可选 Slack：仅与 owner 私聊；从 docs/slack-manifest.json 创建内部 app。
 # [slack]
 # app_token = "xapp-REPLACE_IN_PRIVATE_CONFIG"
 # bot_token = "xoxb-REPLACE_IN_PRIVATE_CONFIG"

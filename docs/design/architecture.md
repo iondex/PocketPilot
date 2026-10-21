@@ -232,7 +232,7 @@ Freshness 保存 observed_at 和连接 epoch。推荐新鲜状态窗口 15 秒�
 
 ## 6. 持久化
 
-SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署。原型期只维护根 schema.sql，幂等初始化不执行迁移器；已有列的升级需开发者备份后显式处理。数据只存 PocketPilot 目录，不修改 Codex DB/rollout。根目录单一 TOML 管普通设置、host、授权范围和内联 token，不支持 include；provider/workspace 由 catalog 持久化。配对/撤销由 CLI 管理 SQLite；没有 chat/user 配置允许列表。DB 管配对、派生索引、绑定与投递。配置 ID 是稳定 UUID。notify + arc-swap 热更新及原子授权检查见 [部署与配置](connections-and-config.md)。
+SQLite WAL、foreign_keys=ON、busy_timeout，短事务；单机单写者部署。原型期只维护根 schema.sql，幂等初始化不执行迁移器；已有列的升级需开发者备份后显式处理。数据只存 PocketPilot 目录，不修改 Codex DB/rollout。根目录单一 TOML 管普通设置、host、授权范围和内联 token，不支持 include；provider/workspace 由 catalog 持久化。Telegram 仅允许源码指定用户，不使用配对申请/批准，也无 chat/user 配置列表。DB 管派生索引、绑定与投递。配置 ID 是稳定 UUID。notify + arc-swap 热更新及原子授权检查见 [部署与配置](connections-and-config.md)。
 
 建议表：
 

@@ -11,11 +11,22 @@ fn guild_owner_is_required_and_stop_has_no_route() {
 }
 
 #[test]
-fn empty_pp_ask_reports_the_missing_text_or_attachment() {
+fn pp_ask_requires_nonempty_text() {
     assert!(matches!(
         parse("pp-ask", &BTreeMap::new(), false),
         Err(Error::MissingInput)
     ));
+    assert!(
+        parse(
+            "pp-ask",
+            &BTreeMap::from([("text".into(), "  ".into())]),
+            false
+        )
+        .is_err()
+    );
+    assert!(
+        matches!(parse("pp-ask", &BTreeMap::from([("text".into(), "continue".into())]), false).unwrap(), Command::Ask { text } if text == "continue")
+    );
 }
 
 #[test]

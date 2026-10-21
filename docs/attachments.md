@@ -6,7 +6,7 @@
 | --- | --- |
 | Telegram | 先打开并绑定 session，在该话题发送文件或图片，可带说明文字 |
 | Slack | 先选 workspace → 项目 → session，在对应根卡片的 thread 内上传文件，可带文字；主输入框只打开菜单 |
-| Discord | 在已绑定 session channel 执行 `/pp-ask`，选择 `file` 并可填写 `text`；普通 channel 消息不作为任务 |
+| Discord | 在已绑定 session channel 执行 `/pp-ask`，填写必选 `text`，可附加 `file`；普通 channel 消息不作为任务 |
 
 纯文件输入使用“请查看上传的附件”作为任务。每个文件最多 20 MiB，公共输入最多四个文件；Slack 可在一次消息上传多个，Telegram 每个文件消息独立处理，Discord 当前表单提供一个 file 选项。不读取链接指向的任意外站资源，不解压或执行上传文件。
 

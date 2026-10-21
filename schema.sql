@@ -203,22 +203,7 @@ CREATE TABLE IF NOT EXISTS operations (
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 , payload TEXT, receipt TEXT);
 
-CREATE TABLE IF NOT EXISTS pairing_requests (
-    code_hash TEXT PRIMARY KEY,
-    bot_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL CHECK (user_id > 0),
-    chat_id INTEGER NOT NULL CHECK (chat_id = user_id),
-    expires_at INTEGER NOT NULL,
-    UNIQUE(bot_id, user_id)
-);
 
-CREATE TABLE IF NOT EXISTS pairings (
-    bot_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL CHECK (user_id > 0),
-    chat_id INTEGER NOT NULL CHECK (chat_id = user_id),
-    paired_at INTEGER NOT NULL,
-    PRIMARY KEY(bot_id, user_id)
-);
 
 CREATE TABLE IF NOT EXISTS polling_cursors (
     bot_id INTEGER PRIMARY KEY,

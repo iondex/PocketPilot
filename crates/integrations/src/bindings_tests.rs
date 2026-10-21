@@ -26,7 +26,7 @@ fn config() -> Config {
 async fn seed(core: &Store, config: &Config, index: i32) {
     let thread = format!("session-{index}");
     let endpoint = runtimes::fingerprint(&config.hosts[0], &config.providers[0]);
-    sqlx::query("INSERT INTO bindings(bot_id,chat_id,topic_id,instance_id,thread_id,workspace_id) VALUES(1,2,?,'runtime',?,'project')")
+    sqlx::query("INSERT INTO bindings(bot_id,chat_id,topic_id,instance_id,thread_id,workspace_id) VALUES(1,10,?,'runtime',?,'project')")
         .bind(index).bind(&thread).execute(core.pool()).await.unwrap();
     sqlx::query("INSERT INTO discord_bindings(bot,guild,channel,owner,workspace,instance,thread,cwd,endpoint) VALUES('1','2',?,'3','project','runtime',?,'/projects/example',?)")
         .bind(index.to_string()).bind(&thread).bind(&endpoint).execute(core.pool()).await.unwrap();
@@ -38,7 +38,7 @@ fn repositories(core: &Store) -> Vec<(Box<dyn Repository>, Scope, Target)> {
     vec![
         (
             Box::new(crate::telegram::storage::Store::new(core.clone())),
-            Scope::Telegram { bot: 1, chat: 2 },
+            Scope::Telegram { bot: 1, chat: 10 },
             Target::Telegram { topic: 1 },
         ),
         (
@@ -399,7 +399,7 @@ async fn topic_display_name_takes_precedence_over_runtime_cache_and_empty_titles
     .await
     .unwrap();
     let repository = crate::telegram::storage::Store::new(core.clone());
-    let manager = Manager::new(&repository, Scope::Telegram { bot: 1, chat: 2 });
+    let manager = Manager::new(&repository, Scope::Telegram { bot: 1, chat: 10 });
     let target = Target::Telegram { topic: 1 };
     assert_eq!(
         manager.entry(&config, &target, "en").await.unwrap().title,

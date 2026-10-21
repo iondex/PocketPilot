@@ -32,8 +32,6 @@ pub struct Outbound {
     pub remove_status: Option<i32>,
     #[serde(default)]
     pub buttons: Vec<Vec<Button>>,
-    #[serde(default = "default_pairing_required")]
-    pub require_pairing: bool,
     pub edit_message: Option<i32>,
     #[serde(default)]
     pub config_hash: Option<String>,
@@ -49,10 +47,6 @@ pub struct Outbound {
     pub markdown: bool,
     #[serde(default)]
     pub navigation_id: Option<String>,
-}
-// Missing legacy fields must never disable private-chat authorization.
-fn default_pairing_required() -> bool {
-    true
 }
 
 impl Outbound {
@@ -144,7 +138,6 @@ impl Outbound {
             icon_lookup_deferred: false,
             remove_status: None,
             buttons: vec![],
-            require_pairing: true,
             edit_message: None,
             config_hash: None,
             topic_title: None,
@@ -458,17 +451,8 @@ impl Store {
         binding: Option<&Binding>,
     ) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
-        let paired: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM pairings WHERE bot_id=? AND user_id=? AND chat_id=?)",
-        )
-        .bind(bot)
-        .bind(input.user as i64)
-        .bind(input.chat)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|_| Error::Database)?;
-        if !paired {
-            return Err(Error::NotPaired);
+        if !crate::telegram::authorized(input.user, input.chat, true) {
+            return Err(Error::Unauthorized);
         }
         if let Some(binding) = binding {
             let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM bindings WHERE bot_id=? AND chat_id=? AND topic_id=? AND instance_id=? AND thread_id=? AND revision=? AND active=1)")

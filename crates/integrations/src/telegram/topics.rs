@@ -58,9 +58,12 @@ impl Store {
         input: &Input,
         topic: i32,
     ) -> Result<bool, StoreError> {
+        if !crate::telegram::authorized(input.user, input.chat, true) {
+            return Err(StoreError::Unauthorized);
+        }
         let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;
-        let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM topic_requests r JOIN pairings p ON p.bot_id=r.bot_id AND p.chat_id=r.chat_id WHERE r.bot_id=? AND r.chat_id=? AND p.user_id=? AND r.topic_id=? AND r.state='accepted' AND NOT EXISTS(SELECT 1 FROM management_topics m WHERE m.bot_id=r.bot_id AND m.chat_id=r.chat_id AND m.topic_id=r.topic_id AND m.state='accepted'))")
-            .bind(bot).bind(input.chat).bind(input.user as i64).bind(topic).fetch_one(&mut *tx).await.map_err(|_|StoreError::Database)?;
+        let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM topic_requests r WHERE r.bot_id=? AND r.chat_id=? AND r.topic_id=? AND r.state='accepted' AND NOT EXISTS(SELECT 1 FROM management_topics m WHERE m.bot_id=r.bot_id AND m.chat_id=r.chat_id AND m.topic_id=r.topic_id AND m.state='accepted'))")
+            .bind(bot).bind(input.chat).bind(topic).fetch_one(&mut *tx).await.map_err(|_|StoreError::Database)?;
         if !allowed {
             return Ok(false);
         }

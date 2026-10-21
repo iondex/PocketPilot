@@ -59,12 +59,6 @@ impl Handler {
                 _ => {}
             }
         }
-        if !uploads.is_empty() && fields.get("text").is_none_or(|s| s.trim().is_empty()) {
-            fields.insert(
-                "text".into(),
-                i18n::text(&command.locale, "common.file.request"),
-            );
-        }
         let action = crate::discord::parse(&command.data.name, &fields, confirmed)?;
         Ok(Input {
             uploads,

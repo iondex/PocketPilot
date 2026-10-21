@@ -228,14 +228,8 @@ impl Service {
             self.presence.clear(binding).await;
             return Ok(());
         }
-        if !self
-            .store
-            .pairing()
-            .is_paired(self.bot, binding.chat_id as u64, binding.chat_id)
-            .await
-            .map_err(|_| StoreError::Database)?
-        {
-            return Err(StoreError::NotPaired.into());
+        if !crate::telegram::authorized_chat(binding.chat_id) {
+            return Err(StoreError::Unauthorized.into());
         }
         let snapshot = self.config.snapshot();
         let workspace = self.binding_workspace(&snapshot.config, binding)?;

@@ -3,9 +3,6 @@ use crate::telegram::api::Input;
 use crate::telegram::ledger::Outbound;
 use engine::now;
 use engine::runtimes;
-use engine::storage::StoreError;
-use std::time::Duration;
-use tokio::time::Instant;
 
 impl Service {
     pub(super) async fn handle(&self, input: &Input) -> Result<(), Error> {
@@ -18,59 +15,8 @@ impl Service {
             });
         }
         let input = &initial;
-        if crate::telegram::access(input.user, input.chat, true, false)
-            == crate::telegram::Access::Denied
-        {
+        if !crate::telegram::authorized(input.user, input.chat, true) {
             return Ok(());
-        }
-        let paired = self
-            .store
-            .pairing()
-            .is_paired(self.bot, input.user, input.chat)
-            .await
-            .map_err(|_| StoreError::Database)?;
-        if !paired {
-            let starting = input.text.split_whitespace().next() == Some("/start");
-            let mut attempts = self.pair_attempts.lock().await;
-            let key = (input.user, starting);
-            if attempts
-                .get(&key)
-                .is_some_and(|at| at.elapsed() < Duration::from_secs(60))
-            {
-                return Ok(());
-            }
-            attempts.retain(|_, at| at.elapsed() < Duration::from_secs(600));
-            if attempts.len() >= 4096 {
-                return Ok(());
-            }
-            attempts.insert(key, Instant::now());
-            drop(attempts);
-            let mut body = Outbound::ui("tg.pair.required");
-            body.require_pairing = false;
-            if starting {
-                let code = self
-                    .store
-                    .pairing()
-                    .request_pairing(self.bot, input.user, input.chat, true, now())
-                    .await
-                    .map_err(|_| StoreError::Database)?;
-                body.text_id = None;
-                body.text = ::i18n::t!(
-                    "tg.pair.code",
-                    locale = crate::telegram::i18n::lang(input),
-                    code = code
-                )
-                .to_string();
-                body.expires_at = Some(now() + 600);
-            }
-            if let Some(id) = body.text_id.take() {
-                body.text = crate::telegram::i18n::tr(input, &id);
-            }
-            return self
-                .store
-                .enqueue(self.bot, input.chat, input.topic, &input.event_key, &body)
-                .await
-                .map_err(Into::into);
         }
         let snapshot = self.config.snapshot();
         let mut scoped = input.clone();

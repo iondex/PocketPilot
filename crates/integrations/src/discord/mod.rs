@@ -198,7 +198,7 @@ pub(crate) fn parse(
         "pp-ask" => Command::Ask {
             text: text
                 .get("text")
-                .filter(|value| !value.trim().is_empty())
+                .filter(|text| !text.trim().is_empty())
                 .cloned()
                 .ok_or(Error::MissingInput)?,
         },

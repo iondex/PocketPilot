@@ -18,7 +18,7 @@ PocketPilot 不启动、升级、重启或停止原生 daemon。缺少共享入�
 
 普通设置和秘密都在根目录 pocketpilot.toml；不 include、不读取 .env。示例见 [pocketpilot.example.toml](../../pocketpilot.example.toml)。真实配置被 Git 忽略，使用 0600；数据库及 WAL/SHM 也为 0600。相对文件路径以配置文件目录为基准，远端 cwd 保持目标机器的绝对路径。
 
-Telegram 凭据只有 token，另有 default_locale=zh-CN/en/auto 控制默认语言。bot ID 来自 getMe，私聊用户须经本机 CLI approve，无配置 chat/user 允许列表。SQLite 配对申请表只保存一次性码 hash；投递队列为发送而短暂保存明文，进入终态后清除。更换 bot 按 bot ID 隔离账号数据，不继承旧配对。
+Telegram 凭据只有 token，另有 default_locale=zh-CN/en/auto 控制默认语言。bot ID 来自 getMe，只有源码 `telegram::OWNER_USER_ID` 指定的用户可在本人私聊中使用；无需配对和 CLI approve，也无 chat/user 配置项。更换 bot 按 bot ID 隔离绑定和投递数据。
 
 Discord 始终包含在默认构建中，配置 token 和 guild_id 后启用。原型只允许该服务器 owner 使用；category 默认对 @everyone 隐藏，对 owner 和 bot 开放。服务器管理员依旧受 Discord 自身权限规则约束，不能把 category 当成隔绝管理员的安全边界。
 
@@ -47,7 +47,7 @@ notify 监听根配置的父目录，处理原子替换；debounce 和周期 res
 | logging | 启动时装配，需重启桥接应用 |
 | OpenSSH config | 发现时读取，重连时重新解析；不监控全部 Include 文件并主动断开有效连接 |
 
-输入捕获配置快照；慢连接完成后、实际写入前重新检查配置、配对和映射。未开始的投递重新授权。已经发出的网络请求不能撤回；结果未知时核对原端，不自动重发。配置恢复不会自动重放旧 agent 输入。Telegram 普通消息超过五分钟、早于本次进程启动、重启时仍 pending 或 poll 失败后补收时，展示待确认草稿；只有新的确认操作才能发给当前状态，旧 nonce 在重启时失效。草稿绑定 instance/thread/映射 revision；未获明确接受的 turn 竞争也需用户重新确认，未知结果不套用此流程。
+输入捕获配置快照；慢连接完成后、实际写入前重新检查配置、指定用户和映射。未开始的投递重新授权。已经发出的网络请求不能撤回；结果未知时核对原端，不自动重发。配置恢复不会自动重放旧 agent 输入。Telegram 普通消息超过五分钟、早于本次进程启动、重启时仍 pending 或 poll 失败后补收时，展示待确认草稿；只有新的确认操作才能发给当前状态，旧 nonce 在重启时失效。草稿绑定 instance/thread/映射 revision；未获明确接受的 turn 竞争也需用户重新确认，未知结果不套用此流程。
 
 ## OpenSSH 与挑战认证
 

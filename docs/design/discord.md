@@ -65,6 +65,8 @@ agent 输入使用与 Telegram 相同的 operations 状态机：Received → Pre
 
 只读接入诊断使用 `doctor --discord`；Gateway 的实际 Ready 事件会记录 `Discord Gateway ready`，与 REST 初始化日志区分。
 
-用户可通过 `/pp-ask file:附件 text:可选说明` 将文件发送到当前绑定会话；至少需要文字或一个附件。文件在 owner、绑定和控制权限校验后下载并写入选定 Codex 主机；详见 [附件说明](../attachments.md)。
+用户可通过 `/pp-ask text:说明 file:附件` 将文件发送到当前绑定会话；text 必填，file 可选。文件在 owner、绑定和控制权限校验后下载并写入选定 Codex 主机；详见 [附件说明](../attachments.md)。
 
 绑定清单和暂停语义见 [公共绑定管理](integrations.md#已绑定会话管理)。暂停时仍可使用 `/pp-ask`、`/pp-status` 和 `/pp-recent`；清单状态来自带时间标记的缓存。
+
+目录查询中的已加载会话发现是有界补充：总预算三秒、最多八个并发只读请求，单会话最多一秒。超时或已关闭的已加载会话不阻断按项目 cwd 查询存储索引；普通输入和写回执仍使用原超时与不重发规则。

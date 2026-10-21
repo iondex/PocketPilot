@@ -74,7 +74,7 @@ fn commands() -> Vec<CreateCommand> {
                 .required(true),
             ),
         localized_command("pp-ask", "discord.cmd.ask")
-            .add_option(string("text", "discord.option.input", false))
+            .add_option(string("text", "discord.option.input", true))
             .add_option(
                 CreateCommandOption::new(
                     CommandOptionType::Attachment,
@@ -99,3 +99,7 @@ fn commands() -> Vec<CreateCommand> {
     })
     .collect()
 }
+
+#[cfg(test)]
+#[path = "command_menu_tests.rs"]
+mod tests;

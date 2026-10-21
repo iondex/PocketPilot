@@ -4,7 +4,6 @@ use crate::bindings::{Manager, State, Target};
 #[tokio::test]
 async fn binding_controls_pause_polling_keep_input_enabled_and_confirm_detach() {
     let fixture = Fixture::new().await;
-    fixture.pair().await;
     fixture
         .service
         .handle(&input(6000, 0, "/open workspace thread"))

@@ -67,22 +67,14 @@ async fn duplicate_inputs_reuse_operations_and_restart_preserves_uncertainty() {
 async fn private_containers_are_bot_scoped_and_never_retarget_within_an_account() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).await.unwrap();
-    for bot in [1, 2] {
-        let code = store
-            .pairing()
-            .request_pairing(bot, 100, 100, true, 1)
-            .await
-            .unwrap();
-        store.pairing().approve_pairing(&code, 2).await.unwrap();
-    }
-    store.bind(1, 100, 1, "host", "original").await.unwrap();
-    store.bind(2, 100, 1, "host", "different").await.unwrap();
+    store.bind(1, 10, 1, "host", "original").await.unwrap();
+    store.bind(2, 10, 1, "host", "different").await.unwrap();
     assert!(matches!(
-        store.bind(2, 100, 1, "host", "retargeted").await,
+        store.bind(2, 10, 1, "host", "retargeted").await,
         Err(StoreError::ContainerConflict)
     ));
     assert!(matches!(
-        store.bind(1, -100, 1, "host", "original").await,
-        Err(StoreError::NotPaired)
+        store.bind(1, -10, 1, "host", "original").await,
+        Err(StoreError::Unauthorized)
     ));
 }

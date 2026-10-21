@@ -19,9 +19,6 @@ pub mod rich;
 #[path = "presentation.rs"]
 pub mod presentation;
 
-#[path = "pairing.rs"]
-pub mod pairing;
-
 #[path = "runtime.rs"]
 pub mod runtime;
 
@@ -182,22 +179,20 @@ pub struct Identity {
     pub user_topic_creation_enabled: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Access {
-    Denied,
-    PairingRequired,
-    Authorized,
+/// This deployment is private to its designated Telegram account.
+/// Tests use a synthetic owner so no account identity appears in fixtures.
+#[cfg(not(test))]
+pub const OWNER_USER_ID: u64 = 932_470_989;
+
+#[cfg(test)]
+pub const OWNER_USER_ID: u64 = 10;
+
+pub fn authorized(user: u64, chat: i64, private: bool) -> bool {
+    private && user == OWNER_USER_ID && i64::try_from(user).ok() == Some(chat)
 }
 
-pub fn access(user: u64, chat: i64, private: bool, paired: bool) -> Access {
-    if !private || chat <= 0 || u64::try_from(chat).ok() != Some(user) {
-        return Access::Denied;
-    }
-    if paired {
-        Access::Authorized
-    } else {
-        Access::PairingRequired
-    }
+pub(crate) fn authorized_chat(chat: i64) -> bool {
+    authorized(chat as u64, chat, true)
 }
 
 pub struct Inspector {

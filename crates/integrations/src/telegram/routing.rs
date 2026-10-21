@@ -111,14 +111,8 @@ impl Service {
         {
             return Err(Error::Expired);
         }
-        if !self
-            .store
-            .pairing()
-            .is_paired(self.bot, input.user, input.chat)
-            .await
-            .map_err(|_| StoreError::Database)?
-        {
-            return Err(StoreError::NotPaired.into());
+        if !crate::telegram::authorized(input.user, input.chat, true) {
+            return Err(StoreError::Unauthorized.into());
         }
         Ok(())
     }
