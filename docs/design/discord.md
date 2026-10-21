@@ -24,6 +24,7 @@ cargo clean
 | 命令 | 行为 |
 | --- | --- |
 | /pp | 打开私有原生菜单，依次选择工作空间、项目和会话 |
+| /pp-bindings | 查看已绑定会话、打开原 channel、暂停/恢复自动观察及确认解绑 |
 | /pp-workspaces、/pp-open | 同样打开选择菜单，不需要 thread ID |
 | /pp-projects workspace:环境名称 | 直接进入项目下拉框；不填环境时先选工作空间 |
 | /pp-sessions workspace:环境 project:项目短名 | 直接进入会话下拉框；缺少选择时返回相应上层 |
@@ -38,13 +39,13 @@ cargo clean
 
 用户先选 workspace（执行环境/主机），再选项目目录，最后选 session。目录选择、归属校验与排序复用 integrations::navigation；平台只负责原生 select/buttons 呈现。菜单默认对调用者私有，使用传统消息组件，不启用 Components V2。工作空间和项目每页最多 20 项，会话每页 8 项。选择、返回、分页与刷新更新同一条菜单消息，不追加长列表。项目目录在 option description 中显示，过长保留末尾；会话标题是 option label，状态与相对更新时间是说明，emoji 只辅助状态文字；当前页存在重名标题时增加可读序号。UUID、turn ID、分页 cursor 不作为可见信息。
 
-一个项目一个 PP category，一个 session 一个短名 channel；短名只使用标题，不附加 thread ID。Discord 允许同名 channel，实际绑定仍由唯一 ID 和账本区分。channel 内状态卡展示标题、状态与项目，操作回执不显示原始 turn ID。进入会话显示最后用户输入与对应 final；正文通过公共 Markdown 解析，在 Components V2 的 Text Display 中输出 Discord 支持的子集，菜单和动态标题按字面转义。渲染后超过 1,800 个 UTF-16 单元时按结构分段；不能保真的语法保留为文字，不生成 `session.md`，也不提供完整历史导出。三端共用 session::presentation；每条会话消息首行用 👤 用户或 🤖 Agent 标识角色，并用 💭 / ✅ / ❌ 区分 Agent 过程、最终结果与错误，长消息的每一段重复角色标题，并为标题预留长度；提示信息使用 ℹ️。角色标题与分段正文在入队时一起保存，已确认段号持久保存。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
+一个项目一个 PP category，一个 session 一个短名 channel；短名只使用标题，不附加 thread ID。Discord 允许同名 channel，实际绑定仍由唯一 ID 和账本区分。channel 内状态卡展示标题、状态与项目，操作回执不显示原始 turn ID。进入会话显示最后用户输入与对应 final；正文通过公共 Markdown 解析，在 Components V2 的 Text Display 中输出 Discord 支持的子集，菜单和动态标题按字面转义。V2 正文按最终渲染后的 3,600 个 UTF-16 单元预算合并和分段，包含重复角色标题；该值是应用的保守总预算。Markdown 节点数仅用于解析资源保护，不等同于原生组件数。相邻 Agent 文本只在同一 turn 和 phase 内合并，角色、阶段与轮次边界保留；图库每条最多十张图。传统提示消息仍保留 1,800 单元预算；不能保真的语法保留为文字，不生成 `session.md`，也不提供完整历史导出。三端共用 session::presentation；每条会话消息首行用 👤 用户或 🤖 Agent 标识角色，并用 💭 / ✅ / ❌ 区分 Agent 过程、最终结果与错误，长消息的每一段重复角色标题，并为标题预留长度；提示信息使用 ℹ️。角色标题与分段正文在入队时一起保存，已确认段号持久保存。所有自动消息关闭 mentions，agent 输出中的 @everyone 不会触发提醒。
 
 ## 持久化与生命周期
 
 平台 ID 按字符串保存，避免 Discord snowflake 的有符号整数边界。discord_categories、discord_provisions 保存资源创建前的 dispatching 和返回 ID；未知结果不再自动创建，避免重复 category/channel。原型尚无资源核对 CLI：未知创建需管理员先检查 Discord 和本地账本，不能直接反复执行命令。
 
-discord_ui_actions 保存菜单动作及 bot/guild/owner/channel/config hash/过期边界。控件只携带随机句柄，select 的数字 value 是该动作保存的选项下标，不能当作任意项目或 thread ID。每次点击重新验证 owner 和当前配置；打开会话的动作原子消费，重复点击不能重复创建资源，未知结果不重发。菜单通常有效 24 小时，过期或配置变化时提示 /pp 重新打开，后台不创建/恢复原生任务。
+discord_ui_actions 保存菜单动作及 bot/guild/owner/channel/config hash/过期边界。控件只携带随机句柄，select 的数字 value 是该动作保存的选项下标，不能当作任意项目或 thread ID。每次点击重新验证 owner 和当前配置；打开会话和绑定变更的动作原子消费，重复点击不能重复创建资源，未知结果不重发。暂停/恢复和解绑确认句柄有效五分钟；其他菜单通常有效 24 小时，过期或配置变化时提示 /pp 重新打开，后台不创建/恢复原生任务。
 
 discord_bindings 保存 bot/guild/channel、owner、workspace/instance/thread、cwd 和 endpoint 指纹；数据库禁止改绑身份。解绑保留记录，同会话恢复到原 channel；更换会话必须创建另一个 channel。workspace 范围或 endpoint 改变时冻结旧映射。删除 category/channel 后的自动替换暂未实现，需人工核对。
 
@@ -65,3 +66,5 @@ agent 输入使用与 Telegram 相同的 operations 状态机：Received → Pre
 只读接入诊断使用 `doctor --discord`；Gateway 的实际 Ready 事件会记录 `Discord Gateway ready`，与 REST 初始化日志区分。
 
 用户可通过 `/pp-ask file:附件 text:可选说明` 将文件发送到当前绑定会话；至少需要文字或一个附件。文件在 owner、绑定和控制权限校验后下载并写入选定 Codex 主机；详见 [附件说明](../attachments.md)。
+
+绑定清单和暂停语义见 [公共绑定管理](integrations.md#已绑定会话管理)。暂停时仍可使用 `/pp-ask`、`/pp-status` 和 `/pp-recent`；清单状态来自带时间标记的缓存。

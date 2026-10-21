@@ -54,7 +54,7 @@ impl Capabilities {
             },
             crate::Platform::Discord => Self {
                 format: MessageFormat::DiscordComponentsV2,
-                text_budget: 1800,
+                text_budget: 3600,
                 block_budget: 40,
                 table_columns: 0,
                 tables: Support::Text,

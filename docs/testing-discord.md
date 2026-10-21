@@ -24,7 +24,7 @@ cargo clean
 ./dist/pocketpilot serve
 ```
 
-`doctor` 默认不联网；`--credentials` 不是 Discord token 有效性探测。查看 `configuration.discord_configured` 和 `discord_runtime_enabled`；`--connect` 检查 Codex 入口。`doctor --discord` 经配置代理只读查询 bot、application、guild 和 owner，输出安装链接；不注册命令、不连接 Gateway。Discord 在 `serve` 启动时再注册`/pp` 与十个 `pp-*` guild commands 并连接 Gateway。
+`doctor` 默认不联网；`--credentials` 不是 Discord token 有效性探测。查看 `configuration.discord_configured` 和 `discord_runtime_enabled`；`--connect` 检查 Codex 入口。`doctor --discord` 经配置代理只读查询 bot、application、guild 和 owner，输出安装链接；不注册命令、不连接 Gateway。Discord 在 `serve` 启动时再注册`/pp` 与 `pp-*` guild commands 并连接 Gateway。
 
 `Discord slash-command prototype ready` 表示 REST 初始化、命令注册及客户端构造已完成；它在 `client.start()` 之前输出，**不代表已收到 Gateway Ready**。`Discord Gateway ready` 才表示收到实际 Ready 事件；最终仍以服务器 owner 执行 `/pp` 并点击菜单获得回执为交互接通证据。
 
@@ -76,7 +76,7 @@ NotLoaded 会话仅在明确 `/pp-ask` 时 resume。等待审批/用户输入的
 | 动态标题 | 项目/session 名包含 `* _ ~ < > &` 与 emoji；菜单和状态卡保持文字，不产生额外格式 |
 | 菜单与移动端 | 下拉框选择执行环境 → 项目 → session，返回/分页刷新同一条消息；超长标题和 emoji 不超出 native option 限制，不显示 UUID 或 cursor |
 | 旧菜单 | 配置或范围变化后旧控件拒绝；过期时提示 /pp；读取失败保留上次菜单并给调用者错误提示 |
-| 长输出 | 专用测试会话产生超过 1,800 个 UTF-16 单元的合成文本，收到多条普通消息；中文、代码块内容完整，不出现自动生成的历史文件 |
+| 长输出 | 专用测试会话产生超过 3,600 个 UTF-16 单元的合成文本，收到多条普通消息；中文、代码块内容完整，不出现自动生成的历史文件 |
 | 文件上传 | 在已绑定 channel 执行 `/pp-ask file:附件 text:查看此文件`；也可只填 file。Codex 收到执行主机上的文件路径，图片使用原生图片输入；没有 text 和 file 时会提示“请提供文字或上传附件”；无历史导出命令 |
 | mentions | 合成输出包含 `@everyone`、`<@123>` 和 `<@&123>`，不触发用户、角色或全体通知 |
 | 非 owner | 普通成员看不到 PP category；非 owner 管理员即便能看见或调用命令，也不能操作会话 |
@@ -111,3 +111,13 @@ cargo test --release -p integrations telegram::runtime::tests::discord --locked
 ```
 
 第二条命令覆盖 Telegram/Discord 共用连接、操作锁、回执以及 Discord mock HTTP 流程。真实 Gateway、账号权限与客户端体验仍由上述服务器流程验收。
+
+## 已绑定会话与渲染回归
+
+1. `/pp` → “已绑定会话”，或执行 `/pp-bindings`。核对标题、执行环境、项目和缓存年龄，点击“打开会话”进入原 channel。
+2. 选择“暂停自动观察”。确认后台不继续刷新；手动 `/pp-status` 与 `/pp-ask` 仍有效。已经开始的读取或排队消息可能完成。
+3. 选择“恢复自动观察”，核对观察继续并可显示暂停期间的变化。
+4. 选择“解除绑定”，先返回取消，核对仍能控制；再确认解绑，核对聊天记录保留、旧入口失效、原任务继续运行。旧确认按钮再次点击不能重复执行。
+5. 使用测试会话生成多个短段、密集表格及长代码，核对短段按最终文本预算合并、长段闭合代码围栏并重复角色标题；不同角色、turn 和 phase 保留独立边界。表格继续显示为列名与值，不发送 Discord 不支持的管道表格。
+
+以上真实客户端验证由用户明确触发；自动测试只使用隔离 fixtures。

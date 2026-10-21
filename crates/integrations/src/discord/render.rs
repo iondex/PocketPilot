@@ -17,42 +17,145 @@ impl Renderer for ComponentRenderer {
             .heading
             .map(|heading| format!("{heading}\n\n"))
             .unwrap_or_default();
+        let limit = self.capabilities().text_budget;
+        let fragments = fragments(request.source, request.format, &header, limit)?;
         let mut parts = Vec::new();
-        if request.format == Format::Plain {
-            parts.extend(
-                with_header(request.source, Format::Plain, &header)?
-                    .into_iter()
-                    .map(Self::Part::text),
-            );
-        } else {
-            for document in Document::parse(request.source)?.chunks(700, 24) {
-                let mut images = Vec::new();
-                collect_images(document.nodes(), &mut images);
-                let text = document.markdown(session::markdown::Dialect::Discord);
-                match text {
-                    Some(text)
-                        if session::markdown::fits(
-                            &text,
-                            1800_usize.saturating_sub(header.encode_utf16().count()),
-                        ) =>
-                    {
-                        parts.push(Self::Part::with_images(format!("{header}{text}"), images));
-                    }
-                    _ => {
-                        for text in session::markdown::split_text(&document.plain(), 800) {
-                            parts.push(Self::Part::with_images(
-                                format!("{header}{}", literal(&text)),
-                                std::mem::take(&mut images),
-                            ));
-                        }
-                    }
-                }
+        let mut text = String::new();
+        let mut images = Vec::new();
+        for fragment in fragments {
+            let separator = if text.is_empty() {
+                ""
+            } else {
+                fragment.separator
+            };
+            if !text.is_empty()
+                && (header.encode_utf16().count()
+                    + text.encode_utf16().count()
+                    + separator.len()
+                    + fragment.text.encode_utf16().count()
+                    > limit
+                    || images.len() + fragment.images.len() > 10)
+            {
+                parts.push(Self::Part::with_images(
+                    display_text(&header, &text),
+                    std::mem::take(&mut images),
+                ));
+                text.clear();
             }
+            if !text.is_empty() {
+                text.push_str(fragment.separator);
+            }
+            text.push_str(&fragment.text);
+            // One gallery per message keeps both media and component budgets explicit.
+            for gallery in fragment.images.chunks(10) {
+                if images.len() + gallery.len() > 10 {
+                    parts.push(Self::Part::with_images(
+                        display_text(&header, &text),
+                        std::mem::take(&mut images),
+                    ));
+                    text.clear();
+                }
+                images.extend_from_slice(gallery);
+            }
+        }
+        if !text.is_empty() || !images.is_empty() {
+            parts.push(Self::Part::with_images(
+                display_text(&header, &text),
+                images,
+            ));
         }
         Ok(RenderBatch {
             format: self.capabilities().format,
             parts,
         })
+    }
+}
+
+fn display_text(header: &str, text: &str) -> String {
+    if header.is_empty() && text.is_empty() {
+        "🖼️".into()
+    } else {
+        format!("{header}{text}")
+    }
+}
+
+struct Fragment {
+    text: String,
+    images: Vec<(String, String)>,
+    separator: &'static str,
+}
+
+/// Split only when the final escaped Markdown exceeds the native text budget.
+/// Parser nodes describe formatting, not Discord components, so they get a separate generous bound.
+fn fragments(
+    source: &str,
+    format: Format,
+    header: &str,
+    limit: usize,
+) -> Result<Vec<Fragment>, TooLarge> {
+    if source.len() > session::markdown::MAX_BYTES
+        || header.encode_utf16().count().saturating_add(32) > limit
+    {
+        return Err(TooLarge);
+    }
+    let budget = limit - header.encode_utf16().count();
+    let mut result = Vec::new();
+    if format == Format::Plain {
+        literal_fragments(source, budget, Vec::new(), &mut result);
+        return Ok(result);
+    }
+    let document = Document::parse(source)?;
+    let mut queue = document
+        .chunks(budget, 2048)
+        .into_iter()
+        .map(|document| (document, 0))
+        .collect::<std::collections::VecDeque<_>>();
+    while let Some((document, depth)) = queue.pop_front() {
+        let rendered = document.markdown(session::markdown::Dialect::Discord);
+        if let Some(text) = &rendered {
+            if session::markdown::fits(text, budget) {
+                let mut images = Vec::new();
+                collect_images(document.nodes(), &mut images);
+                result.push(Fragment {
+                    text: text.clone(),
+                    images,
+                    separator: "\n\n",
+                });
+                continue;
+            }
+            let plain = document.plain().encode_utf16().count();
+            if depth < 8 && plain > 32 {
+                let target = (budget.saturating_mul(plain) / text.encode_utf16().count())
+                    .saturating_sub(32)
+                    .clamp(32, plain - 1);
+                for fragment in document.chunks(target, 2048).into_iter().rev() {
+                    queue.push_front((fragment, depth + 1));
+                }
+                continue;
+            }
+        }
+        let mut images = Vec::new();
+        collect_images(document.nodes(), &mut images);
+        literal_fragments(&document.plain(), budget, images, &mut result);
+    }
+    Ok(result)
+}
+
+fn literal_fragments(
+    source: &str,
+    budget: usize,
+    mut images: Vec<(String, String)>,
+    output: &mut Vec<Fragment>,
+) {
+    for (index, text) in session::markdown::split_text(source, (budget / 2).max(2))
+        .into_iter()
+        .enumerate()
+    {
+        output.push(Fragment {
+            text: literal(&text),
+            images: std::mem::take(&mut images),
+            separator: if index == 0 { "\n\n" } else { "" },
+        });
     }
 }
 
@@ -76,33 +179,31 @@ pub fn messages(source: &str, format: Format) -> Result<Vec<String>, TooLarge> {
 }
 
 fn with_header(source: &str, format: Format, header: &str) -> Result<Vec<String>, TooLarge> {
-    if source.len() > session::markdown::MAX_BYTES {
-        return Err(TooLarge);
-    }
-    if format == Format::Plain {
-        return Ok(session::markdown::split_text(source, 800)
-            .into_iter()
-            .map(|s| format!("{header}{}", literal(&s)))
-            .collect());
-    }
-    let mut result = Vec::new();
-    for part in Document::parse(source)?.chunks(700, 64) {
-        let text = part.markdown(session::markdown::Dialect::Discord);
-        match text {
-            Some(text) if session::markdown::fits(&text, 1800 - header.encode_utf16().count()) => {
-                result.push(text)
-            }
-            _ => result.extend(
-                session::markdown::split_text(&part.plain(), 800)
-                    .into_iter()
-                    .map(|s| literal(&s)),
-            ),
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    for fragment in fragments(source, format, header, 1800)? {
+        let separator = if current.is_empty() {
+            ""
+        } else {
+            fragment.separator
+        };
+        if !current.is_empty()
+            && !session::markdown::fits(
+                &format!("{header}{current}{separator}{}", fragment.text),
+                1800,
+            )
+        {
+            parts.push(format!("{header}{}", std::mem::take(&mut current)));
         }
+        if !current.is_empty() {
+            current.push_str(fragment.separator);
+        }
+        current.push_str(&fragment.text);
     }
-    Ok(result
-        .into_iter()
-        .map(|text| format!("{header}{text}"))
-        .collect())
+    if !current.is_empty() {
+        parts.push(format!("{header}{current}"));
+    }
+    Ok(parts)
 }
 
 /// Freeze each role's rendered parts together with its readable outbox payload.
@@ -121,7 +222,21 @@ impl Conversation {
         items: impl Iterator<Item = &'a session::TextItem>,
         locale: &str,
     ) -> Result<Self, TooLarge> {
-        Self::sections(items.map(|item| session::presentation::Section::item(item, locale)))
+        let mut sections: Vec<session::presentation::Section> = Vec::new();
+        let mut previous = None;
+        for item in items {
+            let key = (item.turn_id.clone(), item.phase.clone());
+            let section = session::presentation::Section::item(item, locale);
+            if item.role == session::Role::Agent && previous.as_ref() == Some(&key) {
+                let current = sections.last_mut().expect("previous agent section");
+                current.body.push_str("\n\n");
+                current.body.push_str(&section.body);
+            } else {
+                sections.push(section);
+            }
+            previous = (item.role == session::Role::Agent).then_some(key);
+        }
+        Self::sections(sections)
     }
 
     fn sections(
