@@ -33,7 +33,7 @@ cargo clean
 | /pp-status | 只读刷新状态 |
 | /pp-recent | 在绑定会话中显示最近用户输入及对应 final，长结果分段显示 |
 | /pp-rename title:显示名 | 只修改 Discord channel 名 |
-| /pp-unbind | 只解除映射，原生会话继续运行 |
+| /pp-unbind | 打开公共绑定管理的解绑确认页，确认后解除映射，原生会话继续运行 |
 
 命令先收到 ephemeral ACK，再处理慢 SSH。操作回执仅发送给调用者，实际会话历史与输出进入其 session channel。新 category 对 @everyone 隐藏，owner 和 bot 有显式访问权限；已有服务器管理员仍遵循 Discord 自身权限规则。
 

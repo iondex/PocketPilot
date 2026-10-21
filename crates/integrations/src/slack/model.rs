@@ -27,7 +27,6 @@ pub enum Command {
         host: String,
         offset: usize,
     },
-    UnbindConfirm,
     Sessions {
         workspace: String,
         cursor: Option<String>,
@@ -47,7 +46,6 @@ pub enum Command {
     History {
         export: bool,
     },
-    Unbind,
     Confirm {
         inbox: String,
     },
@@ -59,7 +57,6 @@ impl Command {
             self,
             Self::New { .. }
                 | Self::Input { .. }
-                | Self::Unbind
                 | Self::Confirm { .. }
                 | Self::BindingChange { .. }
         )
@@ -80,6 +77,18 @@ pub struct Request {
     pub revision: Option<i64>,
     pub date: i64,
     pub command: Command,
+}
+
+impl Request {
+    /// Management handles must outlive the thread that opened the menu.
+    pub fn navigation(&self) -> Self {
+        Self {
+            binding: None,
+            revision: None,
+            root: None,
+            ..self.clone()
+        }
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

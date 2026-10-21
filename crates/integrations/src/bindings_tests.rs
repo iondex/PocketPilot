@@ -95,7 +95,7 @@ async fn all_platforms_share_revision_checked_observation_and_detach_rules() {
         );
         assert_eq!(paused.version.binding, original.version.binding);
         assert_eq!(
-            paused.observation_change(),
+            observation(&paused),
             Some(("bindings.resume", Change::Resume))
         );
         // A stale detach must roll back the native UPDATE as well as preferences.
@@ -127,7 +127,7 @@ async fn all_platforms_share_revision_checked_observation_and_detach_rules() {
         let detached = manager.entry(&config, &target, "en").await.unwrap();
         assert_eq!(detached.state, State::Detached);
         assert_eq!(detached.version.binding, original.version.binding + 1);
-        assert_eq!(detached.observation_change(), None);
+        assert_eq!(observation(&detached), None);
         assert!(
             manager
                 .change(&target, resumed.version, Change::Detach)
@@ -195,7 +195,7 @@ async fn inventory_uses_cached_metadata_and_removed_projects_remain_manageable()
         let manager = Manager::new(repository.as_ref(), scope);
         let invalid = manager.entry(&config, &target, "en").await.unwrap();
         assert_eq!(invalid.state, State::Invalid);
-        assert_eq!(invalid.observation_change(), None);
+        assert_eq!(observation(&invalid), None);
         manager
             .change(&target, invalid.version, Change::Detach)
             .await
@@ -300,10 +300,117 @@ async fn changed_endpoint_ledger_marks_every_platform_binding_invalid_without_co
         let manager = Manager::new(repository.as_ref(), scope);
         let entry = manager.entry(&config, &target, "en").await.unwrap();
         assert_eq!(entry.state, State::Invalid);
-        assert_eq!(entry.observation_change(), None);
+        assert_eq!(observation(&entry), None);
         manager
             .change(&target, entry.version, Change::Detach)
             .await
             .unwrap();
     }
+}
+
+fn observation(entry: &Entry) -> Option<(&'static str, Change)> {
+    entry
+        .controls(false)
+        .into_iter()
+        .find_map(|control| match control.action {
+            Action::Change { change, .. } => Some((control.label, change)),
+            _ => None,
+        })
+}
+
+#[tokio::test]
+async fn controls_and_confirmations_reject_obsolete_or_detached_bindings() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Store::open(dir.path()).await.unwrap();
+    let config = config();
+    seed(&core, &config, 1).await;
+    for (repository, scope, target) in repositories(&core) {
+        let manager = Manager::new(repository.as_ref(), scope);
+        let initial = manager.entry(&config, &target, "en").await.unwrap();
+        assert_eq!(initial.controls(false).len(), 2);
+        let confirmation = manager
+            .confirmation(&config, &target, Some(initial.version), "en")
+            .await
+            .unwrap();
+        assert!(matches!(
+            confirmation.controls(true).as_slice(),
+            [Control {
+                action: Action::Change {
+                    change: Change::Detach,
+                    ..
+                },
+                ..
+            }]
+        ));
+        manager
+            .change(&target, initial.version, Change::Pause)
+            .await
+            .unwrap();
+        assert!(
+            manager
+                .confirmation(&config, &target, Some(initial.version), "en")
+                .await
+                .is_err()
+        );
+        let fresh = manager
+            .confirmation(&config, &target, None, "en")
+            .await
+            .unwrap();
+        manager
+            .change(&target, fresh.version, Change::Detach)
+            .await
+            .unwrap();
+        let detached = manager.entry(&config, &target, "en").await.unwrap();
+        assert!(detached.controls(false).is_empty() && detached.controls(true).is_empty());
+        assert!(
+            manager
+                .confirmation(&config, &target, None, "en")
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn topic_display_name_takes_precedence_over_runtime_cache_and_empty_titles_fall_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Store::open(dir.path()).await.unwrap();
+    let config = config();
+    seed(&core, &config, 1).await;
+    sqlx::query("UPDATE bindings SET display_name='Custom topic'")
+        .execute(core.pool())
+        .await
+        .unwrap();
+    remember(
+        &core,
+        &session::Session {
+            reference: session::SessionRef {
+                instance: "runtime".into(),
+                thread: "session-1".into(),
+            },
+            title: "Native title".into(),
+            native_title: None,
+            cwd: "/projects/example".into(),
+            status: session::RuntimeStatus::Idle,
+            active_turn: None,
+            updated_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    let repository = crate::telegram::storage::Store::new(core.clone());
+    let manager = Manager::new(&repository, Scope::Telegram { bot: 1, chat: 2 });
+    let target = Target::Telegram { topic: 1 };
+    assert_eq!(
+        manager.entry(&config, &target, "en").await.unwrap().title,
+        "Custom topic"
+    );
+    sqlx::query("UPDATE bindings SET display_name=' '")
+        .execute(core.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        manager.entry(&config, &target, "en").await.unwrap().title,
+        "Native title"
+    );
 }

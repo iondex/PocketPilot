@@ -87,3 +87,5 @@ Renderer 的关联 Part 类型保留平台完整表达能力；公共层不持�
 平台保留原生表现：Discord 的 `/pp-bindings` 与首页按钮使用私有 select/button 菜单，Slack 使用 App DM 内的 Block Kit，Telegram 的 `/bindings` 路由到管理 topic。三端菜单均有暂停/恢复与单条解绑确认。Discord/Slack 可打开原聊天容器；Telegram bot 私聊 topic 缺少可靠官方直达链接，显示话题说明并提示从话题列表进入，不构造 `t.me/c`。依据见 [导航与预算核验](../research/binding-navigation-links.md)。
 
 本轮仅收束绑定管理；[交互状态转换规划](../planning/integration-state-transitions.md) 中的其他流程仍保留现有实现。
+
+绑定详情与确认页的可用操作由公共 `Entry::controls` 决定；三端仅将这些操作翻译为原生持久句柄。确认页重新检查选中版本和 active 状态；Slack 状态卡的管理按钮与 Discord `/pp-unbind` 共用此流程，不再维护另一套解绑执行路径。

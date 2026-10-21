@@ -166,7 +166,6 @@ _version: 1
 "discord.owner_only": "仅允许配置服务器的 owner 使用。"
 "discord.invalid_command": "无效命令。"
 "discord.history.too_large": "消息超过处理预算，请在原客户端查看。"
-"discord.unbound": "已解除 channel 映射，会话继续运行。"
 "discord.renamed": "channel 显示名已更新。"
 "discord.input.accepted": "已发送，回复会显示在当前会话。"
 "common.session.details": "💬 %{title}\n%{state}\n📁 项目：%{workspace}"
@@ -251,9 +250,6 @@ error.telegram.icon_unavailable: "话题图标暂不可用，将在 %{seconds} �
 "slack.create": "创建"
 "slack.status": "状态"
 "slack.history": "最近交互"
-"slack.unbind": "解除绑定"
-"slack.unbind.confirm": "确认解除此 thread 的绑定？原生会话会继续运行。"
-"slack.unbound": "已解除绑定，原生会话继续运行。"
 "slack.opened": "会话已打开：%{channel} / %{root}"
 "slack.loading": "正在读取项目菜单…"
 "slack.observation_unavailable": "❓ 连接或历史暂不可读，当前状态未确认。"
@@ -395,7 +391,6 @@ error.telegram.icon_unavailable: "话题图标暂不可用，将在 %{seconds} �
 
 "bindings.checked": "缓存更新于 %{seconds} 秒前"
 
-"bindings.changed": "绑定已更新。"
 
 "bindings.pause_hint": "暂停只影响自动观察，仍可发送任务；已排队输出会按原账本完成投递。"
 

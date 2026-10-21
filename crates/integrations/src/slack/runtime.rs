@@ -387,3 +387,6 @@ impl Service {
 
 #[path = "binding_menu.rs"]
 mod binding_menu;
+
+#[path = "history.rs"]
+mod history;

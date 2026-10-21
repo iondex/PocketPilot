@@ -102,6 +102,7 @@ impl Handler {
                     input.command,
                     crate::discord::Command::Workspaces
                         | crate::discord::Command::Bindings
+                        | crate::discord::Command::Unbind
                         | crate::discord::Command::Projects { .. }
                         | crate::discord::Command::Sessions { .. }
                 ) {

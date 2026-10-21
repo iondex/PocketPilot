@@ -256,12 +256,6 @@ impl Store {
         .map_err(|_| Error::Database)
     }
 
-    pub async fn discord_unbind(&self, b: &Binding) -> Result<(), Error> {
-        sqlx::query("UPDATE discord_bindings SET active=0,revision=revision+1 WHERE bot=? AND guild=? AND channel=? AND revision=?")
-            .bind(&b.bot).bind(&b.guild).bind(&b.channel).bind(b.revision).execute(&self.pool).await.map_err(|_|Error::Database)?;
-        Ok(())
-    }
-
     pub(crate) async fn discord_publish(
         &self,
         b: &Binding,

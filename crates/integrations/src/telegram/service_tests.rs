@@ -596,6 +596,18 @@ fn menu_labels(body: &Outbound) -> String {
         .join("\n")
 }
 
+async fn detach_topic(store: &Store) {
+    let manager =
+        crate::bindings::Manager::new(store, crate::bindings::Scope::Telegram { bot: 1, chat: 10 });
+    let target = crate::bindings::Target::Telegram { topic: 11 };
+    let config = toml::from_str("").unwrap();
+    let entry = manager.entry(&config, &target, "en").await.unwrap();
+    manager
+        .change(&target, entry.version, crate::bindings::Change::Detach)
+        .await
+        .unwrap();
+}
+
 fn input(id: u32, topic: i32, text: &str) -> Input {
     Input {
         update_id: id,
@@ -1387,7 +1399,7 @@ async fn queued_input_after_restart_requires_a_fresh_binding_scoped_confirmation
         .into_iter()
         .find(|b| b.text.contains("second queued draft"))
         .unwrap();
-    store.unbind(1, 10, 11).await.unwrap();
+    detach_topic(store).await;
     store.bind(1, 10, 11, "instance", "thread").await.unwrap();
     let mut confirm = input(74, 11, "");
     confirm.callback = Some(draft.buttons[0][0].data.clone());
@@ -1743,8 +1755,33 @@ async fn discord_prototype_shares_the_telegram_connection_actor_and_write_receip
             .count(),
         2
     );
+    let confirmation = service
+        .menu(&api, make(5, 11, DCommand::Unbind), None, None)
+        .await
+        .unwrap();
+    #[derive(Deserialize)]
+    struct Button {
+        custom_id: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Row {
+        components: Vec<Button>,
+    }
+    let rows: Vec<Row> =
+        serde_json::from_str(&serde_json::to_string(&confirmation.components).unwrap()).unwrap();
+    let token = rows[0].components[0]
+        .custom_id
+        .as_ref()
+        .unwrap()
+        .strip_prefix("pp:")
+        .unwrap();
     service
-        .handle(&api, make(5, 11, DCommand::Unbind))
+        .menu(
+            &api,
+            make(500, 11, DCommand::Workspaces),
+            Some(token.into()),
+            None,
+        )
         .await
         .unwrap();
     assert!(
@@ -2558,7 +2595,7 @@ async fn topic_removal_requires_confirmation_and_only_removes_the_telegram_assoc
         .unwrap();
     let before = fixture.state.lock().await.requests.clone();
     // Unbound topics must remain manageable until they are actually deleted.
-    fixture.service.store.unbind(1, 10, 11).await.unwrap();
+    detach_topic(&fixture.service.store).await;
     Mock::given(method("POST"))
         .and(path_regex("(?i).*/deleteforumtopic$"))
         .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true,"result":true}"#))
@@ -3697,7 +3734,7 @@ async fn typing_is_renewed_without_new_text_and_stops_after_unbinding() {
         assert!(Instant::now() < deadline, "typing was not renewed");
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
-    fixture.service.store.unbind(1, 10, 11).await.unwrap();
+    detach_topic(&fixture.service.store).await;
     let before = fixture
         .telegram
         .received_requests()
@@ -4813,6 +4850,15 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
         },
     };
     service.handle_fixture(&open).await.unwrap();
+    let full_reads = fixture.state.lock().await.full_history_reads;
+    let mut reopened = open.clone();
+    reopened.id = "reopen".into();
+    service.handle_fixture(&reopened).await.unwrap();
+    assert_eq!(
+        fixture.state.lock().await.full_history_reads,
+        full_reads,
+        "reopening initialized Slack threads must not fetch full history again"
+    );
     assert!(
         !fixture
             .state
@@ -4873,7 +4919,28 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
     );
     let mut unbind = r.clone();
     unbind.id = "unbind".into();
-    unbind.command = SCommand::Unbind;
+    let entry = crate::bindings::Manager::new(
+        &store,
+        crate::bindings::Scope::Slack {
+            app: "A1".into(),
+            team: "T1".into(),
+            bot: "U2".into(),
+            channel: "D1".into(),
+            owner: "U1".into(),
+        },
+    )
+    .entry(
+        &fixture.service.config.snapshot().config,
+        &crate::bindings::Target::Slack { id: b.id.clone() },
+        "en",
+    )
+    .await
+    .unwrap();
+    unbind.command = SCommand::BindingChange {
+        target: entry.record.target,
+        version: entry.version,
+        change: crate::bindings::Change::Detach,
+    };
     service.handle_fixture(&unbind).await.unwrap();
     assert!(service.handle_fixture(&r).await.is_err());
     assert!(matches!(

@@ -22,7 +22,8 @@ impl Service {
             Command::Bindings { offset } => self.binding_list(r, hash, &snapshot, *offset).await?,
             Command::Binding { target } => self.binding_detail(r, hash, &snapshot, target).await?,
             Command::BindingConfirm { target, version } => {
-                self.binding_confirmation(r, hash, target, *version).await?
+                self.binding_confirmation(r, hash, target, *version, &snapshot)
+                    .await?
             }
             Command::BindingChange {
                 target,
@@ -167,40 +168,6 @@ impl Service {
                 self.bound(r).await?;
                 self.store.output(r, &c, hash).await?;
             }
-            Command::UnbindConfirm => {
-                self.bound(r).await?;
-                let mut c = render::message(i18n::text(&self.locale(), "slack.unbind.confirm"));
-                c.blocks.push(
-                    self.action_button(r, hash, "slack.confirm", Action::Run(Command::Unbind))
-                        .await?,
-                );
-                self.store.output(r, &c, hash).await?;
-            }
-            Command::Unbind => {
-                if !(0..=300).contains(&engine::now().saturating_sub(r.date)) {
-                    return Err(Error::Ui("slack.error.stale"));
-                }
-                let b = self.bound(r).await?;
-                self.fresh(r, hash)?;
-                let manager = crate::bindings::Manager::new(&self.store, self.binding_scope());
-                let target = crate::bindings::Target::Slack { id: b.id.clone() };
-                let entry = manager
-                    .entry(&snapshot.config, &target, &self.locale())
-                    .await?;
-                manager
-                    .change(&target, entry.version, crate::bindings::Change::Detach)
-                    .await?;
-                let mut reply = r.clone();
-                reply.binding = None;
-                reply.revision = None;
-                self.store
-                    .output(
-                        &reply,
-                        &render::message(i18n::text(&self.locale(), "slack.unbound")),
-                        hash,
-                    )
-                    .await?;
-            }
         }
         Ok(())
     }
@@ -223,7 +190,12 @@ impl Service {
         for (label, command) in [
             ("slack.status", Command::Status),
             ("slack.history", Command::History { export: false }),
-            ("slack.unbind", Command::UnbindConfirm),
+            (
+                "bindings.manage",
+                Command::Binding {
+                    target: crate::bindings::Target::Slack { id: b.id.clone() },
+                },
+            ),
         ] {
             c.blocks.push(
                 self.action_button(&r, hash, label, Action::Run(command))
@@ -243,28 +215,39 @@ impl Service {
         let current = provider.read(thread).await?;
         engine::runtimes::require_workspace(&current.cwd, ws)?;
         crate::bindings::remember(&self.store.core, &current).await?;
-        let _permit = self
-            .context
-            .runtimes
-            .history_limit(&ws.provider_id)
-            .await
-            .acquire_owned()
-            .await
-            .map_err(|_| Error::Request)?;
-        let history = provider.history(thread).await?.without_transient_errors();
-        if !history.all_pages_read {
-            return Err(Error::Ui("slack.error.history"));
-        }
         self.fresh(r, hash)?;
         self.api.channel(&r.channel).await?;
         let existing = self
             .store
             .existing(&r.channel, &ws.provider_id, thread)
             .await?;
+        // Existing initialized threads already have a baseline. Reopening only refreshes
+        // controls; fetching all history again would add latency without displaying it.
+        let history = if existing
+            .as_ref()
+            .is_none_or(|binding| !binding.history_ready)
+        {
+            let _permit = self
+                .context
+                .runtimes
+                .history_limit(&ws.provider_id)
+                .await
+                .acquire_owned()
+                .await
+                .map_err(|_| Error::Request)?;
+            let history = provider.history(thread).await?.without_transient_errors();
+            if !history.all_pages_read {
+                return Err(Error::Ui("slack.error.history"));
+            }
+            Some(history)
+        } else {
+            None
+        };
+        self.fresh(r, hash)?;
         let b = if let Some(mut b) = existing {
             self.validate(&snapshot, &b)?;
             if !b.active {
-                self.store.activate(&b, true).await?;
+                self.store.reactivate(&b).await?;
                 b.active = true;
                 b.revision += 1;
             }
@@ -320,15 +303,11 @@ impl Service {
             b
         };
         self.fresh(r, hash)?;
-        if !b.history_ready {
-            let sections = session::presentation::latest(&history, &self.locale());
+        if let Some(history) = history {
+            let observed =
+                super::history::capture(&b, &history, &self.store.namespace, &self.locale())?;
             self.store
-                .publish(
-                    &b,
-                    &render::conversation(sections),
-                    &super::observation::hashes(&history)?,
-                    hash,
-                )
+                .publish(&b, &observed.content, &observed.cursor, hash)
                 .await?;
         }
         // Explicit opening refreshes expired card controls without replaying history.

@@ -52,6 +52,19 @@ async fn binding_menu_uses_scoped_handles_and_confirms_detach_without_runtime_io
             .is_err(),
         "mutation handles are single-use"
     );
+    let requests_before = server.received_requests().await.unwrap().len();
+    let binding = service
+        .store
+        .discord_binding(1, 2, 7)
+        .await
+        .unwrap()
+        .unwrap();
+    service.refresh(&api, &binding).await.unwrap();
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        requests_before,
+        "paused observation performs no authorization or runtime network reads"
+    );
     let confirmation = service
         .menu_screen(
             &api,

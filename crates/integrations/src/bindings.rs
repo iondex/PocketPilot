@@ -88,6 +88,18 @@ impl State {
     }
 }
 
+/// Binding decisions are shared; native action encoding and widget layout stay local.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    ConfirmDetach { version: Version },
+    Change { version: Version, change: Change },
+}
+
+pub struct Control {
+    pub label: &'static str,
+    pub action: Action,
+}
+
 pub struct Entry {
     pub record: Record,
     pub version: Version,
@@ -100,13 +112,42 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// Native views use the same lifecycle decisions, retaining only their widget layout.
-    pub fn observation_change(&self) -> Option<(&'static str, Change)> {
-        match self.state {
+    /// Every platform maps these decisions to its own persisted controls.
+    pub fn controls(&self, confirmation: bool) -> Vec<Control> {
+        if !self.record.active {
+            return Vec::new();
+        }
+        if confirmation {
+            return vec![Control {
+                label: "bindings.confirm_button",
+                action: Action::Change {
+                    version: self.version,
+                    change: Change::Detach,
+                },
+            }];
+        }
+        let mut controls = Vec::new();
+        let observation = match self.state {
             State::Watching => Some(("bindings.pause", Change::Pause)),
             State::Paused => Some(("bindings.resume", Change::Resume)),
             _ => None,
+        };
+        if let Some((label, change)) = observation {
+            controls.push(Control {
+                label,
+                action: Action::Change {
+                    version: self.version,
+                    change,
+                },
+            });
         }
+        controls.push(Control {
+            label: "bindings.detach",
+            action: Action::ConfirmDetach {
+                version: self.version,
+            },
+        });
+        controls
     }
 
     pub fn description(&self, locale: &str) -> String {
@@ -226,6 +267,21 @@ impl<'a> Manager<'a> {
         self.describe(config, record, locale).await
     }
 
+    /// A confirmation must describe the same revision the user selected.
+    pub async fn confirmation(
+        &self,
+        config: &Config,
+        target: &Target,
+        version: Option<Version>,
+        locale: &str,
+    ) -> Result<Entry, StoreError> {
+        let entry = self.entry(config, target, locale).await?;
+        if !entry.record.active || version.is_some_and(|version| version != entry.version) {
+            return Err(StoreError::Transition);
+        }
+        Ok(entry)
+    }
+
     async fn describe(
         &self,
         config: &Config,
@@ -288,21 +344,27 @@ impl<'a> Manager<'a> {
             .map(|row| serde_json::from_str(row.get("payload")))
             .transpose()
             .map_err(|_| StoreError::Database)?;
-        let title = cached
+        let title = record
+            .title
             .as_ref()
-            .map(|s| s.title.clone())
-            .or_else(|| record.title.clone())
-            .filter(|s| !s.trim().is_empty())
+            .filter(|title| !title.trim().is_empty())
+            .or_else(|| {
+                cached
+                    .as_ref()
+                    .map(|session| &session.title)
+                    .filter(|title| !title.trim().is_empty())
+            })
+            .cloned()
             .unwrap_or_else(|| i18n::text(locale, "bindings.untitled"));
         let version = Version {
             binding: record.revision,
-            observation: preference.1,
+            observation: preference.revision,
         };
         let state = if !record.active {
             State::Detached
         } else if selected.is_none() {
             State::Invalid
-        } else if preference.0 {
+        } else if preference.paused {
             State::Paused
         } else {
             State::Watching
@@ -384,24 +446,33 @@ fn preference_key(scope: &Scope, target: &Target) -> Result<String, StoreError> 
         .map_err(|_| StoreError::Database)
 }
 
+#[derive(Default)]
+struct Observation {
+    paused: bool,
+    revision: i64,
+}
+
 async fn preference(
     store: &Store,
     scope: &Scope,
     target: &Target,
-) -> Result<(bool, i64), StoreError> {
+) -> Result<Observation, StoreError> {
     let row =
         sqlx::query("SELECT paused,revision FROM integration_binding_preferences WHERE key=?")
             .bind(preference_key(scope, target)?)
             .fetch_optional(store.pool())
             .await
             .map_err(|_| StoreError::Database)?;
-    Ok(row.map_or((false, 0), |row| (row.get("paused"), row.get("revision"))))
+    Ok(row.map_or_else(Observation::default, |row| Observation {
+        paused: row.get("paused"),
+        revision: row.get("revision"),
+    }))
 }
 
 pub async fn observing(store: &Store, scope: &Scope, target: &Target) -> Result<bool, StoreError> {
     preference(store, scope, target)
         .await
-        .map(|preference| !preference.0)
+        .map(|preference| !preference.paused)
 }
 
 /// Cache metadata on existing read paths, so inventory pages do not connect to every runtime.

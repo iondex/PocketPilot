@@ -16,7 +16,8 @@ impl Service {
     ) -> Result<String> {
         let locale = self.locale(input);
         match &input.command {
-            Command::Bindings
+            Command::Unbind
+            | Command::Bindings
             | Command::Workspaces
             | Command::Projects { .. }
             | Command::Sessions { .. } => Err("discord.ui.use_menu".into()),
@@ -187,23 +188,6 @@ impl Service {
                 )
                 .await?;
                 Ok(i18n::text(&locale, "discord.input.accepted"))
-            }
-            Command::Unbind => {
-                let b = self.bound(input).await?;
-                self.fresh(api, input, snapshot, true).await?;
-                let manager = crate::bindings::Manager::new(&self.store, self.binding_scope(input));
-                let target = crate::bindings::Target::Discord {
-                    channel: b.channel.clone(),
-                };
-                let entry = manager
-                    .entry(&snapshot.config, &target, &locale)
-                    .await
-                    .map_err(error)?;
-                manager
-                    .change(&target, entry.version, crate::bindings::Change::Detach)
-                    .await
-                    .map_err(error)?;
-                Ok(i18n::text(&locale, "discord.unbound"))
             }
             Command::Rename { title } => {
                 let b = self.bound(input).await?;

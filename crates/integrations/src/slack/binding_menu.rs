@@ -1,6 +1,6 @@
 //! Slack Block Kit views over the shared binding inventory.
 use super::*;
-use crate::bindings::{Change, Manager, Target, Version};
+use crate::bindings::{Action as BindingAction, Manager, Target, Version};
 use crate::slack::render;
 use slack_morphism::prelude::*;
 
@@ -12,10 +12,7 @@ impl Service {
         snapshot: &Snapshot,
         offset: usize,
     ) -> Result<()> {
-        let mut navigation = r.clone();
-        navigation.binding = None;
-        navigation.revision = None;
-        navigation.root = None;
+        let navigation = r.navigation();
         let r = &navigation;
         let locale = self.locale();
         let page = Manager::new(&self.store, self.binding_scope())
@@ -100,10 +97,7 @@ impl Service {
         snapshot: &Snapshot,
         target: &Target,
     ) -> Result<()> {
-        let mut navigation = r.clone();
-        navigation.binding = None;
-        navigation.revision = None;
-        navigation.root = None;
+        let navigation = r.navigation();
         let r = &navigation;
         let locale = self.locale();
         let scope = self.binding_scope();
@@ -123,34 +117,21 @@ impl Service {
                     .into(),
             );
         }
-        let change = entry.observation_change();
-        if let Some((label, change)) = change {
+        for control in entry.controls(false) {
+            let command = match control.action {
+                BindingAction::ConfirmDetach { version } => Command::BindingConfirm {
+                    target: target.clone(),
+                    version,
+                },
+                BindingAction::Change { version, change } => Command::BindingChange {
+                    target: target.clone(),
+                    version,
+                    change,
+                },
+            };
             content.blocks.push(
-                self.action_button(
-                    r,
-                    hash,
-                    label,
-                    Action::Run(Command::BindingChange {
-                        target: target.clone(),
-                        version: entry.version,
-                        change,
-                    }),
-                )
-                .await?,
-            );
-        }
-        if entry.record.active {
-            content.blocks.push(
-                self.action_button(
-                    r,
-                    hash,
-                    "bindings.detach",
-                    Action::Run(Command::BindingConfirm {
-                        target: target.clone(),
-                        version: entry.version,
-                    }),
-                )
-                .await?,
+                self.action_button(r, hash, control.label, Action::Run(command))
+                    .await?,
             );
         }
         content.blocks.push(
@@ -171,27 +152,17 @@ impl Service {
         hash: &str,
         target: &Target,
         version: Version,
+        snapshot: &Snapshot,
     ) -> Result<()> {
-        let mut navigation = r.clone();
-        navigation.binding = None;
-        navigation.revision = None;
-        navigation.root = None;
+        let navigation = r.navigation();
         let r = &navigation;
         let locale = self.locale();
+        let entry = Manager::new(&self.store, self.binding_scope())
+            .confirmation(&snapshot.config, target, Some(version), &locale)
+            .await?;
         let mut content = render::message(i18n::text(&locale, "bindings.confirm"));
         content.blocks = vec![
             render::plain(&content.text),
-            self.action_button(
-                r,
-                hash,
-                "bindings.confirm_button",
-                Action::Run(Command::BindingChange {
-                    target: target.clone(),
-                    version,
-                    change: Change::Detach,
-                }),
-            )
-            .await?,
             self.action_button(
                 r,
                 hash,
@@ -202,6 +173,24 @@ impl Service {
             )
             .await?,
         ];
+        for control in entry.controls(true) {
+            if let BindingAction::Change { version, change } = control.action {
+                content.blocks.insert(
+                    1,
+                    self.action_button(
+                        r,
+                        hash,
+                        control.label,
+                        Action::Run(Command::BindingChange {
+                            target: target.clone(),
+                            version,
+                            change,
+                        }),
+                    )
+                    .await?,
+                );
+            }
+        }
         self.menu_output(r, content, hash).await
     }
 }

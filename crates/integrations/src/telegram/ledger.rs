@@ -244,12 +244,6 @@ impl Store {
         Ok(())
     }
 
-    pub async fn unbind(&self, bot: i64, chat: i64, topic: i32) -> Result<(), Error> {
-        sqlx::query("UPDATE bindings SET active=0,revision=revision+1 WHERE bot_id=? AND chat_id=? AND topic_id=?")
-            .bind(bot).bind(chat).bind(topic).execute(&self.pool).await.map_err(|_| Error::Database)?;
-        Ok(())
-    }
-
     pub async fn disable_chat(&self, bot: i64, chat: i64) -> Result<(), Error> {
         sqlx::query("UPDATE bindings SET active=0,revision=revision+1 WHERE bot_id=? AND chat_id=? AND active=1")
             .bind(bot).bind(chat).execute(&self.pool).await.map_err(|_|Error::Database)?;

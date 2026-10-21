@@ -257,7 +257,20 @@ async fn history_and_observation_cursor_publish_atomically_and_never_after_unbin
         serde_json::from_str::<BTreeMap<String, String>>(&current.observed_items).unwrap(),
         items
     );
-    store.unbind(1, 10, 11).await.unwrap();
+    crate::bindings::Manager::new(
+        &store,
+        crate::bindings::Scope::Telegram { bot: 1, chat: 10 },
+    )
+    .change(
+        &crate::bindings::Target::Telegram { topic: 11 },
+        crate::bindings::Version {
+            binding: current.revision,
+            observation: 0,
+        },
+        crate::bindings::Change::Detach,
+    )
+    .await
+    .unwrap();
     assert!(
         store
             .publish_observation(

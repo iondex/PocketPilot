@@ -49,7 +49,7 @@ async fn bound_views_use_thread_links_and_independent_single_use_management_hand
     let mut confirm = request.clone();
     confirm.id = "binding-confirm".into();
     service
-        .binding_confirmation(&confirm, &snapshot.hash, &target, entry.version)
+        .binding_confirmation(&confirm, &snapshot.hash, &target, entry.version, &snapshot)
         .await
         .unwrap();
     assert!(service.store.binding("binding").await.unwrap().is_some());

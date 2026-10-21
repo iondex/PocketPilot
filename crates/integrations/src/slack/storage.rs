@@ -281,15 +281,14 @@ impl Store {
         Ok(())
     }
 
-    pub async fn activate(&self, b: &Binding, active: bool) -> Result<()> {
-        sqlx::query(
-            "UPDATE slack_bindings SET active=?,revision=revision+1 WHERE id=? AND revision=?",
-        )
-        .bind(active)
-        .bind(&b.id)
-        .bind(b.revision)
-        .execute(self.core.pool())
-        .await?;
+    /// Reuse an explicitly reopened thread, retaining immutable provenance.
+    pub async fn reactivate(&self, binding: &Binding) -> Result<()> {
+        let changed = sqlx::query("UPDATE slack_bindings SET active=1,revision=revision+1 WHERE id=? AND app||':'||team||':'||bot=? AND channel=? AND owner=? AND revision=? AND active=0")
+            .bind(&binding.id).bind(&self.namespace).bind(&binding.channel).bind(&binding.owner).bind(binding.revision)
+            .execute(self.core.pool()).await?.rows_affected();
+        if changed != 1 {
+            return Err(Error::Ui("slack.error.stale"));
+        }
         Ok(())
     }
 
@@ -301,8 +300,8 @@ impl Store {
         hash: &str,
     ) -> Result<()> {
         let mut tx = self.core.pool().begin().await?;
-        let n = sqlx::query("UPDATE slack_bindings SET observed=?,history_ready=1 WHERE id=? AND revision=? AND active=1 AND observed=?")
-            .bind(observed).bind(&b.id).bind(b.revision).bind(&b.observed).execute(&mut *tx).await?.rows_affected();
+        let n = sqlx::query("UPDATE slack_bindings SET observed=?,history_ready=1 WHERE id=? AND revision=? AND active=1 AND observed=? AND history_ready=?")
+            .bind(observed).bind(&b.id).bind(b.revision).bind(&b.observed).bind(b.history_ready).execute(&mut *tx).await?.rows_affected();
         if n == 1 && !content.text.is_empty() {
             let r = Request {
                 uploads: Vec::new(),

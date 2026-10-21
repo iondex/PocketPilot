@@ -17,7 +17,6 @@ impl Service {
     pub(super) async fn refresh(&self, api: &Api, b: &Binding) -> Result<()> {
         let snapshot = self.config.snapshot();
         let locale = &snapshot.config.language;
-        let ws = self.validate_binding(&snapshot.config, b)?;
         let channel = b
             .channel
             .parse::<u64>()
@@ -36,7 +35,6 @@ impl Service {
             date: now(),
             command: Command::Status,
         };
-        self.fresh(api, &input, &snapshot, false).await?;
         if !crate::bindings::observing(
             &self.store,
             &self.binding_scope(&input),
@@ -49,6 +47,8 @@ impl Service {
         {
             return Ok(());
         }
+        let ws = self.validate_binding(&snapshot.config, b)?;
+        self.fresh(api, &input, &snapshot, false).await?;
         let provider = self
             .runtimes
             .get(&snapshot.config, ws)

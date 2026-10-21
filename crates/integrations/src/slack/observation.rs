@@ -1,23 +1,5 @@
 use super::*;
 use crate::slack::render;
-use session::{History, Role};
-use std::collections::BTreeMap;
-
-pub(super) fn hashes(history: &History) -> Result<String> {
-    Ok(serde_json::to_string(
-        &history
-            .items
-            .iter()
-            .map(|i| {
-                (
-                    format!("{}:{}:{}", i.turn_id.len(), i.turn_id, i.item_id),
-                    engine::observation::visible_hash(i),
-                )
-            })
-            .collect::<BTreeMap<_, _>>(),
-    )?)
-}
-
 impl Service {
     pub(super) async fn observe(self: Arc<Self>) -> Result<()> {
         let mut stop = self.stop.clone();
@@ -95,31 +77,9 @@ impl Service {
         };
         self.fresh(&r, &snapshot.hash)?;
         self.bound(&r).await?;
-        let old: BTreeMap<String, String> = serde_json::from_str(&b.observed)?;
-        let observed = hashes(&history)?;
-        let text = if b.history_ready {
-            history
-                .items
-                .iter()
-                .filter(|i| {
-                    !engine::observation::unchanged(
-                        i,
-                        old.get(&format!("{}:{}:{}", i.turn_id.len(), i.turn_id, i.item_id)),
-                    )
-                })
-                .filter(|i| {
-                    !(i.role == Role::User
-                        && i.client_id.as_ref().is_some_and(|id| {
-                            id.starts_with(&format!("pp:slack:{}:", self.store.namespace))
-                        }))
-                })
-                .map(|i| session::presentation::Section::item(i, &self.locale()))
-                .collect::<Vec<_>>()
-        } else {
-            session::presentation::latest(&history, &self.locale())
-        };
+        let observed = super::history::capture(b, &history, &self.store.namespace, &self.locale())?;
         self.store
-            .publish(b, &render::conversation(text), &observed, &snapshot.hash)
+            .publish(b, &observed.content, &observed.cursor, &snapshot.hash)
             .await?;
         let text = i18n::t!(
             "common.session.details",
@@ -138,7 +98,7 @@ impl Service {
         hash: &str,
         force: bool,
     ) -> Result<()> {
-        let cached = format!("{text}\n[card:2]");
+        let cached = format!("{text}\n[card:3]");
         if force || cached != b.card {
             let mut content = self.root_card(b, text, hash).await?;
             content.edit = true;

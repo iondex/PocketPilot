@@ -1,6 +1,6 @@
 //! Native topic navigation over the shared binding lifecycle.
 use super::*;
-use crate::bindings::{Change, Manager, Target};
+use crate::bindings::{Action as BindingAction, Manager, Target};
 
 impl Service {
     pub(in crate::telegram::runtime) async fn binding_list(
@@ -61,40 +61,31 @@ impl Service {
         confirm: bool,
     ) -> Result<(), Error> {
         let locale = crate::telegram::i18n::lang(input);
-        let entry = Manager::new(&self.store, self.binding_scope(input.chat))
-            .entry(&snapshot.config, &target, locale)
-            .await?;
-        let mut choices = Vec::new();
-        if confirm && entry.record.active {
-            choices.push(Choice {
-                label: UiText::id("bindings.confirm_button"),
-                action: Action::BindingChange {
-                    target: target.clone(),
-                    version: entry.version,
-                    change: Change::Detach,
-                },
-            });
+        let manager = Manager::new(&self.store, self.binding_scope(input.chat));
+        let entry = if confirm {
+            manager
+                .confirmation(&snapshot.config, &target, None, locale)
+                .await?
         } else {
-            let change = entry.observation_change();
-            if let Some((label, change)) = change {
-                choices.push(Choice {
-                    label: UiText::id(label),
-                    action: Action::BindingChange {
+            manager.entry(&snapshot.config, &target, locale).await?
+        };
+        let choices = entry
+            .controls(confirm)
+            .into_iter()
+            .map(|control| Choice {
+                label: UiText::id(control.label),
+                action: match control.action {
+                    BindingAction::ConfirmDetach { .. } => Action::BindingConfirm {
                         target: target.clone(),
-                        version: entry.version,
+                    },
+                    BindingAction::Change { version, change } => Action::BindingChange {
+                        target: target.clone(),
+                        version,
                         change,
                     },
-                });
-            }
-            if entry.record.active {
-                choices.push(Choice {
-                    label: UiText::id("bindings.detach"),
-                    action: Action::BindingConfirm {
-                        target: target.clone(),
-                    },
-                });
-            }
-        }
+                },
+            })
+            .collect();
         let note = if confirm {
             ::i18n::text(locale, "bindings.confirm")
         } else {

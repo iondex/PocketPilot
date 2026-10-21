@@ -166,7 +166,6 @@ _version: 1
 "discord.owner_only": "Only the configured guild owner may use this integration."
 "discord.invalid_command": "Invalid command."
 "discord.history.too_large": "The message exceeds the processing budget. View it in the original client."
-"discord.unbound": "The channel is unbound; the session keeps running."
 "discord.renamed": "The channel display name was updated."
 "discord.input.accepted": "Sent. Replies will appear in this session."
 "common.session.details": "💬 %{title}\n%{state}\n📁 Project: %{workspace}"
@@ -251,9 +250,6 @@ error.telegram.icon_unavailable: "Topic icons are temporarily unavailable; retry
 "slack.create": "Create"
 "slack.status": "Status"
 "slack.history": "Recent interaction"
-"slack.unbind": "Unbind"
-"slack.unbind.confirm": "Unbind this thread? The native session will keep running."
-"slack.unbound": "Unbound. The native session keeps running."
 "slack.opened": "Session opened: %{channel} / %{root}"
 "slack.loading": "Loading the project menu…"
 "slack.observation_unavailable": "❓ Connection or history unavailable; current state is unconfirmed."
@@ -395,7 +391,6 @@ error.telegram.icon_unavailable: "Topic icons are temporarily unavailable; retry
 
 "bindings.checked": "Cached %{seconds} seconds ago"
 
-"bindings.changed": "Binding updated."
 
 "bindings.pause_hint": "Pausing affects automatic watching. Task input remains available; queued output follows its existing delivery ledger."
 

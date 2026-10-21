@@ -496,7 +496,18 @@ async fn durable_intake_actions_and_unknown_delivery_survive_recovery_without_re
     store.reserve(&b).await.unwrap();
     store.bind(&b).await.unwrap();
     let nonce = store
-        .action(&r, Action::Run(Command::Unbind), "scope")
+        .action(
+            &r,
+            Action::Run(Command::BindingChange {
+                target: crate::bindings::Target::Slack { id: b.id.clone() },
+                version: crate::bindings::Version {
+                    binding: b.revision,
+                    observation: 0,
+                },
+                change: crate::bindings::Change::Detach,
+            }),
+            "scope",
+        )
         .await
         .unwrap();
     assert!(
@@ -990,5 +1001,69 @@ fn conversation_parts_repeat_roles_keep_rich_text_and_fit_mobile_message_budgets
         !serde_json::to_string(&parts[0].blocks)
             .unwrap()
             .contains("\"type\":\"user\"")
+    );
+}
+
+#[tokio::test]
+async fn a_stale_initial_observer_cannot_advance_the_cursor_after_entry_commits() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(
+        engine::storage::Store::open(dir.path()).await.unwrap(),
+        "A1",
+        "T1",
+        "U2",
+    );
+    let binding = binding();
+    store.bind(&binding).await.unwrap();
+    let preview = render::message("No final answer yet".into());
+    store
+        .publish(&binding, &preview, "{}", "scope")
+        .await
+        .unwrap();
+    // Simulate an observer that read this binding before the entry preview committed.
+    store
+        .publish(&binding, &preview, "{\"late\":\"hash\"}", "scope")
+        .await
+        .unwrap();
+    assert_eq!(
+        store.binding(&binding.id).await.unwrap().unwrap().observed,
+        "{}"
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM slack_outbox")
+        .fetch_one(store.core.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    assert!(
+        store
+            .binding(&binding.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .history_ready
+    );
+}
+
+#[tokio::test]
+async fn reactivation_cannot_cross_accounts_or_reuse_an_obsolete_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = engine::storage::Store::open(dir.path()).await.unwrap();
+    let store = Store::new(core.clone(), "A1", "T1", "U2");
+    let binding = binding();
+    store.bind(&binding).await.unwrap();
+    sqlx::query("UPDATE slack_bindings SET active=0,revision=2")
+        .execute(core.pool())
+        .await
+        .unwrap();
+    assert!(store.reactivate(&binding).await.is_err());
+    let mut detached = binding;
+    detached.revision = 2;
+    let other = Store::new(core.clone(), "A2", "T1", "U2");
+    assert!(other.reactivate(&detached).await.is_err());
+    store.reactivate(&detached).await.unwrap();
+    assert!(store.reactivate(&detached).await.is_err());
+    assert_eq!(
+        store.binding(&detached.id).await.unwrap().unwrap().revision,
+        3
     );
 }

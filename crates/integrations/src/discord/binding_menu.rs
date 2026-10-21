@@ -1,6 +1,6 @@
 //! Discord native controls for the shared binding inventory.
 use super::*;
-use crate::bindings::{Change, Manager, Target, Version};
+use crate::bindings::{Action as BindingAction, Manager, Target, Version};
 
 impl Service {
     pub(super) async fn binding_list(
@@ -75,25 +75,19 @@ impl Service {
         if let Some(url) = entry.jump_url(&scope) {
             menu.link("bindings.open", url);
         }
-        let change = entry.observation_change();
-        if let Some((label, change)) = change {
-            menu.button(
-                label,
-                View::BindingChange {
+        for control in entry.controls(false) {
+            let view = match control.action {
+                BindingAction::ConfirmDetach { version } => View::BindingConfirm {
                     target: target.clone(),
-                    version: entry.version,
+                    version,
+                },
+                BindingAction::Change { version, change } => View::BindingChange {
+                    target: target.clone(),
+                    version,
                     change,
                 },
-            );
-        }
-        if entry.record.active {
-            menu.button(
-                "bindings.detach",
-                View::BindingConfirm {
-                    target,
-                    version: entry.version,
-                },
-            );
+            };
+            menu.button(control.label, view);
         }
         menu.button("bindings.back", View::Bindings { offset: 0 });
         Ok(menu)
@@ -107,19 +101,23 @@ impl Service {
         version: Version,
     ) -> Result<Menu> {
         let locale = self.locale(input);
-        Manager::new(&self.store, self.binding_scope(input))
-            .entry(&snapshot.config, &target, &locale)
+        let entry = Manager::new(&self.store, self.binding_scope(input))
+            .confirmation(&snapshot.config, &target, Some(version), &locale)
             .await
             .map_err(error)?;
         let mut menu = Menu::new(i18n::text(&locale, "bindings.confirm"), "");
-        menu.button(
-            "bindings.confirm_button",
-            View::BindingChange {
-                target: target.clone(),
-                version,
-                change: Change::Detach,
-            },
-        );
+        for control in entry.controls(true) {
+            if let BindingAction::Change { version, change } = control.action {
+                menu.button(
+                    control.label,
+                    View::BindingChange {
+                        target: target.clone(),
+                        version,
+                        change,
+                    },
+                );
+            }
+        }
         menu.button("bindings.back", View::Binding { target });
         Ok(menu)
     }

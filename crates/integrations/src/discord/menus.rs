@@ -36,6 +36,21 @@ impl Service {
             match &input.command {
                 Command::Workspaces => View::Workspaces { offset: 0 },
                 Command::Bindings => View::Bindings { offset: 0 },
+                Command::Unbind => {
+                    let binding = self.bound(&input).await?;
+                    let target = crate::bindings::Target::Discord {
+                        channel: binding.channel,
+                    };
+                    let entry =
+                        crate::bindings::Manager::new(&self.store, self.binding_scope(&input))
+                            .entry(&snapshot.config, &target, &self.locale(&input))
+                            .await
+                            .map_err(error)?;
+                    View::BindingConfirm {
+                        target,
+                        version: entry.version,
+                    }
+                }
                 Command::Projects { workspace } => {
                     let host = Navigator::new(&snapshot.config)
                         .workspace(workspace)
