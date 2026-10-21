@@ -1,4 +1,4 @@
-# Telegram MVP 配置示例；只登记允许连接的主机与项目根路径。
+# PocketPilot 配置示例；消息平台按需启用，主机限定允许访问的项目根路径。
 # 运行时只读取根目录 pocketpilot.toml；不支持 include 或 .env。
 # 文件路径以本配置文件所在目录为基准。公开示例不包含真实令牌。
 
@@ -17,7 +17,7 @@ retained_files = 14
 console = true
 
 [telegram]
-# 只接受私聊；用户必须通过 CLI 完成一次性配对。
+# 仅源码指定用户可在本人私聊使用；无需配对。
 token = "REPLACE_WITH_BOT_TOKEN"
 # 空或省略时直连，不继承 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY。
 # 仅支持无认证 HTTP CONNECT 代理，例如 http://192.0.2.10:7890。
@@ -32,7 +32,7 @@ default_locale = "zh-CN"
 # guild_id = 123456789012345678
 # proxy = ""
 
-# 可选 Slack：仅与 owner 私聊；从 docs/slack-manifest.json 创建内部 app。
+# 可选 Slack：仅与 owner 私聊；安装权限见 docs/integrations.md。
 # [slack]
 # app_token = "xapp-REPLACE_IN_PRIVATE_CONFIG"
 # bot_token = "xoxb-REPLACE_IN_PRIVATE_CONFIG"
