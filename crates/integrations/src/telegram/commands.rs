@@ -15,7 +15,7 @@ impl Service {
             });
         }
         let input = &initial;
-        if !crate::telegram::authorized(input.user, input.chat, true) {
+        if !self.store.owner.authorizes(input.user, input.chat, true) {
             return Ok(());
         }
         let snapshot = self.config.snapshot();

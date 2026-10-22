@@ -1,35 +1,41 @@
 # PocketPilot
 
-**从你常用的聊天工具，接入不同主机上的 AI 编程会话。**
+**Your coding sessions, from the chat tools you already use.**
 
-PocketPilot 是面向开发者的自托管会话入口，适合在电脑、手机和远程开发环境之间切换使用。它把消息平台作为统一入口，让你选择执行环境、项目和 session，查看进度、补充任务、上传文件并接收结果。原生 agent runtime 继续负责执行、上下文和会话生命周期。
+[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Contributing](CONTRIBUTING.md)
 
-产品围绕三个独立维度扩展：消息接入、主机连接和 agent 运行时。一个新消息平台可以使用已有运行时；一个新运行时也可以复用已有的聊天入口。
+PocketPilot is a self-hosted bridge between messaging platforms and AI coding runtimes on your local or SSH-connected hosts. Choose a host, project and session; read progress, send tasks, upload files and answer structured agent questions. The native runtime owns execution and session history.
 
-| 维度 | 当前支持 | 后续方向 |
+## What works today
+
+| Layer | Implementation | Boundary |
 | --- | --- | --- |
-| 消息入口 | Telegram、Slack、Discord、飞书 | 国际 Lark |
-| 执行环境 | 本机、通过 OpenSSH 连接的远程主机 | 继续完善现有连接方式 |
-| Agent runtime | Codex app-server、Claude Code 独立 server；均可显式回答结构化问题 | 原生问答控件、Pi Coding Agent |
+| Chat | Telegram, Slack, Discord, domestic Feishu | All four compile by default; only configured integrations run |
+| Hosts | Local processes and OpenSSH | Access is restricted to configured project roots |
+| Codex | An existing, shared app-server | Newly discovered instances are read-only until explicitly verified |
+| Claude Code | A separate PocketPilot runtime server | Only sessions created by that server; active-turn steer is unavailable |
+| Interface languages | English and Simplified Chinese | Explicit locale; user content is not translated |
 
-## 使用体验
+Telegram uses private-chat topics, Slack uses owner DM threads, Discord uses dedicated session channels, and Feishu uses authorized group topics with a private navigation menu. Several chat platforms can access the same native session through the bridge's shared connection and operation ledger.
 
-统一导航是 **执行环境 → 项目目录 → 会话**。打开会话可以查看状态和最近交互；发出任务后，在同一聊天入口跟踪结果。多个消息平台可以关联同一个原生会话，共用服务进程内的连接、会话锁和操作账本。
+Feishu has offline protocol and isolation tests; a real tenant installation still needs acceptance testing. International Lark and Pi Coding Agent are planned, not supported. See the [support roadmap](docs/support.md).
 
-- Telegram：指定用户在 bot 私聊中用 topic 区分会话。
-- Slack：owner 与 App 私聊，每个会话使用独立 thread。
-- Discord：服务器 owner 通过 `/pp` 导航，每个会话使用独立 channel；支持原生新建表单。
-- 飞书：owner 私聊导航，每个会话绑定已授权群中的独立话题；安装步骤见接入方案。
+## Quick start
 
-Agent 的结构化问题通过共用回答模板提交，普通文本仍按会话输入处理，详见[问答步骤](docs/integrations.md#回答-agent-的问题)。
-
-正文按平台能力呈现 Markdown、代码、表格与图片；用户文件可作为独立附件提交。绑定可暂停观察、恢复或解除。已有任务的执行独立于聊天桥接进程的启停。
-
-## 开始使用
-
-准备仓库指定的 Rust 工具链、系统 OpenSSH，以及可共享连接的 Codex app-server；Claude Code 独立 server 的 musl 打包与安装见接入方案。复制 [配置示例](pocketpilot.example.toml) 为私有 `pocketpilot.toml`，填写要启用的消息平台和主机配置。
+The bridge targets Linux and macOS. You need the repository's stable Rust toolchain (manifest minimum: 1.94), Make, Python 3.10+ (documentation checks), a C build toolchain, OpenSSH for remote hosts, and **Codex CLI 0.162.1**, the protocol version pinned in CI. The build exports typed protocol definitions from that CLI without starting a model task. See [installation](docs/getting-started.md) for prerequisites and runtime setup.
 
 ```sh
+git clone --branch public https://github.com/iondex/PocketPilot.git
+cd PocketPilot
+npm install --global @openai/codex@0.162.1
+cp pocketpilot.example.toml pocketpilot.toml
+chmod 600 pocketpilot.toml
+```
+
+Edit `pocketpilot.toml`: enable the chat platform you use, enter its credentials and owner identity, and configure your host and allowed project roots. Telegram requires your numeric `owner_user_id`; **Feishu accepts no proxy setting**. Omit unused platform sections. The program does not load `.env` files.
+
+```sh
+make check
 make package
 cargo clean
 ./dist/pocketpilot doctor --credentials
@@ -37,12 +43,37 @@ cargo clean
 ./dist/pocketpilot serve
 ```
 
-默认构建包含四个消息平台，配置决定运行哪些入口。新发现的运行实例默认只读；启用任务输入前需确认共享实例与控制能力。完整安装、授权和日常操作见接入方案。
+Start with read-only navigation. For Codex task input, stop the bridge and follow the explicit [control verification procedure](docs/getting-started.md#启用任务输入). Verification creates a dedicated test session and performs model operations; connection diagnostics alone do not enable control.
 
-## 文档
+## Execution and recovery
 
-- [当前架构](docs/architecture.md)：产品概念、crate 分工、会话控制、消息投递与状态数据。
-- [接入方案](docs/integrations.md)：运行准备、四个平台的安装使用、附件、代理与日常维护。
-- [后续支持](docs/support.md)：国际 Lark 与后续消息能力、Claude Code / Pi 的运行时适配方向及交付门槛。
+- Browsing and background observation are read-only. Creating, resuming, steering or answering a question requires an explicit authorized action.
+- Unknown write outcomes are persisted and never automatically replayed. Reconnecting does not duplicate a task.
+- Stopping the bridge disconnects its clients; the native runtime keeps ownership of running tasks.
+- Tool permission approvals stay in the native interface. PocketPilot does not stop or interrupt agent tasks.
+- The optional `retry` command is separate from `serve` and requires explicit launch; see its [authorization and retry rules](docs/architecture.md#独立-retry-工具).
 
-开发约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。旧设计、调研、安装 manifest 和实施记录可从 Git 历史查阅。
+This is a **0.1 prototype**. Configuration and native protocols can change. Existing SQLite schemas are not automatically migrated; back up the complete state directory before upgrading.
+
+## Documentation
+
+Detailed guides are currently in Simplified Chinese. The [documentation index](docs/README.md) maps user and developer workflows.
+
+| I want to… | Read |
+| --- | --- |
+| Install my first bridge | [Getting started](docs/getting-started.md) |
+| Configure credentials, hosts and networking | [Configuration](docs/configuration.md) and [public example](pocketpilot.example.toml) |
+| Install a bot and use sessions or attachments | [Platform setup and usage](docs/integrations.md) |
+| Diagnose connection or delivery problems | [Troubleshooting](docs/troubleshooting.md) |
+| Understand authorization, state and recovery | [Architecture](docs/architecture.md) |
+| Add a platform or runtime | [Developer guide](docs/development.md) |
+| Review the OpenLark patch | [Dependency policy](docs/dependencies.md) |
+| Prepare a release | [Release process](docs/releasing.md) and [changelog](CHANGELOG.md) |
+
+## Contributing and security
+
+Small, focused changes with behavior and boundary tests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before building; use release-profile Cargo commands and clean build artifacts after packaging. Report bugs through the repository's [issue tracker](https://github.com/iondex/PocketPilot/issues), using synthetic examples and redacted logs. Follow [SECURITY.md](SECURITY.md) for sensitive reports.
+
+## License
+
+PocketPilot is licensed under [Apache-2.0](LICENSE). Third-party licenses and local modifications are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); dependencies retain their own licenses. PocketPilot is an independent project and is not affiliated with the messaging or agent vendors it integrates.

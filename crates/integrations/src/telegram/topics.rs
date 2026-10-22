@@ -58,7 +58,7 @@ impl Store {
         input: &Input,
         topic: i32,
     ) -> Result<bool, StoreError> {
-        if !crate::telegram::authorized(input.user, input.chat, true) {
+        if !self.owner.authorizes(input.user, input.chat, true) {
             return Err(StoreError::Unauthorized);
         }
         let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;

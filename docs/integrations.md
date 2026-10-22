@@ -50,7 +50,7 @@ SSH 使用系统配置、密钥/agent、known_hosts、ProxyJump / ProxyCommand �
 
 1. 在 BotFather 创建 bot，取得 token，填入 `[telegram].token`。`default_locale` 可设为 `zh-CN`、`en` 或 `auto`。
 2. 开启 bot 私聊 Topics 功能。为固定管理入口，关闭用户自行创建新 thread 的权限；程序会诊断这些能力，不代替管理员修改 BotFather 设置。
-3. 仅源码 `integrations::telegram::OWNER_USER_ID` 指定的账号可在本人私聊使用。更换指定用户需修改常量并重新构建；不使用配对申请或 CLI 批准。群聊和其他账号静默拒绝。
+3. 在 `[telegram].owner_user_id` 填写自己的 Telegram 数字用户 ID；仅该用户可在本人私聊使用。该字段必填，不存在默认授权账号。更换 owner 后重启桥接，不使用配对申请或 CLI 批准。群聊和其他账号静默拒绝。
 4. 指定用户发送 `/start`，进入固定“管理”topic。
 
 ### 使用
@@ -141,7 +141,7 @@ Telegram/Slack 允许纯文件输入，使用默认说明；Discord 要求 text�
 
 ## 代理与网络
 
-每个 integration 可独立设置 `proxy`。省略或空字符串表示直连，不读取环境代理；配置代理后失败不自动回退直连。
+Telegram、Discord、Slack 可独立设置 `proxy`。省略或空字符串表示直连，不读取环境代理；配置代理后失败不自动回退直连。飞书固定直连，禁止配置 `proxy`（包括空字符串）；未来国际 Lark 也遵循直连约束。
 
 ```toml
 proxy = "http://192.0.2.10:7890"
@@ -176,7 +176,6 @@ Telegram 在绑定 topic 发送；Slack 在绑定 session thread 发送；Discor
 重启后的旧输入不会自动重放。结果未知时先核对原端，不反复创建会话、channel 或 thread。升级和迁移前备份私有配置与完整 data_dir，保留去重和回执记录；操作方法见[状态数据与迁移](architecture.md#状态数据与迁移)。
 
 独立自动续轮工具通过 `./dist/pocketpilot retry` 明确启用，可不配置聊天平台。它与 `serve` 分开运行，使用 data_dir/retry 下独立状态；错误选择、60 秒等待、资格复查和结果未知规则见[retry 架构](architecture.md#独立-retry-工具)。
-
 
 ## Claude Code 独立 runtime server
 
@@ -218,7 +217,6 @@ agent_binary = "/home/operator/.local/bin/claude"
 新 provider 默认只读。Codex 的 `providers verify` 专用 steer 探针不适用于 Claude；它会拒绝非 Codex provider。用隔离环境验证本账号的 CLI 握手、空闲输入、断线后继续执行及回执后，再通过 `providers trust PROVIDER_ID` 明确登记控制资格。开启后仍不支持活跃轮次 steer；空闲会话可续轮。未知写入不能通过重复点击或自动重连重发。
 
 附件沿用四文件、单文件 20 MiB 的入口上限；Claude 图片另限单图 5 MiB，并只接受 PNG/JPEG/GIF/WebP。文件记录归属 session，不能用其他会话的上传路径。历史只包含 server 管理的已观察输入/主 assistant 文本，不导出文件，不生成 `session.md`。server 异常退出后状态标为未加载/未知，不自动 resume 原生执行。
-
 
 ## 飞书企业自建应用
 
@@ -270,14 +268,13 @@ app_id = "cli_REPLACE_IN_PRIVATE_CONFIG"
 app_secret = "REPLACE_IN_PRIVATE_CONFIG"
 tenant_key = "REPLACE_WITH_TENANT_KEY"
 owner_open_id = "ou_REPLACE_WITH_OWNER_OPEN_ID"
-proxy = ""
 
 [[feishu.groups]]
 chat_id = "oc_REPLACE_WITH_ALLOWED_GROUP_ID"
 name = "开发测试群"
 ```
 
-`groups` 至少配置一个已明确授权的群，可以重复添加表项配置多个群；`name` 是菜单中的友好名称。Secret 和身份字段更改后需要重启桥接。空代理不使用系统代理环境变量；如需代理，填写 `http://代理主机:端口`，HTTP 与 WebSocket 均走这一配置。
+`groups` 至少配置一个已明确授权的群，可以重复添加表项配置多个群；`name` 是菜单中的友好名称。Secret 和身份字段更改后需要重启桥接。飞书 HTTP 显式禁用系统代理，WebSocket 直接连接 SDK 发现的入口；不允许 `proxy` 配置，包括空字符串。
 
 ```sh
 chmod 600 pocketpilot.toml

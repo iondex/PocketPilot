@@ -49,32 +49,6 @@ impl LarkWsClient {
         event_handler: EventDispatcherHandler,
         options: SessionOptions,
     ) -> WsClientResult<()> {
-        Self::open_mapped(config, event_handler, options, |url| async { Ok(url) }).await
-    }
-
-    /// PocketPilot connector seam: keep native service metadata while mapping the dial URL.
-    pub async fn open_with_url_mapper<F, Fut>(
-        config: Arc<openlark_core::config::Config>,
-        event_handler: EventDispatcherHandler,
-        mapper: F,
-    ) -> WsClientResult<()>
-    where
-        F: FnOnce(String) -> Fut,
-        Fut: std::future::Future<Output = WsClientResult<String>>,
-    {
-        Self::open_mapped(config, event_handler, SessionOptions::default(), mapper).await
-    }
-
-    async fn open_mapped<F, Fut>(
-        config: Arc<openlark_core::config::Config>,
-        event_handler: EventDispatcherHandler,
-        options: SessionOptions,
-        mapper: F,
-    ) -> WsClientResult<()>
-    where
-        F: FnOnce(String) -> Fut,
-        Fut: std::future::Future<Output = WsClientResult<String>>,
-    {
         let end_point = Self::get_conn_url(&config).await?;
         let conn_url = end_point.url.ok_or(WsClientError::UnexpectedResponse)?;
         let client_config = end_point
@@ -92,8 +66,7 @@ impl LarkWsClient {
             .max_message_size(Some(config.max_response_size() as usize))
             .max_frame_size(Some(config.max_response_size() as usize));
 
-        let (conn, _response) =
-            connect_async_with_config(mapper(conn_url).await?, Some(ws_config), false).await?;
+        let (conn, _response) = connect_async_with_config(conn_url, Some(ws_config), false).await?;
         info!("WebSocket connected");
 
         Session::new(service_id, client_config, conn, event_handler, options)

@@ -6,6 +6,7 @@ use sqlx::{Row, SqlitePool};
 pub struct Store {
     pub(crate) pool: SqlitePool,
     core: CoreStore,
+    pub(crate) owner: super::Owner,
 }
 
 impl std::ops::Deref for Store {
@@ -17,10 +18,11 @@ impl std::ops::Deref for Store {
 }
 
 impl Store {
-    pub fn new(core: CoreStore) -> Self {
+    pub fn new(core: CoreStore, owner: super::Owner) -> Self {
         Self {
             pool: core.pool().clone(),
             core,
+            owner,
         }
     }
 
@@ -28,8 +30,8 @@ impl Store {
         &self.core
     }
 
-    pub async fn open(path: &std::path::Path) -> Result<Self, StoreError> {
-        let store = Self::new(CoreStore::open(path).await?);
+    pub async fn open(path: &std::path::Path, owner: super::Owner) -> Result<Self, StoreError> {
+        let store = Self::new(CoreStore::open(path).await?, owner);
         store.recover_deliveries().await?;
         Ok(store)
     }
@@ -50,7 +52,7 @@ impl Store {
         instance: &str,
         thread: &str,
     ) -> Result<(), StoreError> {
-        if !crate::telegram::authorized_chat(chat) {
+        if !self.owner.chat(chat) {
             return Err(StoreError::Unauthorized);
         }
         let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;

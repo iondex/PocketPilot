@@ -242,6 +242,8 @@ async fn run_adapter(
     context: crate::Context,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<(), Error> {
+    let owner = super::Owner::new(settings.owner_user_id)
+        .ok_or(engine::config::ConfigError::Credentials)?;
     let api = Api::with_proxy(
         crate::telegram::credentials::read(settings)?,
         &settings.proxy,
@@ -256,7 +258,7 @@ async fn run_adapter(
             "Telegram clients can auto-create topics; disable user-created threads in BotFather"
         );
     }
-    let store = Store::new(context.store);
+    let store = Store::new(context.store, owner);
     store.recover_deliveries().await?;
     store.recover_inbox(bot).await?;
     let service = Arc::new(Service {

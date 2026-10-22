@@ -1,6 +1,8 @@
-pub mod delivery;
+//! Runtime-neutral session types, explicit mutations and message presentation.
 
 pub mod content;
+
+pub mod delivery;
 
 pub mod files;
 
@@ -14,11 +16,11 @@ pub mod presentation;
 
 pub mod provider;
 
-pub mod retry;
+pub mod questions;
 
-pub use model::*;
-pub use provider::{AgentProvider, ProviderError};
+pub mod retry;
 
 pub mod server;
 
-pub mod questions;
+pub use model::*;
+pub use provider::{AgentProvider, ProviderError};

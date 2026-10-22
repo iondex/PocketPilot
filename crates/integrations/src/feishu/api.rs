@@ -81,18 +81,14 @@ impl Api {
 
     fn configured(settings: &Config, base: &str, custom: bool) -> Result<Self> {
         crate::network::initialize_tls();
-        let mut builder = reqwest_feishu::Client::builder()
+        // Feishu (and future Lark) use direct connections only, including token refresh.
+        let http = reqwest_feishu::Client::builder()
             .no_proxy()
             .redirect(reqwest_feishu::redirect::Policy::none())
             .retry(reqwest_feishu::retry::never())
-            .timeout(Duration::from_secs(30));
-        if settings.proxy.enabled() {
-            builder = builder.proxy(
-                reqwest_feishu::Proxy::all(settings.proxy.restart_key())
-                    .map_err(|_| Error::Request)?,
-            );
-        }
-        let http = builder.build().map_err(|_| Error::Request)?;
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|_| Error::Request)?;
         let config = openlark_core::config::Config::builder()
             .app_id(&settings.app_id)
             .app_secret(&settings.app_secret)

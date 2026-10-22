@@ -6,6 +6,8 @@ pub struct Config {
     #[serde(default)]
     pub proxy: crate::network::Proxy,
     pub token: String,
+    /// The only user allowed to use this bot, in their own private chat.
+    pub owner_user_id: u64,
     #[serde(default = "default_locale")]
     pub default_locale: String,
 }

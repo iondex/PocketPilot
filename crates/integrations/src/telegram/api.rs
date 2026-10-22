@@ -55,7 +55,7 @@ pub struct Input {
     pub reply_to_message_id: Option<i32>,
 }
 
-pub fn input(update: &Update) -> Option<Input> {
+pub fn input(update: &Update, owner: super::Owner) -> Option<Input> {
     let (message, user, text, callback, callback_id) = match &update.kind {
         UpdateKind::Message(m) => {
             let user = m.from.as_ref()?;
@@ -83,7 +83,7 @@ pub fn input(update: &Update) -> Option<Input> {
         }
         _ => return None,
     };
-    if !crate::telegram::authorized(user.id.0, message.chat.id.0, message.chat.is_private()) {
+    if !owner.authorizes(user.id.0, message.chat.id.0, message.chat.is_private()) {
         return None;
     }
     Some(Input {

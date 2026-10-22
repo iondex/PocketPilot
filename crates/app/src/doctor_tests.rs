@@ -6,7 +6,7 @@ async fn offline_report_sorts_hosts_and_skips_network_and_credential_checks() {
         std::path::Path::new("/tmp/pocketpilot.toml"),
         "[[hosts]]\nid='z'\nname='Zulu'\ntransport='local_proxy'\n\
          [[hosts]]\nid='a'\nname='Alpha'\ntransport='local_proxy'\n\
-         [telegram]\ntoken='invalid-fixture-secret'",
+         [telegram]\nowner_user_id=10\ntoken='invalid-fixture-secret'",
     )
     .unwrap()
     .config;
@@ -52,9 +52,12 @@ fn offline_credentials_check_supports_discord_only_and_redacts_tokens() {
     assert_eq!(json["telegram_configured"], false);
     assert_eq!(json["credentials_checked"], true);
     assert!(!json.to_string().contains("fixture-discord-secret"));
-    let telegram = config::parse(path, "[telegram]\ntoken='invalid-fixture-secret'")
-        .unwrap()
-        .config;
+    let telegram = config::parse(
+        path,
+        "[telegram]\nowner_user_id=10\ntoken='invalid-fixture-secret'",
+    )
+    .unwrap()
+    .config;
     assert!(configuration_summary(&telegram, false).is_ok());
     assert!(matches!(
         configuration_summary(&telegram, true),

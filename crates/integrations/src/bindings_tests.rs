@@ -47,7 +47,6 @@ fn repositories(core: &Store) -> Vec<(Box<dyn Repository>, Scope, Target)> {
                     tenant_key: "tenant".into(),
                     owner_open_id: "ou_owner".into(),
                     groups: vec![],
-                    proxy: Default::default(),
                 },
             )),
             Scope::Feishu {
@@ -58,7 +57,10 @@ fn repositories(core: &Store) -> Vec<(Box<dyn Repository>, Scope, Target)> {
             Target::Feishu { id: "1".into() },
         ),
         (
-            Box::new(crate::telegram::storage::Store::new(core.clone())),
+            Box::new(crate::telegram::storage::Store::new(
+                core.clone(),
+                crate::telegram::Owner::new(10).unwrap(),
+            )),
             Scope::Telegram { bot: 1, chat: 10 },
             Target::Telegram { topic: 1 },
         ),
@@ -427,7 +429,10 @@ async fn topic_display_name_takes_precedence_over_runtime_cache_and_empty_titles
     )
     .await
     .unwrap();
-    let repository = crate::telegram::storage::Store::new(core.clone());
+    let repository = crate::telegram::storage::Store::new(
+        core.clone(),
+        crate::telegram::Owner::new(10).unwrap(),
+    );
     let manager = Manager::new(&repository, Scope::Telegram { bot: 1, chat: 10 });
     let target = Target::Telegram { topic: 1 };
     assert_eq!(

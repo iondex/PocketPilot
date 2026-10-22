@@ -12,8 +12,6 @@ PocketPilot modifications:
   Cap headers at 64 entries, 128-byte keys and 1024-byte values.
 - Remove the credential-bearing WebSocket URL from connection diagnostics.
 - Refresh idle liveness on inbound WebSocket activity.
-- Expose an async dial-URL mapper, preserving original service metadata, so the
-  host can route WebSocket traffic through its existing bounded proxy relay.
 
 Protocol dispatch, authentication integration, protobuf, heartbeat and callback
 ACK behavior otherwise remain upstream. The application independently suppresses

@@ -9,8 +9,6 @@ pub struct Config {
     pub tenant_key: String,
     pub owner_open_id: String,
     pub groups: Vec<Group>,
-    #[serde(default)]
-    pub proxy: crate::network::Proxy,
 }
 
 #[derive(Clone, Debug, Deserialize)]

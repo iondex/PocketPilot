@@ -77,3 +77,54 @@ async fn unauthorized_queued_output_is_rejected_before_contacting_telegram() {
         Err(StoreError::Unauthorized)
     ));
 }
+
+#[tokio::test]
+async fn replacing_the_owner_rejects_previous_bindings_and_queued_outputs() {
+    let mut fixture = Fixture::new().await;
+    fixture
+        .service
+        .store
+        .enqueue(
+            1,
+            10,
+            11,
+            "previous-owner",
+            &Outbound::text("private output"),
+        )
+        .await
+        .unwrap();
+    let service = Arc::get_mut(&mut fixture.service).unwrap();
+    service.store = Store::new(
+        service.store.core().clone(),
+        crate::telegram::Owner::new(20).unwrap(),
+    );
+    fixture.deliver_pending().await;
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM deliveries WHERE source_key='previous-owner'")
+            .fetch_one(fixture.service.store.pool())
+            .await
+            .unwrap();
+    assert_eq!(state, "rejected");
+    assert!(
+        fixture
+            .telegram
+            .received_requests()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(matches!(
+        fixture
+            .service
+            .store
+            .bind(1, 10, 12, "instance", "thread")
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
+    fixture
+        .service
+        .store
+        .bind(1, 20, 12, "instance", "thread")
+        .await
+        .unwrap();
+}

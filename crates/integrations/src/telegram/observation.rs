@@ -228,7 +228,7 @@ impl Service {
             self.presence.clear(binding).await;
             return Ok(());
         }
-        if !crate::telegram::authorized_chat(binding.chat_id) {
+        if !self.store.owner.chat(binding.chat_id) {
             return Err(StoreError::Unauthorized.into());
         }
         let snapshot = self.config.snapshot();

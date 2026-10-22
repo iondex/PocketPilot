@@ -17,7 +17,7 @@ PocketPilot 的扩展目标是让同一套会话体验覆盖更多消息工具�
 
 后续优先完成真实租户的长连接、发布权限、卡片回调和跨项目 thread 隔离，检查独立附件投递、移除机器人/权限撤销、长时间根卡片过期及断线后的用户恢复。原生宽表、更多富文本扩展与消息直达链接按客户端实际能力开放；未核实的数学、脚注和折叠结构保留可读文本降级。
 
-国际 Lark 尚未开放配置。需要独立应用凭据、域、tenant/用户/group scope 及端到端验证；不能仅切换 base URL 就复用国内安装状态。未来若增加国际部署，仍使用同一 integration 体系和 SDK seam，不复制一套导航与原生 runtime 控制逻辑。
+国际 Lark 尚未开放配置。需要独立应用凭据、域、tenant/用户/group scope 及端到端验证；不能仅切换 base URL 就复用国内安装状态。未来若增加国际部署，固定直连且禁止代理配置，仍使用同一 integration 体系和 SDK seam，不复制一套导航与原生 runtime 控制逻辑。
 
 ## Claude Code 与 Pi 的 runtime 适配
 
@@ -70,7 +70,6 @@ ACP 可作为兼容入口或 runtime driver 的一种协议选择，不作为内
 
 每一阶段都以授权隔离、重复事件、过期操作、断线后任务存活、未知结果不重发及真实客户端展示为交付门槛。完成后把“已支持”行为更新到当前架构与接入方案，后续支持文档只保留尚未完成的内容。
 
-
 ## Agent 提问交互的后续改进
 
 当前已实现 Codex/Claude 的原始请求回答、共用问题投影与 `!answer` 文本提交，见[操作步骤](integrations.md#回答-agent-的问题)和[接口边界](architecture.md#结构化问题与显式回答)。以下仅为尚未交付的原生交互能力：
@@ -79,7 +78,7 @@ ACP 可作为兼容入口或 runtime driver 的一种协议选择，不作为内
 | --- | --- | --- |
 | Slack | Block Kit 单选/多选与 Modal | owner、team、绑定 thread、问题 revision |
 | Discord | Components V2、选择器与 Modal | owner、guild、绑定 channel；不展示原生 raw ID |
-| Telegram | Inline keyboard、多选确认、明确 reply-to | 固定 user ID、绑定 topic；不捕获无关联的普通消息 |
+| Telegram | Inline keyboard、多选确认、明确 reply-to | 配置 owner user ID、绑定 topic；不捕获无关联的普通消息 |
 | 飞书 | JSON 2.0 卡片选择器与 form | tenant、owner、允许群与绑定 root/thread |
 
 控件需共用 pending → draft → submitting → answered 的转换；取消后显示 cancelled，连接不可核实时显示 unavailable，发送后丢回执显示 unknown。修改草稿不写原端；确认后一次性提交全部题目。过期控件不复活，unknown 不自动重发。当前文本模板没有单独的草稿服务或持续更新的已回答/已取消卡片，不应把它们计作已经交付。

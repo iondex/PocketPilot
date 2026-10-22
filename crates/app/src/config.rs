@@ -46,14 +46,12 @@ pub fn parse(path: &Path, text: &str) -> Result<LoadedConfig, ConfigError> {
     if config.slack.as_ref().is_some_and(|s| !s.valid()) {
         return Err(ConfigError::Credentials);
     }
-    if config
-        .telegram
+    if config.telegram.as_ref().is_some_and(|t| {
+        t.token.trim().is_empty() || integrations::telegram::Owner::new(t.owner_user_id).is_none()
+    }) || config
+        .discord
         .as_ref()
-        .is_some_and(|t| t.token.trim().is_empty())
-        || config
-            .discord
-            .as_ref()
-            .is_some_and(|d| d.token.trim().is_empty() || d.guild_id == 0)
+        .is_some_and(|d| d.token.trim().is_empty() || d.guild_id == 0)
     {
         return Err(ConfigError::Credentials);
     }
@@ -78,9 +76,12 @@ pub fn runtime_parser(
     let root = loaded.config;
     let restart_key = engine::digest(&format!(
         "{:?}\0{:?}\0{:?}\0{:?}",
-        root.telegram
-            .as_ref()
-            .map(|t| (&t.token, &t.default_locale, t.proxy.restart_key())),
+        root.telegram.as_ref().map(|t| (
+            &t.token,
+            t.owner_user_id,
+            &t.default_locale,
+            t.proxy.restart_key()
+        )),
         root.discord
             .as_ref()
             .map(|d| (&d.token, d.guild_id, d.proxy.restart_key())),
@@ -100,8 +101,7 @@ pub fn runtime_parser(
             s.groups
                 .iter()
                 .map(|g| (&g.chat_id, &g.name))
-                .collect::<Vec<_>>(),
-            s.proxy.restart_key()
+                .collect::<Vec<_>>()
         ))
     ));
     Ok(engine::reload::ParsedConfig {

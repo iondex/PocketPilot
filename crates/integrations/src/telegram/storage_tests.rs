@@ -4,9 +4,11 @@ use session::operation::OperationState;
 #[tokio::test]
 async fn a_second_writer_is_rejected_and_an_input_cannot_change_session() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).await.unwrap();
+    let store = Store::open(dir.path(), crate::telegram::Owner::new(10).unwrap())
+        .await
+        .unwrap();
     assert!(matches!(
-        Store::open(dir.path()).await,
+        Store::open(dir.path(), crate::telegram::Owner::new(10).unwrap()).await,
         Err(StoreError::Locked)
     ));
     store
@@ -24,7 +26,9 @@ async fn a_second_writer_is_rejected_and_an_input_cannot_change_session() {
 #[tokio::test]
 async fn duplicate_inputs_reuse_operations_and_restart_preserves_uncertainty() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).await.unwrap();
+    let store = Store::open(dir.path(), crate::telegram::Owner::new(10).unwrap())
+        .await
+        .unwrap();
     let id = store
         .reserve_operation("message:1", "host", "thread")
         .await
@@ -46,7 +50,9 @@ async fn duplicate_inputs_reuse_operations_and_restart_preserves_uncertainty() {
         .unwrap();
     store.pool.close().await;
     drop(store);
-    let recovered = Store::open(dir.path()).await.unwrap();
+    let recovered = Store::open(dir.path(), crate::telegram::Owner::new(10).unwrap())
+        .await
+        .unwrap();
     assert_eq!(
         recovered.operation_state(&id).await.unwrap(),
         OperationState::OutcomeUnknown
@@ -66,7 +72,9 @@ async fn duplicate_inputs_reuse_operations_and_restart_preserves_uncertainty() {
 #[tokio::test]
 async fn private_containers_are_bot_scoped_and_never_retarget_within_an_account() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).await.unwrap();
+    let store = Store::open(dir.path(), crate::telegram::Owner::new(10).unwrap())
+        .await
+        .unwrap();
     store.bind(1, 10, 1, "host", "original").await.unwrap();
     store.bind(2, 10, 1, "host", "different").await.unwrap();
     assert!(matches!(

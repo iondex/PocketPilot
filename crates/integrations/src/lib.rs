@@ -1,22 +1,23 @@
-//! Chat integrations and their shared lifecycle, rendering and transport contracts.
-mod contracts;
-
-pub use contracts::{AttachmentSource, Context, Integration, IntegrationError, Platform};
-
-pub mod navigation;
+//! Chat platforms and shared navigation, binding, rendering and network boundaries.
 
 pub mod bindings;
 
-pub mod rendering;
-
-pub mod network;
-
-pub mod telegram;
-
 pub mod discord;
-
-pub mod slack;
 
 pub mod feishu;
 
+pub mod navigation;
+
+pub mod network;
+
+pub mod rendering;
+
+pub mod slack;
+
+pub mod telegram;
+
+mod contracts;
+
 mod questions;
+
+pub use contracts::{AttachmentSource, Context, Integration, IntegrationError, Platform};

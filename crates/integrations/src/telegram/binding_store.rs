@@ -14,7 +14,7 @@ impl Repository for Store {
         let Scope::Telegram { bot, chat } = scope else {
             return Err(StoreError::ContainerConflict);
         };
-        if !crate::telegram::authorized_chat(*chat) {
+        if !self.owner.chat(*chat) {
             return Err(StoreError::Unauthorized);
         }
         let rows = sqlx::query(
@@ -61,7 +61,7 @@ impl Repository for Store {
         let (Scope::Telegram { bot, chat }, Target::Telegram { topic }) = (scope, target) else {
             return Err(StoreError::ContainerConflict);
         };
-        if !crate::telegram::authorized_chat(*chat) {
+        if !self.owner.chat(*chat) {
             return Err(StoreError::Unauthorized);
         }
         let detach = matches!(change, Change::Detach);

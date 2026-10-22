@@ -6,7 +6,7 @@ use super::{
     runtime::Service,
 };
 use openlark_client::ws_client::{
-    CallbackEventHandler, EventDispatcherHandler, EventHandler, LarkWsClient, WsClientError,
+    CallbackEventHandler, EventDispatcherHandler, EventHandler, LarkWsClient,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -465,20 +465,12 @@ pub(super) async fn run(service: Arc<Service>, api: Arc<super::api::Api>) -> Res
             .register_callback("card.action.trigger", handler())
             .map_err(|_| Error::Request)?
             .build();
-        let relay = Arc::new(tokio::sync::Mutex::new(None));
-        let saved = relay.clone();
-        let proxy = service.settings.proxy.clone();
         let connected = tokio::time::Instant::now();
+        // The SDK dials directly; no relay or environment proxy is involved.
         let result = tokio::select! {
-            _=stop.changed()=>return Ok(()),
-            result=LarkWsClient::open_with_url_mapper(api.config.clone(),dispatcher,move |url|async move {
-                let parsed=url::Url::parse(&url).map_err(|_|WsClientError::UnexpectedResponse)?;
-                if parsed.scheme()!="wss" || !parsed.username().is_empty() || parsed.password().is_some() || !parsed.host_str().is_some_and(|h|h.ends_with(".feishu.cn")) {return Err(WsClientError::UnexpectedResponse);}
-                let relay=crate::network::Relay::start(proxy,url).await.map_err(|_|WsClientError::UnexpectedResponse)?;
-                let endpoint=relay.endpoint.clone();*saved.lock().await=Some(relay);Ok(endpoint)
-            })=>result,
+            _ = stop.changed() => return Ok(()),
+            result = LarkWsClient::open(api.config.clone(), dispatcher) => result,
         };
-        drop(relay);
         if *stop.borrow() {
             return Ok(());
         }

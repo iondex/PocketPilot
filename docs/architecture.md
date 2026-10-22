@@ -78,6 +78,8 @@ Codex adapter 连接已运行的 app-server，不自动启动 daemon。只有同
 
 ## 授权、回执与恢复
 
+Telegram 通过必填配置 `owner_user_id` 构造部署级 `Owner`，供入口解析、平台 Store、持久化写入与后台投递共同使用。owner 更改要求重启，旧私聊绑定和排队输出不能继续获权；不保留源码内置个人账号或全局可变身份。
+
 一次写操作从收到输入、准备、dispatch 到 accepted / rejected / outcome unknown，使用持久操作来源去重。平台资源创建和消息投递另有各自回执。数据库状态更新与对应待投递内容在需要的事务边界内提交。
 
 回执未知时保留不确定状态，不通过重新创建、重新发送或更换消息格式来猜测结果。重启恢复观察，旧输入按所属平台的确认和时效规则处理。菜单和按钮只携带不透明句柄；真正目标、操作者和版本来自持久状态。
@@ -116,12 +118,11 @@ Codex adapter 连接已运行的 app-server，不自动启动 daemon。只有同
 
 ## 构建与维护
 
-Rust 工具链由仓库配置约束，所有 Cargo 构建、检查、测试和 Clippy 使用 `--release`。`make check` 执行格式、Clippy 和测试，`make package` 保存 binary、构建信息和校验值到忽略的 `dist/`，之后运行 `cargo clean`；`make release` 串行完成整个流程。长期运行引用 `dist/pocketpilot`。
+Rust 工具链由仓库配置约束，所有 Cargo 构建、检查、测试和 Clippy 使用 `--release`。`make check` 执行格式、Clippy 和测试，`make package` 保存 binary、构建信息和校验值到忽略的 `dist/`，之后运行 `cargo clean`；`make release` 串行完成当前系统/架构的检查、打包和清理。长期运行引用 `dist/pocketpilot`。
 
 Codex CLI 的默认构建来源是 PATH，`CODEX_SCHEMA_BIN` 仅用于指定构建时导出 schema 的可执行文件，不覆盖运行时连接配置。缺少 CLI 或生成失败会使构建失败，不回退到旧协议快照。协议类型可生成不代表共享执行能力已经验证。
 
 开发标准见 [CONTRIBUTING.md](../CONTRIBUTING.md)，部署与平台操作见[接入方案](integrations.md)。
-
 
 ## 独立 runtime server
 
@@ -133,14 +134,13 @@ server 只管理自己创建的 UUID session；创建空会话、list/read/histo
 
 只发布主 assistant 的文本块；不混入 thinking、工具输出和子 agent 内容。文件限定在 server 私有上传根并记录 session 归属，图片按 MIME 签名和大小限制转为原生 image block。活跃 steer 尚未开放；结构化 AskUserQuestion 通过原始请求回答，其他权限请求仅体现等待状态，不自动代答。离线 fake CLI 覆盖协议与断线语义，不能据此宣称真实账号/模型全流程已经验证。
 
-
 ## 飞书的消息与传输边界
 
 国内飞书使用 `[feishu]`，身份 scope 为 app/tenant/owner；仅私聊提供目录，一个原生 session 绑定授权群中的 root + thread。导航和绑定管理复用 `Navigator` / `bindings::Manager`，平台 SQL 位于 `feishu` 目录。文字与富文本需 @机器人；独立文件允许 owner 在已绑定话题提交。更多平台事件读取权限不会扩大本地执行授权。
 
-OpenLark 0.21.0 提供认证、token 刷新、protobuf WebSocket 与新版卡片 ACK；REST 通过 core typed Transport，业务只处理具名 DTO。只对 client 做窄 vendor 修补并保留 Apache-2.0 来源：最多 32 分片、单事件 8 MiB、64 个未完成事件、合计 16 MiB 和 15 秒过期；连接日志不包含认证 URL。SDK 的传输日志另被进程级过滤器独立拒绝。入站业务事件再限制为 512 KiB。
+OpenLark 0.21.0 提供认证、token 刷新、protobuf WebSocket 与新版卡片 ACK；REST 通过 core typed Transport，业务只处理具名 DTO。只对 client 做窄 vendor 修补并保留 Apache-2.0 来源：最多 32 分片、单事件 8 MiB、64 个未完成事件、合计 16 MiB 和 15 秒过期；连接日志不包含认证 URL。SDK 的传输日志另被进程级过滤器独立拒绝。补丁依据及移除条件见[依赖维护](dependencies.md)。入站业务事件再限制为 512 KiB。
 
-HTTP 禁用系统代理、重定向和底层自动重试，WS 经现有有界 relay 使用同一显式代理配置；loopback relay 需要随机访问路径。多个 HTTP SDK 带入不同 rustls provider 时，公共网络入口为进程安装一次默认 provider，保留宿主已有选择，避免影响未配置飞书的其他接入端。
+HTTP 禁用系统代理、重定向和底层自动重试，WS 使用 SDK 原生入口直接连接，不经 relay。飞书和未来国际 Lark 禁止配置代理，包括空字符串，也不继承环境代理。多个 HTTP SDK 带入不同 rustls provider 时，公共网络入口为进程安装一次默认 provider，保留宿主已有选择，避免影响未配置飞书的其他接入端。
 
 回调在两秒内完成 scope/时效校验及持久化入队，再由 SDK ACK；最多四个后台输入 worker，不在 ACK 路径等待 SSH 或模型。动作 nonce 绑定原消息与聊天、配置 hash、owner 命名空间及五分钟有效期。发送前冻结 Card JSON 2.0，最终编码 payload 保守限制为 28 KB；自动输出与状态更新受绑定/观察偏好约束，未知回执不重发。
 

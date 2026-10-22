@@ -4,47 +4,48 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
-i18n.workspace = true
-engine = { path = "../engine" }
-session = { path = "../session" }
 async-trait.workspace = true
+engine = { path = "../engine" }
+futures-util.workspace = true
+http = { version = "1" }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "tokio"] }
+i18n.workspace = true
 pulldown-cmark.workspace = true
-sha2.workspace = true
-sqlx.workspace = true
-uuid.workspace = true
+reqwest.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serenity = { version = "0.12", default-features = false, features = ["builder", "client", "gateway", "http", "model", "rustls_backend"] }
+session = { path = "../session" }
+sha2.workspace = true
+slack-morphism = { version = "=2.31.0", default-features = false, features = ["hyper"] }
+sqlx.workspace = true
 teloxide.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-tracing.workspace = true
-reqwest.workspace = true
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-url.workspace = true
-unicode-width.workspace = true
-unicode-segmentation.workspace = true
-futures-util.workspace = true
 tokio-tungstenite.workspace = true
-slack-morphism = { version = "=2.31.0", default-features = false, features = ["hyper"] }
-http = { version = "1" }
-hyper-util = { version = "0.1", features = ["client-legacy", "tokio"] }
+tokio.workspace = true
 tower-service = "0.3"
-hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring"] }
+tracing.workspace = true
 twilight-model = { version = "=0.17.1" }
 twilight-util = { version = "=0.17.0", default-features = false, features = ["builder"] }
-serenity = { version = "0.12", default-features = false, features = ["builder", "client", "gateway", "http", "model", "rustls_backend"] }
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+url.workspace = true
+uuid.workspace = true
 
 openlark-client = { version = "=0.21.0", default-features = false, features = ["auth", "websocket"] }
 openlark-core = { version = "=0.21.0", default-features = false }
 reqwest-feishu = { package = "reqwest", version = "0.13", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
-lark-websocket-protobuf = "=0.1.2"
 adapters = { path = "../adapters" }
+lark-websocket-protobuf = "=0.1.2"
 tempfile.workspace = true
 toml.workspace = true
 wiremock = "0.6"

@@ -148,20 +148,30 @@ async fn identity_extension_keeps_the_token_in_the_url_path_and_reads_private_to
 fn sdk_preserves_private_topic_and_denies_group_sender() {
     let private = r#"{"update_id":1,"message":{"message_id":7,"message_thread_id":11,"date":100,"from":{"id":10,"is_bot":false,"first_name":"User"},"chat":{"id":10,"type":"private","first_name":"User"},"text":"hello","is_topic_message":true}}"#;
     let update: Update = serde_json::from_str(private).unwrap();
-    let event = input(&update).unwrap();
+    let event = input(&update, crate::telegram::Owner::new(10).unwrap()).unwrap();
     assert_eq!(event.topic, 11);
     assert_eq!(event.event_key, "message:10:7");
     let group = private.replace(
         "\"id\":10,\"type\":\"private\",\"first_name\":\"User\"",
         "\"id\":-100,\"type\":\"supergroup\",\"title\":\"Group\"",
     );
-    assert!(input(&serde_json::from_str(&group).unwrap()).is_none());
+    assert!(
+        input(
+            &serde_json::from_str(&group).unwrap(),
+            crate::telegram::Owner::new(10).unwrap()
+        )
+        .is_none()
+    );
 }
 
 #[test]
 fn media_inputs_keep_caption_and_durable_file_references_without_network() {
     let update = r#"{"update_id":1,"message":{"message_id":7,"message_thread_id":11,"date":100,"from":{"id":10,"is_bot":false,"first_name":"User"},"chat":{"id":10,"type":"private","first_name":"User"},"photo":[{"file_id":"private-file","file_unique_id":"unique","width":640,"height":480}],"caption":"read this caption"}}"#;
-    let event = input(&serde_json::from_str(update).unwrap()).unwrap();
+    let event = input(
+        &serde_json::from_str(update).unwrap(),
+        crate::telegram::Owner::new(10).unwrap(),
+    )
+    .unwrap();
     assert_eq!(event.text, "read this caption");
     assert_eq!(event.topic, 11);
     assert_eq!(event.attachments[0].name, "image");
@@ -170,10 +180,13 @@ fn media_inputs_keep_caption_and_durable_file_references_without_network() {
     assert!(!format!("{event:?}").contains("private-file"));
     let photo_only = update.replace(",\"caption\":\"read this caption\"", "");
     assert!(
-        input(&serde_json::from_str(&photo_only).unwrap())
-            .unwrap()
-            .text
-            .is_empty()
+        input(
+            &serde_json::from_str(&photo_only).unwrap(),
+            crate::telegram::Owner::new(10).unwrap()
+        )
+        .unwrap()
+        .text
+        .is_empty()
     );
     assert!(no_preview().is_disabled);
 }

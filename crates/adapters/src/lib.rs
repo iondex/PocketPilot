@@ -1,8 +1,9 @@
-//! Agent runtime contracts and implementations. Runtime protocols stay behind the adapter seam.
-mod contracts;
+//! Runtime implementations behind session contracts. Native protocol DTOs remain in each adapter.
 
-pub use contracts::{Adapter, AdapterFactory, ConnectOptions, RuntimeKind, ServerEndpoint};
+pub mod claude;
 
 pub mod codex;
 
-pub mod claude;
+mod contracts;
+
+pub use contracts::{Adapter, AdapterFactory, ConnectOptions, RuntimeKind, ServerEndpoint};

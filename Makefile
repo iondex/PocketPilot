@@ -1,12 +1,12 @@
 .DEFAULT_GOAL := build
 
-
 .PHONY: build check package release clean
 
 build:
 	cargo build -p app --release --locked
 
 check:
+	python3 scripts/check-docs.py
 	cargo fmt --all -- --check
 	cargo clippy --release --workspace --all-targets --locked -- -D warnings
 	cargo test --release --workspace --locked

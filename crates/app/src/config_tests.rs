@@ -28,7 +28,7 @@ fn parse_errors_and_debug_output_do_not_echo_tokens() {
     let path = dir.path().join("pocketpilot.toml");
     fs::write(
         &path,
-        "[telegram]\ntoken='private-value'\nunknown='private-value'",
+        "[telegram]\nowner_user_id=10\ntoken='private-value'\nunknown='private-value'",
     )
     .unwrap();
     assert!(
@@ -41,6 +41,7 @@ fn parse_errors_and_debug_output_do_not_echo_tokens() {
         !format!(
             "{:?}",
             Telegram {
+                owner_user_id: 10,
                 token: "private-value".into(),
                 default_locale: "zh-CN".into(),
                 proxy: Default::default()
@@ -60,8 +61,8 @@ fn includes_and_configured_user_chat_allowlists_are_rejected() {
         "[[workspaces]]\nid='obsolete'",
         "[[hosts]]\nid='h'\nname='h'\ntransport='ssh_proxy'\nssh_alias='h'\ncodex_bin='obsolete'",
         "[[hosts]]\nid='h'\nname='h'\ntransport='ssh_proxy'\nssh_alias='h'\ncodex_control_socket='/obsolete.sock'",
-        "[telegram]\ntoken='t'\nallowed_user_ids=[]",
-        "[telegram]\ntoken='t'\nallowed_chat_ids=[]",
+        "[telegram]\nowner_user_id=10\ntoken='t'\nallowed_user_ids=[]",
+        "[telegram]\nowner_user_id=10\ntoken='t'\nallowed_chat_ids=[]",
     ] {
         fs::write(&path, input).unwrap();
         assert!(matches!(load(&path), Err(ConfigError::Parse)));
@@ -72,7 +73,7 @@ fn includes_and_configured_user_chat_allowlists_are_rejected() {
 fn channel_proxies_default_to_direct_validate_and_require_restart() {
     let path = Path::new("/tmp/pocketpilot.toml");
     for text in [
-        "[telegram]\ntoken='fixture'",
+        "[telegram]\nowner_user_id=10\ntoken='fixture'",
         "[discord]\ntoken='fixture'\nguild_id=1",
         "[slack]\napp_token='xapp-fixture'\nbot_token='xoxb-fixture'\napp_id='A1'\nteam_id='T1'\nowner_user_id='U1'",
     ] {
@@ -92,6 +93,36 @@ fn channel_proxies_default_to_direct_validate_and_require_restart() {
 #[test]
 fn public_example_is_a_valid_configuration() {
     load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pocketpilot.example.toml")).unwrap();
+}
+
+#[test]
+fn telegram_requires_a_valid_owner_and_owner_changes_require_restart() {
+    let path = Path::new("/tmp/pocketpilot.toml");
+    assert!(parse(path, "[telegram]\ntoken='fixture'").is_err());
+    for owner in [0, u64::MAX] {
+        assert!(
+            parse(
+                path,
+                &format!("[telegram]\ntoken='fixture'\nowner_user_id={owner}")
+            )
+            .is_err()
+        );
+    }
+    let first = runtime_parser(path, "[telegram]\ntoken='fixture'\nowner_user_id=10").unwrap();
+    let second = runtime_parser(path, "[telegram]\ntoken='fixture'\nowner_user_id=20").unwrap();
+    assert_ne!(first.restart_key, second.restart_key);
+}
+
+#[test]
+fn feishu_is_direct_only_and_rejects_even_an_empty_proxy_setting() {
+    let path = Path::new("/tmp/pocketpilot.toml");
+    let text = "[feishu]\napp_id='cli_fixture'\napp_secret='fixture'\ntenant_key='tenant'\nowner_open_id='ou_owner'\n[[feishu.groups]]\nchat_id='oc_group'\nname='Fixture'\n";
+    assert!(parse(path, text).is_ok());
+    for proxy in ["", "http://192.0.2.10:7890"] {
+        let configured = text.replace("[feishu]\n", &format!("[feishu]\nproxy='{proxy}'\n"));
+        assert!(parse(path, &configured).is_err());
+    }
+    assert!(parse(path, "[lark]\nproxy=''").is_err());
 }
 
 #[test]

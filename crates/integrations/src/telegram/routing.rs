@@ -111,7 +111,7 @@ impl Service {
         {
             return Err(Error::Expired);
         }
-        if !crate::telegram::authorized(input.user, input.chat, true) {
+        if !self.store.owner.authorizes(input.user, input.chat, true) {
             return Err(StoreError::Unauthorized.into());
         }
         Ok(())

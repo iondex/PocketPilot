@@ -1,14 +1,6 @@
 use super::*;
 
 #[test]
-fn only_the_designated_owner_in_their_private_chat_is_authorized() {
-    assert!(!authorized(10, -100, false));
-    assert!(!authorized(10, 11, true));
-    assert!(!authorized(20, 20, true));
-    assert!(authorized(10, 10, true));
-}
-
-#[test]
 fn diagnostic_reasons_only_expose_fixed_categories() {
     for (message, expected) in [
         (

@@ -1,7 +1,9 @@
-pub mod config;
+//! Application configuration and process orchestration. Platform logic belongs to integrations.
 
-mod inventory;
+pub mod config;
 
 pub mod retry;
 
 pub mod runtime;
+
+mod inventory;

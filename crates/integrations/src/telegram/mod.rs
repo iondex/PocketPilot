@@ -1,30 +1,25 @@
 //! Telegram transport. Only the service command starts receiving or sending messages.
-#[path = "i18n.rs"]
 pub mod i18n;
 
-#[path = "api.rs"]
 pub mod api;
 
-#[path = "config.rs"]
 pub mod config;
 
-#[path = "credentials.rs"]
 pub mod credentials;
 
-#[path = "ledger.rs"]
 pub mod ledger;
 
 pub mod rich;
 
-#[path = "presentation.rs"]
 pub mod presentation;
 
-#[path = "runtime.rs"]
 pub mod runtime;
 
-#[path = "storage.rs"]
 pub mod storage;
 
+mod authorization;
+
+pub use authorization::Owner;
 pub use runtime::Telegram;
 
 use secrecy::{ExposeSecret, SecretString};
@@ -177,22 +172,6 @@ pub struct Identity {
     pub webhook_enabled: bool,
     pub topics_enabled: bool,
     pub user_topic_creation_enabled: bool,
-}
-
-/// This deployment is private to its designated Telegram account.
-/// Tests use a synthetic owner so no account identity appears in fixtures.
-#[cfg(not(test))]
-pub const OWNER_USER_ID: u64 = 932_470_989;
-
-#[cfg(test)]
-pub const OWNER_USER_ID: u64 = 10;
-
-pub fn authorized(user: u64, chat: i64, private: bool) -> bool {
-    private && user == OWNER_USER_ID && i64::try_from(user).ok() == Some(chat)
-}
-
-pub(crate) fn authorized_chat(chat: i64) -> bool {
-    authorized(chat as u64, chat, true)
 }
 
 pub struct Inspector {

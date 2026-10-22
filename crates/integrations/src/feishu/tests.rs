@@ -11,7 +11,6 @@ pub(super) fn settings() -> config::Config {
             chat_id: "oc_group".into(),
             name: "Test group".into(),
         }],
-        proxy: Default::default(),
     }
 }
 

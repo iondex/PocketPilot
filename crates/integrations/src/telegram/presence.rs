@@ -104,7 +104,7 @@ impl Service {
         let snapshot = self.config.snapshot();
         let valid = binding.revision == lease.revision
             && self.binding_workspace(&snapshot.config, &binding).is_ok();
-        if !valid || !crate::telegram::authorized_chat(lease.chat) {
+        if !valid || !self.store.owner.chat(lease.chat) {
             self.presence.clear(&binding).await;
             return;
         }

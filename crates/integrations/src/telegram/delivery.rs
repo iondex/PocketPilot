@@ -47,7 +47,7 @@ impl Service {
                     true
                 };
                 if !navigation_valid
-                    || !crate::telegram::authorized_chat(row.chat_id)
+                    || !self.store.owner.chat(row.chat_id)
                     || row.chat_id <= 0
                     || !binding_valid
                     || body.expires_at.is_some_and(|expiry| expiry <= now())

@@ -1,0 +1,17 @@
+PocketPilot
+Copyright 2026 PocketPilot contributors
+
+Licensed under the Apache License, Version 2.0.
+
+This distribution contains a modified copy of openlark-client 0.21.0,
+part of OpenLark, licensed under Apache-2.0. Upstream authorship and
+license are preserved in vendor/openlark-client/. Local changes are
+identified in vendor/openlark-client/PATCHES.md.
+
+Codex protocol definitions are generated at build time from OpenAI Codex,
+licensed under Apache-2.0. The upstream attribution and license are
+preserved in crates/adapters/NOTICE and crates/adapters/LICENSE-APACHE.
+Generated schema and Rust DTOs are not committed to this repository.
+
+See THIRD_PARTY_NOTICES.md for source references. These acknowledgments
+are informational and do not imply endorsement by upstream projects.

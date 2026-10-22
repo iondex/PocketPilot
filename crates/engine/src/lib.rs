@@ -1,27 +1,28 @@
-//! Shared execution runtime, independent of chat-platform adapters.
+//! Shared authorization, catalog and durable execution state; independent of chat platforms.
+
 pub mod bootstrap;
 
 pub mod catalog;
 
 pub mod config;
 
-pub mod runtimes;
-
 pub mod control;
-
-pub mod uploads;
 
 pub mod model;
 
-pub mod operations;
-
 pub mod observation;
+
+pub mod operations;
 
 pub mod reload;
 
 pub mod retry;
 
+pub mod runtimes;
+
 pub mod storage;
+
+pub mod uploads;
 
 pub fn digest(text: &str) -> String {
     use sha2::{Digest, Sha256};

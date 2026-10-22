@@ -23,7 +23,7 @@ impl Service {
                     let updates = updates
                         .iter()
                         .map(|u| {
-                            let mut input = crate::telegram::api::input(u);
+                            let mut input = crate::telegram::api::input(u, self.store.owner);
                             if failures > 0
                                 && let Some(input) = input.as_mut()
                             {

@@ -3,7 +3,9 @@ use super::*;
 #[tokio::test]
 async fn long_markdown_is_split_into_durable_messages_and_completed_prefixes_are_not_replayed() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).await.unwrap();
+    let store = Store::open(dir.path(), crate::telegram::Owner::new(10).unwrap())
+        .await
+        .unwrap();
     let body = Outbound::agent(format!(
         "# Header\n\n**{}**\n\n```rust\n{}\n```",
         "👩‍💻 text ".repeat(1000),
@@ -41,7 +43,9 @@ async fn long_markdown_is_split_into_durable_messages_and_completed_prefixes_are
 
 async fn setup() -> (tempfile::TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).await.unwrap();
+    let store = Store::open(dir.path(), crate::telegram::Owner::new(10).unwrap())
+        .await
+        .unwrap();
     (dir, store)
 }
 
@@ -275,7 +279,9 @@ async fn burst_members_share_one_durable_batch_with_a_fixed_deadline() {
     assert!(store.pending_deliveries(1, 104).await.unwrap().is_empty());
     store.pool.close().await;
     drop(store);
-    let restarted = Store::open(dir.path()).await.unwrap();
+    let restarted = Store::open(dir.path(), crate::telegram::Owner::new(10).unwrap())
+        .await
+        .unwrap();
     let rows = restarted.pending_deliveries(1, 105).await.unwrap();
     assert_eq!(rows.len(), 1);
     let body: Outbound = serde_json::from_str(&rows[0].payload).unwrap();

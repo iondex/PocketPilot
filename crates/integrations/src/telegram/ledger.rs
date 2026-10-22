@@ -451,7 +451,7 @@ impl Store {
         binding: Option<&Binding>,
     ) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
-        if !crate::telegram::authorized(input.user, input.chat, true) {
+        if !self.owner.authorizes(input.user, input.chat, true) {
             return Err(Error::Unauthorized);
         }
         if let Some(binding) = binding {
