@@ -17,9 +17,9 @@ RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" cargo doc --release --workspac
 cargo test --release --workspace --locked
 ```
 
-构建、检查、测试与 Clippy 统一使用 release profile；可运行 `make check` 完成上述验证、rustdoc 生成与内部链接检查及本地 Markdown 链接检查（需要 Python 3.10+，无第三方 Python 依赖）。需要保留的可执行文件先通过 `make package` 放入 Git 忽略的 `dist/`，每轮验证/打包完成后运行 `cargo clean` 清理 `target/`；`make release` 顺序执行检查、当前系统/架构打包和清理。构建期间不并行清理。
+构建、检查、测试与 Clippy 统一使用 release profile；可运行 `make check` 完成上述验证、rustdoc 生成与内部链接检查及本地 Markdown 链接检查（由 Rust 测试验证，Python 3 仅用于本地协议测试夹具）。需要保留的可执行文件先通过 `make package` 放入 Git 忽略的 `dist/`，每轮验证/打包完成后运行 `cargo clean` 清理 `target/`；`make release` 顺序执行检查、当前系统/架构打包和清理。构建期间不并行清理。
 
-- crate 使用简短职责名，binary 名为 pocketpilot。session、engine、app 与 i18n 的源码保持 src/ 下平铺；session 的 Markdown 实现按 syntax、segmentation、formatting、html 命名，通过 markdown 模块组合，不建立子目录。integrations 按 src/telegram、src/discord、src/slack、src/network 分职责组织；connections/src/ssh 与 adapters/src/codex 分别容纳原生连接和运行时实现，公共接口位于各 crate 根部。测试拆入相邻的 *_tests.rs 或 tests.rs，通过 cfg(test) 模块加载。
+- crate 使用简短职责名，binary 名为 pocketpilot。session、engine、app 与 i18n 的源码保持 src/ 下平铺；session 的 Markdown 实现按 syntax、segmentation、formatting、html 命名，通过 markdown 模块组合，不建立子目录。integrations 按 src/telegram、src/discord、src/slack、src/feishu、src/network 分职责组织；connections/src/ssh 与 adapters/src/codex 分别容纳原生连接和运行时实现，公共接口位于各 crate 根部。测试拆入相邻的 *_tests.rs 或 tests.rs，通过 cfg(test) 模块加载。
 - 每个类型、函数、方法、impl、trait、常量和模块定义之间留一个空行，文档注释和属性紧贴所属定义。rustfmt 不会主动补齐全部空行，编辑时须保留。
 - 类型和枚举变体使用 UpperCamelCase，但按项目约定，SSH、TOTP 保留全大写，例如 SSHOptions、SSHProxy、TOTP。字段、函数、crate 与配置键仍使用 snake_case。外部依赖的公开类型不改名。仅对实际触发的具体定义允许 Clippy acronym 例外，不全局禁用。
 - 用具名类型表达权限、身份和状态。业务逻辑使用生成的 Codex DTO；禁止直接操作 serde_json::Value。协议生成物只在 Cargo OUT_DIR。

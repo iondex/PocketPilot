@@ -23,14 +23,15 @@ impl Store {
     ) -> Result<(), StoreError> {
         let receipt = serde_json::to_string(receipt).map_err(|_| StoreError::Database)?;
         let changed = sqlx::query(
-            "UPDATE operations SET receipt=?,state='accepted',updated_at=unixepoch() WHERE id=? AND state='dispatching'",
+            "UPDATE operations SET receipt=?,state='accepted',updated_at=unixepoch() \
+            WHERE id=? AND state='dispatching'",
         )
-            .bind(receipt)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(|_| StoreError::Database)?
-            .rows_affected();
+        .bind(receipt)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)?
+        .rows_affected();
         if changed != 1 {
             return Err(StoreError::Transition);
         }
@@ -55,7 +56,8 @@ impl Store {
         instance: &str,
     ) -> Result<std::collections::HashSet<String>, StoreError> {
         let receipts = sqlx::query(
-            "SELECT receipt FROM operations WHERE instance_id=? AND source_key LIKE 'probe:%:create' AND state='accepted'",
+            "SELECT receipt FROM operations WHERE instance_id=? AND source_key LIKE \
+            'probe:%:create' AND state='accepted'",
         )
         .bind(instance)
         .fetch_all(&self.pool)
@@ -91,7 +93,8 @@ impl Store {
     ) -> Result<String, StoreError> {
         let id = uuid::Uuid::now_v7().to_string();
         sqlx::query(
-            "INSERT INTO operations(id,source_key,instance_id,thread_id,state) VALUES(?,?,?,?,'received') ON CONFLICT(source_key) DO NOTHING",
+            "INSERT INTO operations(id,source_key,instance_id,thread_id,state) \
+            VALUES(?,?,?,?,'received') ON CONFLICT(source_key) DO NOTHING",
         )
         .bind(&id)
         .bind(source_key)

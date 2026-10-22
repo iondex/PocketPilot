@@ -485,9 +485,13 @@ pub(super) async fn run(service: Arc<Service>, api: Arc<super::api::Api>) -> Res
         let seconds = (1u64 << failures.min(6)).min(60);
         let _ = result;
         tracing::warn!(
+            platform = service.region.as_str(),
             retry_seconds = seconds,
-            "Feishu connection closed; authorized writes will not be replayed"
+            "Chat connection closed; authorized writes will not be replayed"
         );
-        tokio::select! {_=stop.changed()=>return Ok(()),_=tokio::time::sleep(Duration::from_secs(seconds))=>{}}
+        tokio::select! {
+            _ = stop.changed() => return Ok(()),
+            _ = tokio::time::sleep(Duration::from_secs(seconds)) => {},
+        }
     }
 }

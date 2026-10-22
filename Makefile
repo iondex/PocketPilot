@@ -6,7 +6,6 @@ build:
 	cargo build -p app --release --locked
 
 check:
-	python3 scripts/check-docs.py
 	cargo fmt --all -- --check
 	cargo clippy --release --workspace --all-targets --locked -- -D warnings
 	RUSTDOCFLAGS="$(RUSTDOCFLAGS) -D rustdoc::broken_intra_doc_links" cargo doc --release --workspace --no-deps --locked
@@ -18,7 +17,7 @@ package: build
 	mv -f dist/pocketpilot.new dist/pocketpilot
 	./dist/pocketpilot --version > dist/BUILD.txt
 	rustc -vV >> dist/BUILD.txt
-	@printf 'integrations: telegram,discord,slack,feishu\n' >> dist/BUILD.txt
+	@printf 'integrations: telegram,discord,slack,feishu,lark\n' >> dist/BUILD.txt
 	@if command -v sha256sum >/dev/null 2>&1; then sha256sum dist/pocketpilot > dist/pocketpilot.sha256; else shasum -a 256 dist/pocketpilot > dist/pocketpilot.sha256; fi
 
 release:

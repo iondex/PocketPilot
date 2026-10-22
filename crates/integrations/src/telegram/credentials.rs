@@ -1,3 +1,5 @@
+//! Validate configured Telegram credentials before constructing a transport client.
+
 use crate::telegram::config::Config as Telegram;
 use engine::config::ConfigError;
 use secrecy::SecretString;

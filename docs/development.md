@@ -15,7 +15,7 @@ cargo clean
 
 先安装 CI 固定的 Codex CLI 0.162.1，供 `adapters/build.rs` 导出 schema。所有 Cargo build/check/test/clippy 必须使用 `--release`；不要另建 debug artifact 树。`make package` 只打包当前系统/架构，独立 Linux runtime server 使用 `make package-agent-server`。
 
-`make check` 也生成所有 workspace crate 的 rustdoc，并将失效的 Rust 内部文档链接视为错误。检查只对 Codex CLI 原样生成的协议文档局部豁免其上游失效链接和裸 URL，手写接口仍严格检查。生成结果位于 `target/doc/`，随 target 清理；公开 Markdown 的相对链接由独立脚本验证。
+`make check` 也生成所有 workspace crate 的 rustdoc，并将失效的 Rust 内部文档链接视为错误。检查只对 Codex CLI 原样生成的协议文档局部豁免其上游失效链接和裸 URL，手写接口仍严格检查。生成结果位于 `target/doc/`，随 target 清理；公开 Markdown 的相对链接由 app crate 的 `documentation_tests` 验证，包括图片、标题锚点和引用式链接；不依赖仓库脚本。
 
 失败后修复并完成同一轮验证；清理与编译必须串行。需要保留的 binary 放到忽略的 `dist/`，完成验证批次后清理 target。测试默认使用临时目录和本地协议 fixture，不读取开发者真实凭据。
 
@@ -47,7 +47,9 @@ crate 根部给出公共模块和契约。`session` 不依赖平台 SDK；`engin
 5. 将授权后的附件下载放入平台 `AttachmentSource`，限制来源、重定向、大小、数量与超时。
 6. 在 app 组合配置并装配 integration，更新公开示例、平台安装文档和测试；不要扩大其他平台的权限。
 
-Telegram 的 `Owner` 是部署级具名身份，由配置构造并存入该平台的 Store，入站解析、写操作和后台输出共用它；不使用全局可变身份。飞书及未来 Lark 固定直连，不复用可配置代理入口。
+Telegram 的 `Owner` 是部署级具名身份，由配置构造并存入该平台的 Store，入站解析、写操作和后台输出共用它；不使用全局可变身份。飞书和 Lark 固定直连，不复用可配置代理入口。
+
+飞书/Lark 共用 `integrations/src/feishu`：`Region` 选择固定 API 根地址与平台标识，app 根据 `[feishu]` / `[lark]` 装配同一实现；客户端、绑定、事件去重、回调与操作账本保留独立作用域。修改协议时运行两端共用的 runtime 测试矩阵与真实 SDK WebSocket fixture，详见[共享实现与验证](feishu-lark.md)。
 
 ## 新增或修改 runtime
 

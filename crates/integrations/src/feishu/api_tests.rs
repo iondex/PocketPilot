@@ -179,3 +179,42 @@ async fn api_errors_expose_only_numeric_codes() {
     assert!(matches!(error, Error::Api(99991672)));
     assert!(!error.localized("en").contains("private diagnostic"));
 }
+
+#[tokio::test]
+async fn clients_with_identical_app_ids_do_not_share_token_caches_across_endpoints() {
+    let mut servers = Vec::new();
+    let mut clients = Vec::new();
+    for (token, bot) in [
+        ("feishu-fixture-token", "ou_feishu"),
+        ("lark-fixture-token", "ou_lark"),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/open-apis/auth/v3/tenant_access_token/internal"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code":0,"msg":"success","tenant_access_token":token,"expire":7200
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/open-apis/bot/v3/info"))
+            .and(header("authorization", format!("Bearer {token}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code":0,"msg":"success","bot":{"open_id":bot,"app_name":"Fixture"}
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+        clients.push((
+            Api::fixture(&super::super::tests::settings(), &server.uri()).unwrap(),
+            bot,
+        ));
+        servers.push(server);
+    }
+    for _ in 0..2 {
+        for (client, bot) in &clients {
+            assert_eq!(client.identity().await.unwrap().open_id, *bot);
+        }
+    }
+}

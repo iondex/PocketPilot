@@ -1,4 +1,4 @@
-//! Domestic Feishu bot: private navigation, explicitly scoped group threads and typed SDK boundaries.
+//! Shared Feishu/Lark bot: private navigation, explicitly scoped group threads and typed SDK boundaries.
 pub mod config;
 
 mod api;
@@ -21,23 +21,28 @@ pub use api::Identity;
 
 /// Read-only application identity probe; does not subscribe, send messages or run an agent.
 pub async fn inspect(settings: &config::Config) -> Result<Identity> {
+    inspect_region(config::Region::Feishu, settings).await
+}
+
+/// Read bot identity from the selected platform using direct transport only.
+pub async fn inspect_region(region: config::Region, settings: &config::Config) -> Result<Identity> {
     use api::Platform;
-    api::Api::new(settings)?.identity().await
+    api::Api::new(region, settings)?.identity().await
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Feishu transport unavailable (details redacted)")]
+    #[error("Feishu/Lark transport unavailable (details redacted)")]
     Request,
-    #[error("Feishu API rejected the request (code {0})")]
+    #[error("Feishu/Lark API rejected the request (code {0})")]
     Api(i32),
-    #[error("Feishu state unavailable")]
+    #[error("Feishu/Lark state unavailable")]
     Database(#[from] sqlx::Error),
-    #[error("Feishu payload could not be encoded")]
+    #[error("Feishu/Lark payload could not be encoded")]
     Encoding(#[from] serde_json::Error),
-    #[error("Feishu action rejected: {0}")]
+    #[error("Feishu/Lark action rejected: {0}")]
     Ui(&'static str),
     #[error(transparent)]
     Store(#[from] engine::storage::StoreError),

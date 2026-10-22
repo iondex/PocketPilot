@@ -29,8 +29,17 @@ impl Store {
     }
 
     pub async fn set_locale(&self, bot: i64, user: u64, locale: &str) -> Result<(), StoreError> {
-        sqlx::query("INSERT INTO preferences(bot_id,user_id,locale) VALUES(?,?,?) ON CONFLICT(bot_id,user_id) DO UPDATE SET locale=excluded.locale WHERE preferences.locale<>excluded.locale")
-            .bind(bot).bind(user as i64).bind(normalize(locale)).execute(&self.pool).await.map_err(|_|StoreError::Database)?;
+        sqlx::query(
+            "INSERT INTO preferences(bot_id,user_id,locale) VALUES(?,?,?) ON \
+            CONFLICT(bot_id,user_id) DO UPDATE SET locale=excluded.locale WHERE \
+            preferences.locale<>excluded.locale",
+        )
+        .bind(bot)
+        .bind(user as i64)
+        .bind(normalize(locale))
+        .execute(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)?;
         Ok(())
     }
 }

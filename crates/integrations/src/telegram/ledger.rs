@@ -207,7 +207,8 @@ impl Store {
 
     pub async fn binding(&self, bot: i64, chat: i64, topic: i32) -> Result<Option<Binding>, Error> {
         sqlx::query_as(
-            "SELECT * FROM bindings WHERE bot_id=? AND chat_id=? AND topic_id=? AND active=1",
+            "SELECT * FROM bindings WHERE bot_id=? AND chat_id=? AND topic_id=? AND \
+            active=1",
         )
         .bind(bot)
         .bind(chat)
@@ -238,21 +239,60 @@ impl Store {
     }
 
     pub async fn disable_chat(&self, bot: i64, chat: i64) -> Result<(), Error> {
-        sqlx::query("UPDATE bindings SET active=0,revision=revision+1 WHERE bot_id=? AND chat_id=? AND active=1")
-            .bind(bot).bind(chat).execute(&self.pool).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "UPDATE bindings SET active=0,revision=revision+1 WHERE bot_id=? AND \
+            chat_id=? AND active=1",
+        )
+        .bind(bot)
+        .bind(chat)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
     pub async fn unavailable_topic(&self, bot: i64, chat: i64, topic: i32) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
-        sqlx::query("UPDATE bindings SET active=0,revision=revision+1 WHERE bot_id=? AND chat_id=? AND topic_id=?")
-            .bind(bot).bind(chat).bind(topic).execute(&mut *tx).await.map_err(|_|Error::Database)?;
-        sqlx::query("UPDATE topic_requests SET state='rejected',topic_id=NULL WHERE bot_id=? AND chat_id=? AND topic_id=? AND state='accepted'")
-            .bind(bot).bind(chat).bind(topic).execute(&mut *tx).await.map_err(|_|Error::Database)?;
-        sqlx::query("UPDATE management_topics SET state='rejected',topic_id=NULL WHERE bot_id=? AND chat_id=? AND topic_id=? AND state='accepted'")
-            .bind(bot).bind(chat).bind(topic).execute(&mut *tx).await.map_err(|_|Error::Database)?;
-        sqlx::query("UPDATE deliveries SET state='rejected' WHERE bot_id=? AND chat_id=? AND topic_id=? AND state='pending'")
-            .bind(bot).bind(chat).bind(topic).execute(&mut *tx).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "UPDATE bindings SET active=0,revision=revision+1 WHERE bot_id=? AND \
+            chat_id=? AND topic_id=?",
+        )
+        .bind(bot)
+        .bind(chat)
+        .bind(topic)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
+        sqlx::query(
+            "UPDATE topic_requests SET state='rejected',topic_id=NULL WHERE bot_id=? \
+            AND chat_id=? AND topic_id=? AND state='accepted'",
+        )
+        .bind(bot)
+        .bind(chat)
+        .bind(topic)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
+        sqlx::query(
+            "UPDATE management_topics SET state='rejected',topic_id=NULL WHERE \
+            bot_id=? AND chat_id=? AND topic_id=? AND state='accepted'",
+        )
+        .bind(bot)
+        .bind(chat)
+        .bind(topic)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
+        sqlx::query(
+            "UPDATE deliveries SET state='rejected' WHERE bot_id=? AND chat_id=? AND \
+            topic_id=? AND state='pending'",
+        )
+        .bind(bot)
+        .bind(chat)
+        .bind(topic)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
         tx.commit().await.map_err(|_| Error::Database)
     }
 
@@ -276,9 +316,18 @@ impl Store {
         items: &BTreeMap<String, String>,
     ) -> Result<(), Error> {
         let items = serde_json::to_string(items).map_err(|_| Error::Database)?;
-        sqlx::query("UPDATE bindings SET observed_items=?,history_ready=1 WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1")
-            .bind(items).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision)
-            .execute(&self.pool).await.map_err(|_| Error::Database)?;
+        sqlx::query(
+            "UPDATE bindings SET observed_items=?,history_ready=1 WHERE bot_id=? AND \
+            chat_id=? AND topic_id=? AND revision=? AND active=1",
+        )
+        .bind(items)
+        .bind(binding.bot_id)
+        .bind(binding.chat_id)
+        .bind(binding.topic_id)
+        .bind(binding.revision)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
@@ -304,16 +353,38 @@ impl Store {
         let items = serde_json::to_string(items).map_err(|_| Error::Database)?;
         let payload = serde_json::to_string(body).map_err(|_| Error::Database)?;
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
-        let n=sqlx::query("UPDATE bindings SET observed_items=?,history_ready=? WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1")
-            .bind(items).bind(history_ready).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision)
-            .execute(&mut *tx).await.map_err(|_| Error::Database)?.rows_affected();
+        let n = sqlx::query(
+            "UPDATE bindings SET observed_items=?,history_ready=? WHERE bot_id=? AND \
+            chat_id=? AND topic_id=? AND revision=? AND active=1",
+        )
+        .bind(items)
+        .bind(history_ready)
+        .bind(binding.bot_id)
+        .bind(binding.chat_id)
+        .bind(binding.topic_id)
+        .bind(binding.revision)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?
+        .rows_affected();
         if n != 1 {
             return Err(Error::Transition);
         }
         if !body.text.is_empty() {
-            sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,topic_id,source_key) DO NOTHING")
-            .bind(uuid::Uuid::now_v7().to_string()).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(source).bind(payload)
-            .execute(&mut *tx).await.map_err(|_| Error::Database)?;
+            sqlx::query(
+                "INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,\
+            state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,\
+            topic_id,source_key) DO NOTHING",
+            )
+            .bind(uuid::Uuid::now_v7().to_string())
+            .bind(binding.bot_id)
+            .bind(binding.chat_id)
+            .bind(binding.topic_id)
+            .bind(source)
+            .bind(payload)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?;
         }
         tx.commit().await.map_err(|_| Error::Database)
     }
@@ -328,8 +399,17 @@ impl Store {
         now_ms: i64,
     ) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
-        let prior=sqlx::query("SELECT id,payload,batch_opened_ms,batch_members FROM deliveries WHERE bot_id=? AND chat_id=? AND topic_id=? AND state='pending' AND batch_opened_ms IS NOT NULL ORDER BY rowid DESC LIMIT 1")
-            .bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).fetch_optional(&mut *tx).await.map_err(|_|Error::Database)?;
+        let prior = sqlx::query(
+            "SELECT id,payload,batch_opened_ms,batch_members FROM deliveries WHERE \
+            bot_id=? AND chat_id=? AND topic_id=? AND state='pending' AND \
+            batch_opened_ms IS NOT NULL ORDER BY rowid DESC LIMIT 1",
+        )
+        .bind(binding.bot_id)
+        .bind(binding.chat_id)
+        .bind(binding.topic_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
         let mut existing = None;
         let mut opened = now_ms;
         let mut count = members;
@@ -357,18 +437,51 @@ impl Store {
         let due = due_ms.saturating_add(999) / 1000;
         let payload = serde_json::to_string(&body).map_err(|_| Error::Database)?;
         if let Some(id) = existing {
-            sqlx::query("UPDATE deliveries SET payload=?,batch_members=?,not_before=? WHERE id=? AND state='pending'")
-                .bind(payload).bind(count as i64).bind(due).bind(id).execute(&mut *tx).await.map_err(|_|Error::Database)?;
+            sqlx::query(
+                "UPDATE deliveries SET payload=?,batch_members=?,not_before=? WHERE id=? \
+            AND state='pending'",
+            )
+            .bind(payload)
+            .bind(count as i64)
+            .bind(due)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?;
         } else {
             let id = uuid::Uuid::now_v7().to_string();
-            sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state,not_before,batch_opened_ms,batch_members) VALUES(?,?,?,?,?,?,'pending',?,?,?)")
-                .bind(&id).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(format!("live:{id}")).bind(payload).bind(due).bind(opened).bind(count as i64)
-                .execute(&mut *tx).await.map_err(|_|Error::Database)?;
+            sqlx::query(
+                "INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,\
+            state,not_before,batch_opened_ms,batch_members) VALUES(?,?,?,?,?,?,\
+            'pending',?,?,?)",
+            )
+            .bind(&id)
+            .bind(binding.bot_id)
+            .bind(binding.chat_id)
+            .bind(binding.topic_id)
+            .bind(format!("live:{id}"))
+            .bind(payload)
+            .bind(due)
+            .bind(opened)
+            .bind(count as i64)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?;
         }
         let items = serde_json::to_string(items).map_err(|_| Error::Database)?;
-        let n=sqlx::query("UPDATE bindings SET observed_items=?,history_ready=1 WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1")
-            .bind(items).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision)
-            .execute(&mut *tx).await.map_err(|_|Error::Database)?.rows_affected();
+        let n = sqlx::query(
+            "UPDATE bindings SET observed_items=?,history_ready=1 WHERE bot_id=? AND \
+            chat_id=? AND topic_id=? AND revision=? AND active=1",
+        )
+        .bind(items)
+        .bind(binding.bot_id)
+        .bind(binding.chat_id)
+        .bind(binding.topic_id)
+        .bind(binding.revision)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?
+        .rows_affected();
         if n != 1 {
             return Err(Error::Transition);
         }
@@ -380,8 +493,19 @@ impl Store {
         binding: &Binding,
         appearance: &crate::telegram::presentation::Appearance,
     ) -> Result<(), Error> {
-        sqlx::query("UPDATE bindings SET topic_title=?,status_text=?,status_message_id=NULL WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1")
-            .bind(&appearance.title).bind(appearance.receipt()).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision).execute(&self.pool).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "UPDATE bindings SET topic_title=?,status_text=?,status_message_id=NULL \
+            WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1",
+        )
+        .bind(&appearance.title)
+        .bind(appearance.receipt())
+        .bind(binding.bot_id)
+        .bind(binding.chat_id)
+        .bind(binding.topic_id)
+        .bind(binding.revision)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
@@ -391,16 +515,34 @@ impl Store {
         message: i32,
         text: &str,
     ) -> Result<(), Error> {
-        sqlx::query("UPDATE bindings SET status_message_id=?,status_text=? WHERE bot_id=? AND chat_id=? AND topic_id=? AND active=1")
-            .bind(message).bind(text).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id)
-            .execute(&self.pool).await.map_err(|_| Error::Database)?;
+        sqlx::query(
+            "UPDATE bindings SET status_message_id=?,status_text=? WHERE bot_id=? \
+            AND chat_id=? AND topic_id=? AND active=1",
+        )
+        .bind(message)
+        .bind(text)
+        .bind(binding.bot_id)
+        .bind(binding.chat_id)
+        .bind(binding.topic_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
     pub async fn topic_title_receipt(&self, binding: &Binding, title: &str) -> Result<(), Error> {
-        sqlx::query("UPDATE bindings SET topic_title=? WHERE bot_id=? AND chat_id=? AND topic_id=? AND revision=? AND active=1")
-            .bind(title).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(binding.revision)
-            .execute(&self.pool).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "UPDATE bindings SET topic_title=? WHERE bot_id=? AND chat_id=? AND \
+            topic_id=? AND revision=? AND active=1",
+        )
+        .bind(title)
+        .bind(binding.bot_id)
+        .bind(binding.chat_id)
+        .bind(binding.topic_id)
+        .bind(binding.revision)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
@@ -413,9 +555,21 @@ impl Store {
         now: i64,
     ) -> Result<String, Error> {
         let token = uuid::Uuid::new_v4().simple().to_string();
-        sqlx::query("INSERT INTO callbacks(token,bot_id,user_id,chat_id,topic_id,config_hash,payload,expires_at) VALUES(?,?,?,?,?,?,?,?)")
-            .bind(&token).bind(bot).bind(input.user as i64).bind(input.chat).bind(input.topic).bind(config_hash).bind(body).bind(now+600)
-            .execute(&self.pool).await.map_err(|_| Error::Database)?;
+        sqlx::query(
+            "INSERT INTO callbacks(token,bot_id,user_id,chat_id,topic_id,config_hash,\
+            payload,expires_at) VALUES(?,?,?,?,?,?,?,?)",
+        )
+        .bind(&token)
+        .bind(bot)
+        .bind(input.user as i64)
+        .bind(input.chat)
+        .bind(input.topic)
+        .bind(config_hash)
+        .bind(body)
+        .bind(now + 600)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(token)
     }
 
@@ -426,9 +580,21 @@ impl Store {
         hash: &str,
         now: i64,
     ) -> Result<Option<String>, Error> {
-        sqlx::query_scalar("UPDATE callbacks SET consumed=1 WHERE token=? AND bot_id=? AND user_id=? AND chat_id=? AND topic_id=? AND config_hash=? AND expires_at>? AND consumed=0 RETURNING payload")
-            .bind(input.callback.as_deref()).bind(bot).bind(input.user as i64).bind(input.chat).bind(input.topic).bind(hash).bind(now)
-            .fetch_optional(&self.pool).await.map_err(|_| Error::Database)
+        sqlx::query_scalar(
+            "UPDATE callbacks SET consumed=1 WHERE token=? AND bot_id=? AND \
+            user_id=? AND chat_id=? AND topic_id=? AND config_hash=? AND \
+            expires_at>? AND consumed=0 RETURNING payload",
+        )
+        .bind(input.callback.as_deref())
+        .bind(bot)
+        .bind(input.user as i64)
+        .bind(input.chat)
+        .bind(input.topic)
+        .bind(hash)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| Error::Database)
     }
 
     pub async fn callback_live(
@@ -438,9 +604,21 @@ impl Store {
         hash: &str,
         now: i64,
     ) -> Result<bool, Error> {
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM callbacks WHERE token=? AND bot_id=? AND user_id=? AND chat_id=? AND topic_id=? AND config_hash=? AND expires_at>? AND consumed=1)")
-            .bind(input.callback.as_deref()).bind(bot).bind(input.user as i64).bind(input.chat).bind(input.topic).bind(hash).bind(now)
-            .fetch_one(&self.pool).await.map_err(|_|Error::Database)
+        sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM callbacks WHERE token=? AND bot_id=? AND \
+            user_id=? AND chat_id=? AND topic_id=? AND config_hash=? AND \
+            expires_at>? AND consumed=1)",
+        )
+        .bind(input.callback.as_deref())
+        .bind(bot)
+        .bind(input.user as i64)
+        .bind(input.chat)
+        .bind(input.topic)
+        .bind(hash)
+        .bind(now)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| Error::Database)
     }
 
     pub async fn dispatch_authorized(
@@ -455,15 +633,33 @@ impl Store {
             return Err(Error::Unauthorized);
         }
         if let Some(binding) = binding {
-            let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM bindings WHERE bot_id=? AND chat_id=? AND topic_id=? AND instance_id=? AND thread_id=? AND revision=? AND active=1)")
-                .bind(bot).bind(input.chat).bind(input.topic).bind(&binding.instance_id).bind(&binding.thread_id).bind(binding.revision)
-                .fetch_one(&mut *tx).await.map_err(|_|Error::Database)?;
+            let active: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM bindings WHERE bot_id=? AND chat_id=? AND \
+            topic_id=? AND instance_id=? AND thread_id=? AND revision=? AND \
+            active=1)",
+            )
+            .bind(bot)
+            .bind(input.chat)
+            .bind(input.topic)
+            .bind(&binding.instance_id)
+            .bind(&binding.thread_id)
+            .bind(binding.revision)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?;
             if !active {
                 return Err(Error::ContainerConflict);
             }
         }
-        let n=sqlx::query("UPDATE operations SET state='dispatching',updated_at=unixepoch() WHERE id=? AND state='prepared'")
-            .bind(id).execute(&mut *tx).await.map_err(|_|Error::Database)?.rows_affected();
+        let n = sqlx::query(
+            "UPDATE operations SET state='dispatching',updated_at=unixepoch() WHERE \
+            id=? AND state='prepared'",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?
+        .rows_affected();
         if n != 1 {
             return Err(Error::Transition);
         }
@@ -477,8 +673,20 @@ impl Store {
         instance: &str,
         thread: &str,
     ) -> Result<bool, Error> {
-        let n=sqlx::query("INSERT INTO topic_requests(bot_id,chat_id,instance_id,thread_id,state) VALUES(?,?,?,?,'dispatching') ON CONFLICT(bot_id,chat_id,instance_id,thread_id) DO UPDATE SET state='dispatching' WHERE topic_requests.state='rejected'")
-            .bind(bot).bind(chat).bind(instance).bind(thread).execute(&self.pool).await.map_err(|_| Error::Database)?.rows_affected();
+        let n = sqlx::query(
+            "INSERT INTO topic_requests(bot_id,chat_id,instance_id,thread_id,state) \
+            VALUES(?,?,?,?,'dispatching') ON CONFLICT(bot_id,chat_id,instance_id,\
+            thread_id) DO UPDATE SET state='dispatching' WHERE \
+            topic_requests.state='rejected'",
+        )
+        .bind(bot)
+        .bind(chat)
+        .bind(instance)
+        .bind(thread)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?
+        .rows_affected();
         Ok(n == 1)
     }
 
@@ -491,8 +699,19 @@ impl Store {
         state: &str,
         topic: Option<i32>,
     ) -> Result<(), Error> {
-        sqlx::query("UPDATE topic_requests SET state=?,topic_id=? WHERE bot_id=? AND chat_id=? AND instance_id=? AND thread_id=?")
-            .bind(state).bind(topic).bind(bot).bind(chat).bind(instance).bind(thread).execute(&self.pool).await.map_err(|_| Error::Database)?;
+        sqlx::query(
+            "UPDATE topic_requests SET state=?,topic_id=? WHERE bot_id=? AND \
+            chat_id=? AND instance_id=? AND thread_id=?",
+        )
+        .bind(state)
+        .bind(topic)
+        .bind(bot)
+        .bind(chat)
+        .bind(instance)
+        .bind(thread)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
@@ -503,8 +722,17 @@ impl Store {
         instance: &str,
         thread: &str,
     ) -> Result<Option<i32>, Error> {
-        sqlx::query_scalar("SELECT topic_id FROM topic_requests WHERE bot_id=? AND chat_id=? AND instance_id=? AND thread_id=? AND state='accepted'")
-            .bind(bot).bind(chat).bind(instance).bind(thread).fetch_optional(&self.pool).await.map_err(|_| Error::Database)
+        sqlx::query_scalar(
+            "SELECT topic_id FROM topic_requests WHERE bot_id=? AND chat_id=? AND \
+            instance_id=? AND thread_id=? AND state='accepted'",
+        )
+        .bind(bot)
+        .bind(chat)
+        .bind(instance)
+        .bind(thread)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| Error::Database)
     }
 
     pub async fn enqueue_appearance(
@@ -513,16 +741,49 @@ impl Store {
         body: &Outbound,
     ) -> Result<(), Error> {
         let payload = serde_json::to_string(body).map_err(|_| Error::Database)?;
-        sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,topic_id,source_key) DO UPDATE SET payload=CASE WHEN deliveries.state='pending' AND json_extract(deliveries.payload,'$.icon_lookup_deferred')=1 THEN json_set(excluded.payload,'$.icon_lookup_deferred',json('true')) ELSE excluded.payload END,state='pending' WHERE deliveries.state<>'dispatching' AND deliveries.payload<>excluded.payload")
-            .bind(uuid::Uuid::now_v7().to_string()).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id).bind(format!("appearance:v2:{}:{}",binding.thread_id,binding.revision)).bind(payload).execute(&self.pool).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,\
+            state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,\
+            topic_id,source_key) DO UPDATE SET payload=CASE WHEN \
+            deliveries.state='pending' AND json_extract(deliveries.payload,\
+            '$.icon_lookup_deferred')=1 THEN json_set(excluded.payload,\
+            '$.icon_lookup_deferred',json('true')) ELSE excluded.payload END,\
+            state='pending' WHERE deliveries.state<>'dispatching' AND \
+            deliveries.payload<>excluded.payload",
+        )
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(binding.bot_id)
+        .bind(binding.chat_id)
+        .bind(binding.topic_id)
+        .bind(format!(
+            "appearance:v2:{}:{}",
+            binding.thread_id, binding.revision
+        ))
+        .bind(payload)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
     pub async fn enqueue_status(&self, binding: &Binding, body: &Outbound) -> Result<(), Error> {
         let payload = serde_json::to_string(body).map_err(|_| Error::Database)?;
-        sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,topic_id,source_key) DO UPDATE SET payload=excluded.payload,state='pending' WHERE deliveries.state IN ('pending','delivered','rejected') AND deliveries.payload<>excluded.payload")
-            .bind(uuid::Uuid::now_v7().to_string()).bind(binding.bot_id).bind(binding.chat_id).bind(binding.topic_id)
-            .bind(format!("status:{}",binding.thread_id)).bind(payload).execute(&self.pool).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,\
+            state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,\
+            topic_id,source_key) DO UPDATE SET payload=excluded.payload,\
+            state='pending' WHERE deliveries.state IN ('pending','delivered',\
+            'rejected') AND deliveries.payload<>excluded.payload",
+        )
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(binding.bot_id)
+        .bind(binding.chat_id)
+        .bind(binding.topic_id)
+        .bind(format!("status:{}", binding.thread_id))
+        .bind(payload)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 }

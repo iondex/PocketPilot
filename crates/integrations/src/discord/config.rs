@@ -1,3 +1,5 @@
+//! Hold Discord account policy and redact bot credentials from diagnostic formatting.
+
 use serde::Deserialize;
 
 #[derive(Clone, Deserialize)]

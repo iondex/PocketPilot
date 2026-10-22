@@ -12,9 +12,21 @@ impl Store {
     ) -> Result<HashSet<String>, engine::storage::StoreError> {
         let prefix = format!("telegram:{}:", binding.bot_id);
         let direct = format!("{prefix}message:{}:%:input", binding.chat_id);
-        let keys:Vec<String>=sqlx::query_scalar("SELECT source_key FROM operations o WHERE instance_id=? AND thread_id=? AND state IN ('dispatching','accepted','outcome_unknown') AND (source_key LIKE ? OR EXISTS(SELECT 1 FROM inbound_updates i WHERE i.bot_id=? AND i.chat_id=? AND o.source_key=?||i.event_key||':input'))")
-            .bind(&binding.instance_id).bind(&binding.thread_id).bind(direct).bind(binding.bot_id).bind(binding.chat_id).bind(&prefix)
-            .fetch_all(&self.pool).await.map_err(|_|engine::storage::StoreError::Database)?;
+        let keys: Vec<String> = sqlx::query_scalar(
+            "SELECT source_key FROM operations o WHERE instance_id=? AND thread_id=? \
+            AND state IN ('dispatching','accepted','outcome_unknown') AND \
+            (source_key LIKE ? OR EXISTS(SELECT 1 FROM inbound_updates i WHERE \
+            i.bot_id=? AND i.chat_id=? AND o.source_key=?||i.event_key||':input'))",
+        )
+        .bind(&binding.instance_id)
+        .bind(&binding.thread_id)
+        .bind(direct)
+        .bind(binding.bot_id)
+        .bind(binding.chat_id)
+        .bind(&prefix)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| engine::storage::StoreError::Database)?;
         Ok(keys
             .into_iter()
             .filter_map(|key| {

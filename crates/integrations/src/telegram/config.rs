@@ -1,3 +1,5 @@
+//! Declare Telegram deployment identity, language and explicit network proxy policy.
+
 use serde::Deserialize;
 
 #[derive(Clone, Deserialize)]

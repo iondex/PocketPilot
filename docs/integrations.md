@@ -1,6 +1,6 @@
 # 接入方案
 
-PocketPilot 在一台桥接主机运行，用消息平台接收用户操作，通过本机或 SSH 访问已有 agent runtime。Telegram、Slack、Discord、飞书可以在同一个 `serve` 进程中启用，共享允许连接的执行实例与操作账本。runtime 支持 Codex 原生入口及下面的 Claude Code 独立 server 首版；国际 Lark 及其他 runtime 的方案见[后续支持](support.md)。
+PocketPilot 在一台桥接主机运行，用消息平台接收用户操作，通过本机或 SSH 访问已有 agent runtime。Telegram、Slack、Discord、飞书可以在同一个 `serve` 进程中启用，共享允许连接的执行实例与操作账本。runtime 支持 Codex 原生入口及下面的 Claude Code 独立 server 首版；Lark 及其他 runtime 的方案见[后续支持](support.md)。
 
 ## 构建与启动
 
@@ -19,7 +19,7 @@ cargo clean
 
 配置和 token 只放私有根 TOML，文件权限建议 `0600`。程序不读取 `.env`，不包含其他配置文件。平台凭据、身份或代理更改后重启桥接。相对路径按配置文件所在目录解析；字段和默认值以公开配置示例为准。
 
-`doctor --credentials` 做离线凭据格式检查；`doctor --connect` 只读检查主机与已登记 runtime 入口。Telegram / Discord / 飞书平台探测分别使用 `doctor --telegram`、`doctor --discord`、`doctor --feishu`，不会注册命令或创建 agent 任务。Slack 的 token、owner DM 和 Socket Mode 在 `serve` 启动时验证。
+`doctor --credentials` 做离线凭据格式检查；`doctor --connect` 只读检查主机与已登记 runtime 入口。Telegram / Discord / 飞书 / Lark 平台探测分别使用 `doctor --telegram`、`doctor --discord`、`doctor --feishu`、`doctor --lark`，不会注册命令或创建 agent 任务。Slack 的 token、owner DM 和 Socket Mode 在 `serve` 启动时验证。
 
 ## 执行环境与控制资格
 
@@ -141,7 +141,7 @@ Telegram/Slack 允许纯文件输入，使用默认说明；Discord 要求 text�
 
 ## 代理与网络
 
-Telegram、Discord、Slack 可独立设置 `proxy`。省略或空字符串表示直连，不读取环境代理；配置代理后失败不自动回退直连。飞书固定直连，禁止配置 `proxy`（包括空字符串）；未来国际 Lark 也遵循直连约束。
+Telegram、Discord、Slack 可独立设置 `proxy`。省略或空字符串表示直连，不读取环境代理；配置代理后失败不自动回退直连。飞书和 Lark 固定直连，禁止配置 `proxy`（包括空字符串），也不读取环境代理。
 
 ```toml
 proxy = "http://192.0.2.10:7890"
@@ -163,7 +163,7 @@ Codex 的 `request_user_input` 或 Claude 的 `AskUserQuestion` 会显示“❓ 
 
 每题必须填写一次，单选填写完整选项文字；允许自定义时可填自由文本。多选使用 JSON 字符串数组，例如 `1: ["Rust", "Python"]`。一次提交全部题目，不附加文件。多行自由文本可用单元素 JSON 数组，例如 `1: ["第一行\n第二行"]`。回答码只属于当前 pending 请求，不是原生 session/request ID。
 
-Telegram 在绑定 topic 发送；Slack 在绑定 session thread 发送；Discord 在该 session channel 将模板填入 `/pp-ask` 的 text；飞书在绑定群 thread @机器人发送。四端共用解析规则，保留各自 owner、群、thread/topic/channel 与绑定 revision 的授权校验。没有 `!answer` 前缀的文字按普通输入处理，不能用直接发送某个选项来隐式批准问题。
+Telegram 在绑定 topic 发送；Slack 在绑定 session thread 发送；Discord 在该 session channel 将模板填入 `/pp-ask` 的 text；飞书和 Lark 在绑定群 thread @机器人发送。所有平台共用解析规则，保留各自 owner、群、thread/topic/channel 与绑定 revision 的授权校验。没有 `!answer` 前缀的文字按普通输入处理，不能用直接发送某个选项来隐式批准问题。
 
 问题取消、轮次结束、回答已发送或原生连接不可验证后，旧模板不可再提交。已显示的消息可能仍留在聊天历史中；以 runtime 当前 pending 为准，不从历史恢复回答权限。Codex 需原生模式实际提供 `request_user_input` 工具，PocketPilot 不自动切换模式或修改原生工具配置。Codex 只能回答投递给 PocketPilot 原连接的问题；其他 Desktop/CLI 界面的旧 pending 需回原生界面处理。Claude 代理重连可读取仍由独立 server 持有的问题，server 进程重启后旧回答码失效。
 
@@ -220,7 +220,7 @@ agent_binary = "/home/operator/.local/bin/claude"
 
 ## 飞书企业自建应用
 
-本接入使用**国内飞书**开发平台 [open.feishu.cn/app](https://open.feishu.cn/app)，REST 固定为 `https://open.feishu.cn`，配置段为 `[feishu]`。不使用国际 Lark 应用、群自定义 Webhook 机器人或公网回调服务器。认证、token 缓存和 WebSocket/卡片 ACK 复用 OpenLark 0.21.0；没有第二个 Python/Node 消息 sidecar。国内飞书与国际 Lark 的协议共性、身份隔离和后续共享实现方案见[飞书与 Lark](feishu-lark.md)；当前没有国际区域配置。
+飞书使用开发平台 [open.feishu.cn/app](https://open.feishu.cn/app)，REST 固定为 `https://open.feishu.cn`，配置段为 `[feishu]`。采用企业自建应用与 SDK 长连接，认证、token 缓存和 WebSocket/卡片 ACK 复用 OpenLark 0.21.0。Lark 使用独立的 `[lark]` 配置段及自己的应用凭据，底层共用同一套实现，详见 [Lark 安装](#lark-企业自建应用)与[共享实现边界](feishu-lark.md)。
 
 当前代码提供私聊目录、执行环境 → 项目 → session、命名空会话创建、已授权群中的独立 session 话题、文字/图片/文件输入、状态和最近历史、增量观察及公共绑定管理。已覆盖离线协议与隔离测试；真实应用的授权、客户端显示和事件投递仍需安装后验收。
 
@@ -317,7 +317,7 @@ cargo clean
 
 ### 常见配置问题与边界
 
-- **保存长连接提示客户端未连接**：先确认基础版本已发布、`doctor --feishu` 成功、`serve` 在线，且国内 App 的凭据未混入 Lark 国际应用。
+- **保存长连接提示客户端未连接**：先确认基础版本已发布、`doctor --feishu` 成功、`serve` 在线，且飞书 App 的凭据未混入 Lark 应用。
 - **文字能收，独立文件收不到**：检查是否只有 `group_at_msg` 权限；无 @ 附件需要全用户群消息事件权限。收到事件后下载失败，再核对 `im:message:readonly`、机器人是否仍在群中和消息资源是否仍可见。
 - **点击没有生效**：确认订阅新版 `card.action.trigger` 并发布；菜单只有指定 owner 在原消息/原聊天点击才有效，操作有效期五分钟，转发、复制、陈旧或重复点击不会执行任务。重新私聊打开目录。
 - **有消息但不进入 agent**：检查 owner 的应用内 open_id、tenant_key、群 allowlist 和 root/thread。不存在自动“当前会话”兜底。
@@ -325,3 +325,25 @@ cargo clean
 - **旧状态卡片无法更新**：飞书按 message ID 更新卡片有 14 天限制；话题路由仍保留，可用私聊刷新或话题 `/status` 获取新状态，不自动重建根话题。JSON 2.0 卡片要求兼容的飞书客户端（官方最低版本 7.20）。
 
 官方参考：[长连接事件](https://open.feishu.cn/document/ukTMukTMukTM/uYDNxYjL2QTM24iN0EjN/event-subscription-configure-/request-url-configuration-case)、[长连接回调](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/event-subscription-guide/callback-subscription/configure-callback-request-address)、[接收消息及权限](https://open.feishu.cn/document/server-docs/im-v1/message/events/receive)、[卡片回传交互](https://open.feishu.cn/document/feishu-cards/card-callback-communication)、[话题概述](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/thread-introduction)、[资源下载](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message-resource/get)、[用户 ID](https://open.feishu.cn/document/home/user-identity-introduction/open-id)、[群 ID](https://open.feishu.cn/document/server-docs/group/chat/chat-id-description)、[企业信息](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/tenant-v2/tenant/query)。
+
+## Lark 企业自建应用
+
+Lark 与飞书共用消息、卡片、导航、附件、问答、绑定和观察逻辑。在 Lark 开发者后台创建企业自建应用、开启机器人和长连接，配置与上方飞书流程对应的权限、消息事件和卡片回调，再发布应用。使用目标 Lark 租户的 app ID、secret、tenant key、owner open ID 和允许群组，不复制其他应用的身份值。
+
+```toml
+[lark]
+app_id = "cli_example_lark"
+app_secret = "replace-with-lark-app-secret"
+tenant_key = "tenant_example_lark"
+owner_open_id = "ou_example_lark_owner"
+
+[[lark.groups]]
+chat_id = "oc_example_lark_group"
+name = "Development"
+```
+
+`[lark]` 和 `[feishu]` 可同时存在，字段与校验规则相同。程序分别创建 SDK 客户端；Lark 的 REST 与 WebSocket 发现固定使用 `https://open.larksuite.com`，飞书使用 `https://open.feishu.cn`，WebSocket 地址由各自的官方发现接口返回。两端都只允许直连，拒绝 `proxy`（包括空字符串）以及自定义域名/relay 配置。修改账号或群组后重启桥接服务。
+
+先执行 `./dist/pocketpilot doctor --lark` 只读检查机器人身份，再运行 `serve`。可以与 `--feishu` 同时检查。日常菜单、群话题、@输入、附件和 `!answer` 的操作与飞书一致；每端只接受自己配置的应用、租户、owner、群和回调 nonce。
+
+本地测试已覆盖两端的授权、群 thread、输入与问答提交、去重、未知结果恢复、HTTP 令牌缓存、SDK WebSocket 发现和卡片 ACK；这些测试使用合成协议 fixture。真实租户的权限开通、客户端卡片显示、消息/附件交付和断线恢复仍需部署后验收，详见[共享实现与验证](feishu-lark.md)。

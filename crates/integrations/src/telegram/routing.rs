@@ -1,3 +1,5 @@
+//! Route Telegram menus, callbacks and messages using the current authorized snapshot.
+
 use super::{Action, Error, Service};
 use crate::telegram::api::Button;
 use crate::telegram::api::Input;

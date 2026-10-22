@@ -2,7 +2,7 @@
 
 ![PocketPilot — Your coding sessions, from the chat tools you already use.](assets/brand/banner.en.png)
 
-[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Contributing](CONTRIBUTING.md) · [Brand assets](assets/brand/README.md)
+[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Contributing](CONTRIBUTING.md)
 
 PocketPilot is a self-hosted bridge between messaging platforms and AI coding runtimes on your local or SSH-connected hosts. Choose a host, project and session; read progress, send tasks, upload files and answer structured agent questions. The native runtime owns execution and session history.
 
@@ -10,19 +10,19 @@ PocketPilot is a self-hosted bridge between messaging platforms and AI coding ru
 
 | Layer | Implementation | Boundary |
 | --- | --- | --- |
-| Chat | Telegram, Slack, Discord, domestic Feishu | All four compile by default; only configured integrations run |
+| Chat | Telegram, Slack, Discord, Feishu, Lark | All five compile by default; only configured integrations run |
 | Hosts | Local processes and OpenSSH | Access is restricted to configured project roots |
 | Codex | An existing, shared app-server | Newly discovered instances are read-only until explicitly verified |
 | Claude Code | A separate PocketPilot runtime server | Only sessions created by that server; active-turn steer is unavailable |
 | Interface languages | English and Simplified Chinese | Explicit locale; user content is not translated |
 
-Telegram uses private-chat topics, Slack uses owner DM threads, Discord uses dedicated session channels, and Feishu uses authorized group topics with a private navigation menu. Several chat platforms can access the same native session through the bridge's shared connection and operation ledger.
+Telegram uses private-chat topics, Slack uses owner DM threads, Discord uses dedicated session channels, and Feishu/Lark use authorized group topics with a private navigation menu. Several chat platforms can access the same native session through the bridge's shared connection and operation ledger.
 
-Feishu has offline protocol and isolation tests; a real tenant installation still needs acceptance testing. International Lark and Pi Coding Agent are planned, not supported. See the [support roadmap](docs/support.md).
+Feishu and Lark share one implementation, with separate application credentials and state. Local protocol and isolation tests cover both; real tenant installations still need acceptance testing. Pi Coding Agent is planned. See the [support roadmap](docs/support.md).
 
 ## Quick start
 
-The bridge targets Linux and macOS. You need the repository's stable Rust toolchain (manifest minimum: 1.94), Make, Python 3.10+ (documentation checks), a C build toolchain, OpenSSH for remote hosts, and **Codex CLI 0.162.1**, the protocol version pinned in CI. The build exports typed protocol definitions from that CLI without starting a model task. See [installation](docs/getting-started.md) for prerequisites and runtime setup.
+The bridge targets Linux and macOS. You need the repository's stable Rust toolchain (manifest minimum: 1.94), Make, Python 3 (test fixtures), a C build toolchain, OpenSSH for remote hosts, and **Codex CLI 0.162.1**, the protocol version pinned in CI. The build exports typed protocol definitions from that CLI without starting a model task. See [installation](docs/getting-started.md) for prerequisites and runtime setup.
 
 ```sh
 git clone --branch public https://github.com/iondex/PocketPilot.git
@@ -32,7 +32,7 @@ cp pocketpilot.example.toml pocketpilot.toml
 chmod 600 pocketpilot.toml
 ```
 
-Edit `pocketpilot.toml`: enable the chat platform you use, enter its credentials and owner identity, and configure your host and allowed project roots. Telegram requires your numeric `owner_user_id`; **Feishu accepts no proxy setting**. Omit unused platform sections. The program does not load `.env` files.
+Edit `pocketpilot.toml`: enable the chat platform you use, enter its credentials and owner identity, and configure your host and allowed project roots. Telegram requires your numeric `owner_user_id`; **Feishu and Lark accept no proxy setting**. Omit unused platform sections. The program does not load `.env` files.
 
 ```sh
 make check

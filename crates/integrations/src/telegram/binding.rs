@@ -1,3 +1,5 @@
+//! Bind Telegram topics to native sessions while preserving provider and project constraints.
+
 use super::{Error, Service, item_hashes, topic_title};
 use crate::telegram::api::Input;
 use crate::telegram::ledger::Outbound;

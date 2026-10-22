@@ -1,3 +1,5 @@
+//! Dispatch explicit CLI actions and localize failures at the process boundary.
+
 use app::config::{self, Config, TransportKind};
 use clap::{Parser, Subcommand};
 use engine::catalog::Catalog;

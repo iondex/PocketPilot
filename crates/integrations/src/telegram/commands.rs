@@ -1,3 +1,5 @@
+//! Handle explicit Telegram commands through shared navigation and authorization rules.
+
 use super::{Action, Error, Service, topic_title};
 use crate::telegram::api::Input;
 use crate::telegram::ledger::Outbound;

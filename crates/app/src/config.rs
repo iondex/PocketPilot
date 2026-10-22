@@ -1,3 +1,5 @@
+//! Combine platform settings with host policy and identify changes that require restart.
+
 pub use engine::config::{ConfigError, Host, Logging, TransportKind, Workspace};
 pub use integrations::discord::config::Config as Discord;
 pub use integrations::feishu::config::Config as Feishu;
@@ -15,6 +17,8 @@ pub struct Config {
     pub discord: Option<Discord>,
     pub slack: Option<Slack>,
     pub feishu: Option<Feishu>,
+    /// Lark shares the credential schema; its table selects a separate client and scope.
+    pub lark: Option<Feishu>,
 }
 
 impl std::ops::Deref for Config {
@@ -40,7 +44,11 @@ pub fn load(path: &Path) -> Result<LoadedConfig, ConfigError> {
 pub fn parse(path: &Path, text: &str) -> Result<LoadedConfig, ConfigError> {
     let mut config: Config = toml::from_str(text).map_err(|_| ConfigError::Parse)?;
     config.runtime.prepare(path, text)?;
-    if config.feishu.as_ref().is_some_and(|s| !s.valid()) {
+    if [config.feishu.as_ref(), config.lark.as_ref()]
+        .into_iter()
+        .flatten()
+        .any(|s| !s.valid())
+    {
         return Err(ConfigError::Credentials);
     }
     if config.slack.as_ref().is_some_and(|s| !s.valid()) {
@@ -68,6 +76,7 @@ pub fn parse(path: &Path, text: &str) -> Result<LoadedConfig, ConfigError> {
     })
 }
 
+/// Fingerprint platform credentials and allowlists separately from reloadable engine state.
 pub fn runtime_parser(
     path: &Path,
     text: &str,
@@ -75,7 +84,7 @@ pub fn runtime_parser(
     let loaded = parse(path, text)?;
     let root = loaded.config;
     let restart_key = engine::digest(&format!(
-        "{:?}\0{:?}\0{:?}\0{:?}",
+        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
         root.telegram.as_ref().map(|t| (
             &t.token,
             t.owner_user_id,
@@ -94,6 +103,16 @@ pub fn runtime_parser(
             s.proxy.restart_key()
         )),
         root.feishu.as_ref().map(|s| (
+            &s.app_id,
+            &s.app_secret,
+            &s.tenant_key,
+            &s.owner_open_id,
+            s.groups
+                .iter()
+                .map(|g| (&g.chat_id, &g.name))
+                .collect::<Vec<_>>()
+        )),
+        root.lark.as_ref().map(|s| (
             &s.app_id,
             &s.app_secret,
             &s.tenant_key,

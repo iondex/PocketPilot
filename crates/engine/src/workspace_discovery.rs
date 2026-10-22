@@ -18,8 +18,16 @@ impl Catalog {
         updated_at: Option<i64>,
     ) -> Result<(), StoreError> {
         if let Some(at) = updated_at.filter(|at| *at > 0) {
-            sqlx::query("UPDATE catalog_workspaces SET payload=json_set(payload,'$.updated_at',?) WHERE id=? AND COALESCE(json_extract(payload,'$.updated_at'),0)<?")
-                .bind(at).bind(id).bind(at).execute(&self.pool).await.map_err(|_|StoreError::Database)?;
+            sqlx::query(
+                "UPDATE catalog_workspaces SET payload=json_set(payload,'$.updated_at',\
+            ?) WHERE id=? AND COALESCE(json_extract(payload,'$.updated_at'),0)<?",
+            )
+            .bind(at)
+            .bind(id)
+            .bind(at)
+            .execute(&self.pool)
+            .await
+            .map_err(|_| StoreError::Database)?;
         }
         Ok(())
     }
@@ -53,7 +61,8 @@ impl Catalog {
         let mut tx = self.pool.begin().await.map_err(|_| ConfigError::Io)?;
         if automatic {
             let excluded: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM workspace_exclusions WHERE provider_id=? AND cwd=?)",
+                "SELECT EXISTS(SELECT 1 FROM workspace_exclusions WHERE provider_id=? \
+            AND cwd=?)",
             )
             .bind(provider)
             .bind(cwd)
@@ -71,8 +80,15 @@ impl Catalog {
                 .await
                 .map_err(|_| ConfigError::Io)?;
         }
-        let existing:Option<String>=sqlx::query_scalar("SELECT payload FROM catalog_workspaces WHERE provider_id=? AND json_extract(payload,'$.cwd')=?")
-            .bind(provider).bind(cwd).fetch_optional(&mut *tx).await.map_err(|_|ConfigError::Io)?;
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT payload FROM catalog_workspaces WHERE provider_id=? AND \
+            json_extract(payload,'$.cwd')=?",
+        )
+        .bind(provider)
+        .bind(cwd)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| ConfigError::Io)?;
         if let Some(existing) = existing {
             let workspace: Workspace =
                 serde_json::from_str(&existing).map_err(|_| ConfigError::Invalid)?;

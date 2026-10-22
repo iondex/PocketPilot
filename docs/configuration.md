@@ -40,13 +40,13 @@
 | `[telegram]` | `token`、正整数 `owner_user_id` | 可选显式无认证 HTTP CONNECT 代理 |
 | `[discord]` | `token`、非零 `guild_id`；owner 由服务器查询 | 可选显式代理 |
 | `[slack]` | `app_token`、`bot_token`、`app_id`、`team_id`、`owner_user_id` | 可选显式代理 |
-| `[feishu]` | `app_id`、`app_secret`、`tenant_key`、`owner_open_id` 和至少一个 `groups` | **固定直连，禁止 `proxy` 字段，包括空字符串** |
+| `[feishu]` / `[lark]` | `app_id`、`app_secret`、`tenant_key`、`owner_open_id` 和至少一个 `groups` | **固定直连，禁止 `proxy` 字段，包括空字符串** |
 
-国际 Lark 尚未开放配置；后续接入也必须直连，不开放代理参数。Telegram / Discord / Slack 省略 `proxy` 或设为空字符串时直连，不继承环境代理；配置代理后失败不回退直连。飞书 HTTP 显式禁用环境代理，WebSocket 使用 SDK 的直接连接入口。
+`[feishu]` 和 `[lark]` 使用相同字段，可单独或同时配置；分别填写各自的应用凭据、租户、owner 和允许群组。两端均固定直连，不开放代理参数。Telegram / Discord / Slack 省略 `proxy` 或设为空字符串时直连，不继承环境代理；配置代理后失败不回退直连。飞书和 Lark 的 HTTP 显式禁用环境代理，WebSocket 使用 SDK 的直接连接入口。
 
 Telegram 仅接受 owner 在本人私聊内的消息和回调，不能配置群聊或用户 allowlist。`default_locale` 支持 `zh-CN`、`en`、`auto`；用户可通过 `/language` 独立覆盖。数字 ID 必须大于零且能表示为正的私聊 ID，缺失时配置失败。
 
-飞书最多允许 32 个不重复群，每个群填写 `chat_id` 和显示用 `name`。tenant、owner、群与绑定 root/thread 都会核对；仅在平台中取得更大读取权限不会扩大本地执行权限。完整 scopes 和发布步骤见[飞书安装](integrations.md#飞书企业自建应用)。
+飞书和 Lark 各自最多允许 32 个不重复群，每个群填写 `chat_id` 和显示用 `name`。tenant、owner、群与绑定 root/thread 都会核对；仅在平台中取得更大读取权限不会扩大本地执行权限。完整 scopes 和发布步骤见[飞书安装](integrations.md#飞书企业自建应用)与 [Lark 安装](integrations.md#lark-企业自建应用)。
 
 ## 执行主机
 

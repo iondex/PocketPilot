@@ -1,3 +1,5 @@
+//! Translate explicit Discord commands into scoped navigation and session actions.
+
 use super::{Result, Service, Target, error};
 use crate::discord::Api;
 use crate::discord::Command;

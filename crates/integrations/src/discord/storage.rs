@@ -74,9 +74,17 @@ impl Store {
             .await
             .map_err(|_| Error::Database)?;
         // Keep the latest screens bounded even when the owner repeatedly refreshes.
-        sqlx::query("DELETE FROM discord_ui_actions WHERE rowid IN (SELECT rowid FROM discord_ui_actions WHERE bot=? AND guild=? AND owner=? ORDER BY rowid DESC LIMIT -1 OFFSET 1024)")
-            .bind(input.bot.to_string()).bind(input.guild.to_string()).bind(input.user.to_string())
-            .execute(&mut *tx).await.map_err(|_| Error::Database)?;
+        sqlx::query(
+            "DELETE FROM discord_ui_actions WHERE rowid IN (SELECT rowid FROM \
+            discord_ui_actions WHERE bot=? AND guild=? AND owner=? ORDER BY rowid \
+            DESC LIMIT -1 OFFSET 1024)",
+        )
+        .bind(input.bot.to_string())
+        .bind(input.guild.to_string())
+        .bind(input.user.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
         let ttl = if matches!(
             &action,
             crate::discord::ui::Action::Navigate(
@@ -90,10 +98,21 @@ impl Store {
             86400
         };
         let nonce = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO discord_ui_actions(nonce,bot,guild,owner,channel,config_hash,action,expires) VALUES(?,?,?,?,?,?,?,?)")
-            .bind(&nonce).bind(input.bot.to_string()).bind(input.guild.to_string()).bind(input.user.to_string()).bind(input.channel.to_string())
-            .bind(hash).bind(serde_json::to_string(&action).map_err(|_| Error::Database)?)
-            .bind(engine::now()+ttl).execute(&mut *tx).await.map_err(|_| Error::Database)?;
+        sqlx::query(
+            "INSERT INTO discord_ui_actions(nonce,bot,guild,owner,channel,\
+            config_hash,action,expires) VALUES(?,?,?,?,?,?,?,?)",
+        )
+        .bind(&nonce)
+        .bind(input.bot.to_string())
+        .bind(input.guild.to_string())
+        .bind(input.user.to_string())
+        .bind(input.channel.to_string())
+        .bind(hash)
+        .bind(serde_json::to_string(&action).map_err(|_| Error::Database)?)
+        .bind(engine::now() + ttl)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
         tx.commit().await.map_err(|_| Error::Database)?;
         Ok(nonce)
     }
@@ -106,9 +125,21 @@ impl Store {
         value: Option<&str>,
     ) -> Result<Option<crate::discord::ui::View>, Error> {
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
-        let row = sqlx::query("SELECT action FROM discord_ui_actions WHERE nonce=? AND bot=? AND guild=? AND owner=? AND channel=? AND config_hash=? AND expires>=? AND consumed=0")
-            .bind(nonce).bind(input.bot.to_string()).bind(input.guild.to_string()).bind(input.user.to_string()).bind(input.channel.to_string())
-            .bind(hash).bind(engine::now()).fetch_optional(&mut *tx).await.map_err(|_| Error::Database)?;
+        let row = sqlx::query(
+            "SELECT action FROM discord_ui_actions WHERE nonce=? AND bot=? AND \
+            guild=? AND owner=? AND channel=? AND config_hash=? AND expires>=? AND \
+            consumed=0",
+        )
+        .bind(nonce)
+        .bind(input.bot.to_string())
+        .bind(input.guild.to_string())
+        .bind(input.user.to_string())
+        .bind(input.channel.to_string())
+        .bind(hash)
+        .bind(engine::now())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
         let Some(row) = row else {
             return Ok(None);
         };
@@ -181,16 +212,52 @@ impl Store {
         let guild = guild.to_string();
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
         let (n, row) = if let Some((instance, thread)) = session {
-            let n=sqlx::query("INSERT INTO discord_provisions(bot,guild,instance,thread,state) VALUES(?,?,?,?,'dispatching') ON CONFLICT DO NOTHING")
-                .bind(&bot).bind(&guild).bind(instance).bind(thread).execute(&mut *tx).await.map_err(|_|Error::Database)?.rows_affected();
-            let row=sqlx::query("SELECT state,channel FROM discord_provisions WHERE bot=? AND guild=? AND instance=? AND thread=?")
-                .bind(&bot).bind(&guild).bind(instance).bind(thread).fetch_one(&mut *tx).await.map_err(|_|Error::Database)?;
+            let n = sqlx::query(
+                "INSERT INTO discord_provisions(bot,guild,instance,thread,state) \
+            VALUES(?,?,?,?,'dispatching') ON CONFLICT DO NOTHING",
+            )
+            .bind(&bot)
+            .bind(&guild)
+            .bind(instance)
+            .bind(thread)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?
+            .rows_affected();
+            let row = sqlx::query(
+                "SELECT state,channel FROM discord_provisions WHERE bot=? AND guild=? \
+            AND instance=? AND thread=?",
+            )
+            .bind(&bot)
+            .bind(&guild)
+            .bind(instance)
+            .bind(thread)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?;
             (n, row)
         } else {
-            let n=sqlx::query("INSERT INTO discord_categories(bot,guild,workspace,state) VALUES(?,?,?,'dispatching') ON CONFLICT DO NOTHING")
-                .bind(&bot).bind(&guild).bind(workspace).execute(&mut *tx).await.map_err(|_|Error::Database)?.rows_affected();
-            let row=sqlx::query("SELECT state,channel FROM discord_categories WHERE bot=? AND guild=? AND workspace=?")
-                .bind(&bot).bind(&guild).bind(workspace).fetch_one(&mut *tx).await.map_err(|_|Error::Database)?;
+            let n = sqlx::query(
+                "INSERT INTO discord_categories(bot,guild,workspace,state) VALUES(?,?,?,\
+            'dispatching') ON CONFLICT DO NOTHING",
+            )
+            .bind(&bot)
+            .bind(&guild)
+            .bind(workspace)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?
+            .rows_affected();
+            let row = sqlx::query(
+                "SELECT state,channel FROM discord_categories WHERE bot=? AND guild=? \
+            AND workspace=?",
+            )
+            .bind(&bot)
+            .bind(&guild)
+            .bind(workspace)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?;
             (n, row)
         };
         tx.commit().await.map_err(|_| Error::Database)?;
@@ -213,16 +280,39 @@ impl Store {
         workspace: &str,
         channel: u64,
     ) -> Result<(), Error> {
-        sqlx::query("UPDATE discord_categories SET state='accepted',channel=? WHERE bot=? AND guild=? AND workspace=? AND state='dispatching'")
-            .bind(channel.to_string()).bind(bot.to_string()).bind(guild.to_string()).bind(workspace).execute(&self.pool).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "UPDATE discord_categories SET state='accepted',channel=? WHERE bot=? \
+            AND guild=? AND workspace=? AND state='dispatching'",
+        )
+        .bind(channel.to_string())
+        .bind(bot.to_string())
+        .bind(guild.to_string())
+        .bind(workspace)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
     pub async fn discord_bind(&self, b: &Binding) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
-        sqlx::query("INSERT INTO discord_bindings(bot,guild,channel,owner,workspace,instance,thread,cwd,endpoint) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(bot,guild,channel) DO NOTHING")
-            .bind(&b.bot).bind(&b.guild).bind(&b.channel).bind(&b.owner).bind(&b.workspace).bind(&b.instance).bind(&b.thread).bind(&b.cwd).bind(&b.endpoint)
-            .execute(&mut *tx).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "INSERT INTO discord_bindings(bot,guild,channel,owner,workspace,instance,\
+            thread,cwd,endpoint) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(bot,guild,\
+            channel) DO NOTHING",
+        )
+        .bind(&b.bot)
+        .bind(&b.guild)
+        .bind(&b.channel)
+        .bind(&b.owner)
+        .bind(&b.workspace)
+        .bind(&b.instance)
+        .bind(&b.thread)
+        .bind(&b.cwd)
+        .bind(&b.endpoint)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
         let saved: Binding =
             sqlx::query_as("SELECT * FROM discord_bindings WHERE bot=? AND guild=? AND channel=?")
                 .bind(&b.bot)
@@ -240,10 +330,28 @@ impl Store {
         {
             return Err(Error::ContainerConflict);
         }
-        sqlx::query("UPDATE discord_bindings SET active=1,revision=revision+1 WHERE bot=? AND guild=? AND channel=? AND active=0")
-            .bind(&b.bot).bind(&b.guild).bind(&b.channel).execute(&mut *tx).await.map_err(|_|Error::Database)?;
-        sqlx::query("UPDATE discord_provisions SET state='accepted',channel=? WHERE bot=? AND guild=? AND instance=? AND thread=? AND state='dispatching'")
-            .bind(&b.channel).bind(&b.bot).bind(&b.guild).bind(&b.instance).bind(&b.thread).execute(&mut *tx).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "UPDATE discord_bindings SET active=1,revision=revision+1 WHERE bot=? \
+            AND guild=? AND channel=? AND active=0",
+        )
+        .bind(&b.bot)
+        .bind(&b.guild)
+        .bind(&b.channel)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
+        sqlx::query(
+            "UPDATE discord_provisions SET state='accepted',channel=? WHERE bot=? \
+            AND guild=? AND instance=? AND thread=? AND state='dispatching'",
+        )
+        .bind(&b.channel)
+        .bind(&b.bot)
+        .bind(&b.guild)
+        .bind(&b.instance)
+        .bind(&b.thread)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?;
         tx.commit().await.map_err(|_| Error::Database)
     }
 
@@ -263,7 +371,8 @@ impl Store {
         channel: u64,
     ) -> Result<Option<Binding>, Error> {
         sqlx::query_as(
-            "SELECT * FROM discord_bindings WHERE bot=? AND guild=? AND channel=? AND active=1",
+            "SELECT * FROM discord_bindings WHERE bot=? AND guild=? AND channel=? \
+            AND active=1",
         )
         .bind(bot.to_string())
         .bind(guild.to_string())
@@ -281,8 +390,21 @@ impl Store {
         observed: &str,
     ) -> Result<(), Error> {
         let mut tx = self.pool.begin().await.map_err(|_| Error::Database)?;
-        let n=sqlx::query("UPDATE discord_bindings SET observed_items=?,history_ready=1 WHERE bot=? AND guild=? AND channel=? AND revision=? AND active=1 AND observed_items=?")
-            .bind(observed).bind(&b.bot).bind(&b.guild).bind(&b.channel).bind(b.revision).bind(&b.observed_items).execute(&mut *tx).await.map_err(|_|Error::Database)?.rows_affected();
+        let n = sqlx::query(
+            "UPDATE discord_bindings SET observed_items=?,history_ready=1 WHERE \
+            bot=? AND guild=? AND channel=? AND revision=? AND active=1 AND \
+            observed_items=?",
+        )
+        .bind(observed)
+        .bind(&b.bot)
+        .bind(&b.guild)
+        .bind(&b.channel)
+        .bind(b.revision)
+        .bind(&b.observed_items)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| Error::Database)?
+        .rows_affected();
         if n == 1 && !output.parts.is_empty() {
             let native = output
                 .parts
@@ -291,9 +413,22 @@ impl Store {
                 .map(crate::discord::native::Part::V2)
                 .collect::<Vec<_>>();
             let parts = serde_json::to_string(&native).map_err(|_| Error::Database)?;
-            sqlx::query("INSERT INTO discord_deliveries(id,bot,guild,channel,source_key,revision,payload,rendered_parts,state) VALUES(?,?,?,?,?,?,?,?,'pending') ON CONFLICT DO NOTHING")
-                .bind(uuid::Uuid::now_v7().to_string()).bind(&b.bot).bind(&b.guild).bind(&b.channel).bind(source).bind(b.revision).bind(&output.text).bind(parts)
-                .execute(&mut *tx).await.map_err(|_|Error::Database)?;
+            sqlx::query(
+                "INSERT INTO discord_deliveries(id,bot,guild,channel,source_key,revision,\
+            payload,rendered_parts,state) VALUES(?,?,?,?,?,?,?,?,'pending') ON \
+            CONFLICT DO NOTHING",
+            )
+            .bind(uuid::Uuid::now_v7().to_string())
+            .bind(&b.bot)
+            .bind(&b.guild)
+            .bind(&b.channel)
+            .bind(source)
+            .bind(b.revision)
+            .bind(&output.text)
+            .bind(parts)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?;
         }
         tx.commit().await.map_err(|_| Error::Database)
     }
@@ -304,8 +439,20 @@ impl Store {
         guild: u64,
         now: i64,
     ) -> Result<Vec<Delivery>, Error> {
-        sqlx::query_as("SELECT id,channel,revision,payload,next_part,rendered_parts FROM discord_deliveries d WHERE bot=? AND guild=? AND state='pending' AND not_before<=? AND NOT EXISTS(SELECT 1 FROM discord_deliveries old WHERE old.bot=d.bot AND old.guild=d.guild AND old.channel=d.channel AND old.state IN ('pending','dispatching') AND old.rowid<d.rowid) ORDER BY rowid LIMIT 32")
-            .bind(bot.to_string()).bind(guild.to_string()).bind(now).fetch_all(&self.pool).await.map_err(|_|Error::Database)
+        sqlx::query_as(
+            "SELECT id,channel,revision,payload,next_part,rendered_parts FROM \
+            discord_deliveries d WHERE bot=? AND guild=? AND state='pending' AND \
+            not_before<=? AND NOT EXISTS(SELECT 1 FROM discord_deliveries old WHERE \
+            old.bot=d.bot AND old.guild=d.guild AND old.channel=d.channel AND \
+            old.state IN ('pending','dispatching') AND old.rowid<d.rowid) ORDER BY \
+            rowid LIMIT 32",
+        )
+        .bind(bot.to_string())
+        .bind(guild.to_string())
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| Error::Database)
     }
 
     pub async fn discord_delivery_state(
@@ -341,17 +488,39 @@ impl Store {
         message: Option<u64>,
         text: &str,
     ) -> Result<(), Error> {
-        sqlx::query("UPDATE discord_bindings SET card_message=?,card_text=? WHERE bot=? AND guild=? AND channel=? AND revision=?")
-            .bind(message.map(|id|id.to_string())).bind(text).bind(&b.bot).bind(&b.guild).bind(&b.channel).bind(b.revision)
-            .execute(&self.pool).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "UPDATE discord_bindings SET card_message=?,card_text=? WHERE bot=? AND \
+            guild=? AND channel=? AND revision=?",
+        )
+        .bind(message.map(|id| id.to_string()))
+        .bind(text)
+        .bind(&b.bot)
+        .bind(&b.guild)
+        .bind(&b.channel)
+        .bind(b.revision)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
     pub async fn acknowledge_part(&self, row: &Delivery, more: bool) -> Result<(), Error> {
-        let changed = sqlx::query("UPDATE discord_deliveries SET next_part=next_part+1,state=?,not_before=?,payload=CASE WHEN ? THEN payload ELSE '' END,rendered_parts=CASE WHEN ? THEN rendered_parts ELSE NULL END WHERE id=? AND state='dispatching' AND next_part=?")
-            .bind(if more { "pending" } else { "delivered" })
-            .bind(engine::now()+4).bind(more).bind(more).bind(&row.id).bind(row.next_part)
-            .execute(&self.pool).await.map_err(|_| Error::Database)?.rows_affected();
+        let changed = sqlx::query(
+            "UPDATE discord_deliveries SET next_part=next_part+1,state=?,\
+            not_before=?,payload=CASE WHEN ? THEN payload ELSE '' END,\
+            rendered_parts=CASE WHEN ? THEN rendered_parts ELSE NULL END WHERE id=? \
+            AND state='dispatching' AND next_part=?",
+        )
+        .bind(if more { "pending" } else { "delivered" })
+        .bind(engine::now() + 4)
+        .bind(more)
+        .bind(more)
+        .bind(&row.id)
+        .bind(row.next_part)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?
+        .rows_affected();
         if changed != 1 {
             return Err(Error::Transition);
         }
@@ -363,9 +532,15 @@ impl Store {
         row: &Delivery,
         parts: &[crate::discord::native::Part],
     ) -> Result<(), Error> {
-        sqlx::query("UPDATE discord_deliveries SET rendered_parts=? WHERE id=? AND state='pending' AND next_part=0 AND rendered_parts IS NULL")
-            .bind(serde_json::to_string(parts).map_err(|_| Error::Database)?).bind(&row.id)
-            .execute(&self.pool).await.map_err(|_| Error::Database)?;
+        sqlx::query(
+            "UPDATE discord_deliveries SET rendered_parts=? WHERE id=? AND \
+            state='pending' AND next_part=0 AND rendered_parts IS NULL",
+        )
+        .bind(serde_json::to_string(parts).map_err(|_| Error::Database)?)
+        .bind(&row.id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 }

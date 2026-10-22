@@ -1,3 +1,5 @@
+//! Run the CLI and report its already-localized failure with a process exit status.
+
 mod cli;
 
 mod doctor;
@@ -14,3 +16,6 @@ async fn main() -> std::process::ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod documentation_tests;

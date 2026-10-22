@@ -1,3 +1,5 @@
+//! Provision session channels and manage bindings without mutating native session ownership.
+
 use super::{Result, Service, error, hashes};
 use crate::discord::Api;
 use crate::discord::Input;

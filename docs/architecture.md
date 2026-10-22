@@ -2,7 +2,7 @@
 
 PocketPilot 是连接消息平台与 AI 编程运行时的会话入口。它统一导航、用户授权、任务提交与结果展示，让同一个原生 session 能从不同设备和消息平台访问。
 
-当前实现包含 Telegram、Slack、Discord、国内飞书；runtime 包含 Codex 原生 app-server 和 PocketPilot 自己管理会话的 Claude Code server 首版。国际 Lark、Pi 与后续问答控件见[后续支持](support.md)。以下描述当前代码，不将规划中的能力算作已支持。
+当前实现包含 Telegram、Slack、Discord、飞书、Lark；runtime 包含 Codex 原生 app-server 和 PocketPilot 自己管理会话的 Claude Code server 首版。Pi 与后续问答控件见[后续支持](support.md)。以下描述当前代码，不将规划中的能力算作已支持。
 
 ## 概念与职责
 
@@ -23,7 +23,7 @@ PocketPilot 是连接消息平台与 AI 编程运行时的会话入口。它统�
 
 ```mermaid
 flowchart LR
-    U[Telegram / Slack / Discord / 飞书] --> I[integrations]
+    U[Telegram / Slack / Discord / 飞书 / Lark] --> I[integrations]
     A[app：装配与 CLI] --> I
     A --> E[engine]
     I --> E
@@ -36,7 +36,7 @@ flowchart LR
 | crate | 当前职责 |
 | --- | --- |
 | `app` | 配置组合、Integration 装配、CLI、日志、catalog 刷新和进程退出 |
-| `integrations` | 四个平台的协议、身份校验、原生菜单、渲染、平台 SQL 和收发任务；内部 `network` 复用代理、relay 与受限下载 |
+| `integrations` | 五个消息入口的协议、身份校验、原生菜单、渲染、平台 SQL 和收发任务；内部 `network` 复用代理、relay 与受限下载 |
 | `engine` | 配置快照、catalog、runtime registry、会话锁、操作账本、文件暂存与共享执行编排 |
 | `adapters` | `Adapter` / `AdapterFactory` 契约，以及 Codex 原生协议和 Claude server 的 typed RPC 映射 |
 | `connections` | 主机命令与 endpoint；`ssh` 下的 OpenSSH 配置、认证、known_hosts 与 TOTP |
@@ -44,7 +44,7 @@ flowchart LR
 | `session` | `AgentProvider`、会话/历史/输入模型、展示语义、Markdown 文档和分段规则 |
 | `i18n` | 中英文资源、显式 locale、参数插值和类型化错误文案 |
 
-`engine` 不引用消息平台 SDK，`connections` 不解释 agent 协议。平台 SQL 留在各自目录。八个 crate 均不发布到 crates.io；四端默认编译，运行时按配置装配。
+`engine` 不引用消息平台 SDK，`connections` 不解释 agent 协议。平台 SQL 留在各自目录。八个 crate 均不发布到 crates.io；五端默认编译，运行时按配置装配。
 
 `session`、`engine`、`app`、`i18n` 的源码保持平铺；平台实现位于 `integrations/src/telegram`、`slack`、`discord`、`feishu`，OpenSSH 与 Codex 原生代码分别位于 `connections/src/ssh` 和 `adapters/src/codex`。测试放在独立源码文件。
 
@@ -130,7 +130,7 @@ Telegram 通过必填配置 `owner_user_id` 构造部署级 `Owner`，供入口�
 
 ## 构建与维护
 
-Rust 工具链由仓库配置约束，所有 Cargo 构建、检查、测试和 Clippy 使用 `--release`。`make check` 执行 Markdown 链接检查、格式、Clippy、rustdoc 生成与内部链接检查和测试，`make package` 保存 binary、构建信息和校验值到忽略的 `dist/`，之后运行 `cargo clean`；`make release` 串行完成当前系统/架构的检查、打包和清理。长期运行引用 `dist/pocketpilot`。
+Rust 工具链由仓库配置约束，所有 Cargo 构建、检查、测试和 Clippy 使用 `--release`。`make check` 执行格式、Clippy、rustdoc 生成与内部链接检查和测试；公开 Markdown 链接检查随 Rust 测试执行，`make package` 保存 binary、构建信息和校验值到忽略的 `dist/`，之后运行 `cargo clean`；`make release` 串行完成当前系统/架构的检查、打包和清理。长期运行引用 `dist/pocketpilot`。
 
 Codex CLI 的默认构建来源是 PATH，`CODEX_SCHEMA_BIN` 仅用于指定构建时导出 schema 的可执行文件，不覆盖运行时连接配置。缺少 CLI 或生成失败会使构建失败，不回退到旧协议快照。协议类型可生成不代表共享执行能力已经验证。
 
@@ -146,13 +146,13 @@ server 只管理自己创建的 UUID session；创建空会话、list/read/histo
 
 只发布主 assistant 的文本块；不混入 thinking、工具输出和子 agent 内容。文件限定在 server 私有上传根并记录 session 归属，图片按 MIME 签名和大小限制转为原生 image block。活跃 steer 尚未开放；结构化 AskUserQuestion 通过原始请求回答，其他权限请求仅体现等待状态，不自动代答。离线 fake CLI 覆盖协议与断线语义，不能据此宣称真实账号/模型全流程已经验证。
 
-## 飞书的消息与传输边界
+## 飞书与 Lark 的消息与传输边界
 
-国内飞书使用 `[feishu]`，身份 scope 为 app/tenant/owner；仅私聊提供目录，一个原生 session 绑定授权群中的 root + thread。导航和绑定管理复用 `Navigator` / `bindings::Manager`，平台 SQL 位于 `feishu` 目录。文字与富文本需 @机器人；独立文件允许 owner 在已绑定话题提交。更多平台事件读取权限不会扩大本地执行授权。
+飞书使用 `[feishu]`、Lark 使用 `[lark]`，共用一套协议与业务实现，身份 scope 为平台/app/tenant/owner；仅私聊提供目录，一个原生 session 绑定授权群中的 root + thread。导航和绑定管理复用 `Navigator` / `bindings::Manager`，平台 SQL 位于 `feishu` 目录；两端共享表结构，以 `feishu:...` / `lark:...` 命名空间隔离，既有飞书键不变。文字与富文本需 @机器人；独立文件允许 owner 在已绑定话题提交。更多平台事件读取权限不会扩大本地执行授权。
 
 OpenLark 0.21.0 提供认证、token 刷新、protobuf WebSocket 与新版卡片 ACK；REST 通过 core typed Transport，业务只处理具名 DTO。只对 client 做窄 vendor 修补并保留 Apache-2.0 来源：最多 32 分片、单事件 8 MiB、64 个未完成事件、合计 16 MiB 和 15 秒过期；连接日志不包含认证 URL。SDK 的传输日志另被进程级过滤器独立拒绝。补丁依据及移除条件见[依赖维护](dependencies.md)。入站业务事件再限制为 512 KiB。
 
-HTTP 禁用系统代理、重定向和底层自动重试，WS 使用 SDK 原生入口直接连接，不经 relay。飞书和未来国际 Lark 禁止配置代理，包括空字符串，也不继承环境代理。多个 HTTP SDK 带入不同 rustls provider 时，公共网络入口为进程安装一次默认 provider，保留宿主已有选择，避免影响未配置飞书的其他接入端。
+HTTP 禁用系统代理、重定向和底层自动重试，WS 使用 SDK 原生入口直接连接，不经 relay。飞书和 Lark 禁止配置代理，包括空字符串，也不继承环境代理。多个 HTTP SDK 带入不同 rustls provider 时，公共网络入口为进程安装一次默认 provider，保留宿主已有选择，避免影响未配置飞书的其他接入端。
 
 回调在两秒内完成 scope/时效校验及持久化入队，再由 SDK ACK；最多四个后台输入 worker，不在 ACK 路径等待 SSH 或模型。动作 nonce 绑定原消息与聊天、配置 hash、owner 命名空间及五分钟有效期。发送前冻结 Card JSON 2.0，最终编码 payload 保守限制为 28 KB；自动输出与状态更新受绑定/观察偏好约束，未知回执不重发。
 

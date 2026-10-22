@@ -1,3 +1,5 @@
+//! Validate Slack app, workspace and owner settings without exposing credentials in Debug.
+
 use serde::Deserialize;
 
 #[derive(Clone, Deserialize)]

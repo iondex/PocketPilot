@@ -1,5 +1,8 @@
+//! Publish bound-session deltas without starting or resuming native agent execution.
+
 use super::*;
 use crate::slack::render;
+
 impl Service {
     pub(super) async fn observe(self: Arc<Self>) -> Result<()> {
         let mut stop = self.stop.clone();
@@ -13,11 +16,14 @@ impl Service {
                 let service = self.clone();
                 jobs.spawn(async move {
                     if service.refresh(&b).await.is_err() {
-                        tracing::warn!(binding_id=%b.id,"Slack observation unavailable; session unchanged");
-                        let snapshot=service.context.config.snapshot();
-                        if service.validate(&snapshot,&b).is_ok() {
-                            let text=i18n::text(&service.locale(),"slack.observation_unavailable");
-                            let _=service.publish_card(&b,&text,&snapshot.hash,false).await;
+                        tracing::warn!(
+                            binding_id = %b.id, "Slack observation unavailable; session unchanged"
+                        );
+                        let snapshot = service.context.config.snapshot();
+                        if service.validate(&snapshot, &b).is_ok() {
+                            let text =
+                                i18n::text(&service.locale(), "slack.observation_unavailable");
+                            let _ = service.publish_card(&b, &text, &snapshot.hash, false).await;
                         }
                     }
                     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -25,9 +31,17 @@ impl Service {
                 });
             }
             tokio::select! {
-                _=stop.changed()=>{jobs.abort_all();return Ok(());},
-                result=jobs.join_next(),if !jobs.is_empty()=>match result {Some(Ok(id))=>{busy.remove(&id);},_=>return Err(Error::Request)},
-                _=tokio::time::sleep(Duration::from_millis(500))=>{},
+                _ = stop.changed() => {
+                    jobs.abort_all();
+                    return Ok(());
+                },
+                result = jobs.join_next(), if !jobs.is_empty() => match result {
+                    Some(Ok(id)) => {
+                        busy.remove(&id);
+                    },
+                    _ => return Err(Error::Request),
+                },
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {},
             }
         }
     }
@@ -125,7 +139,10 @@ impl Service {
         let mut stop = self.stop.clone();
         loop {
             if !self.verified.load(Ordering::SeqCst) {
-                tokio::select! { _=stop.changed()=>return Ok(()), _=tokio::time::sleep(Duration::from_millis(250))=>{} }
+                tokio::select! {
+                    _ = stop.changed() => return Ok(()),
+                    _ = tokio::time::sleep(Duration::from_millis(250)) => {},
+                }
                 continue;
             }
             for o in self.store.outgoing().await? {
@@ -221,7 +238,10 @@ impl Service {
                     }
                 }
             }
-            tokio::select! {_=stop.changed()=>return Ok(()),_=tokio::time::sleep(Duration::from_millis(500))=>{}}
+            tokio::select! {
+                _ = stop.changed() => return Ok(()),
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {},
+            }
         }
     }
 }

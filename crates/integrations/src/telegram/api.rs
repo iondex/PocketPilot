@@ -1,3 +1,5 @@
+//! Wrap Telegram requests and parse incoming updates against the configured owner.
+
 use crate::telegram::{Error, Identity, safe_error};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};

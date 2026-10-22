@@ -14,27 +14,36 @@ impl Service {
                 }
                 let service = self.clone();
                 jobs.spawn(async move {
-                    if service.refresh(&binding).await.is_err() {tracing::warn!(binding_id=%binding.id,"Feishu observation unavailable; native session unchanged");}
+                    if service.refresh(&binding).await.is_err() {
+                        tracing::warn!(
+                            binding_id = %binding.id,
+                            "Chat observation unavailable; native session unchanged"
+                        );
+                    }
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     binding.id
                 });
             }
             tokio::select! {
-                _=stop.changed()=>{jobs.abort_all();return Ok(());},
-                result=jobs.join_next(),if !jobs.is_empty()=>match result {Some(Ok(id))=>{busy.remove(&id);},_=>return Err(Error::Request)},
-                _=tokio::time::sleep(Duration::from_millis(500))=>{},
+                _ = stop.changed() => {
+                    jobs.abort_all();
+                    return Ok(());
+                },
+                result = jobs.join_next(), if !jobs.is_empty() => match result {
+                    Some(Ok(id)) => {
+                        busy.remove(&id);
+                    },
+                    _ => return Err(Error::Request),
+                },
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {},
             }
         }
     }
 
     async fn refresh(&self, b: &Binding) -> Result<()> {
-        let scope = super::super::binding_store::scope(&self.settings);
-        if !crate::bindings::observing(
-            &self.store.core,
-            &scope,
-            &crate::bindings::Target::Feishu { id: b.id.clone() },
-        )
-        .await?
+        let scope = super::super::binding_store::scope(self.region, &self.settings);
+        if !crate::bindings::observing(&self.store.core, &scope, &self.store.target(b.id.clone()))
+            .await?
         {
             return Ok(());
         }
@@ -58,7 +67,13 @@ impl Service {
         if !history.all_pages_read {
             return Err(Error::Ui("feishu.error.history"));
         }
-        let (cursor, sections) = capture(b, &history, &self.store.namespace, &self.locale())?;
+        let (cursor, sections) = capture(
+            b,
+            &history,
+            &self.store.namespace,
+            self.region,
+            &self.locale(),
+        )?;
         let mut cards = Vec::new();
         for section in sections {
             cards.extend(
@@ -107,8 +122,8 @@ impl Service {
                         if output.automatic
                             && !crate::bindings::observing(
                                 &self.store.core,
-                                &super::super::binding_store::scope(&self.settings),
-                                &crate::bindings::Target::Feishu { id: id.clone() },
+                                &super::super::binding_store::scope(self.region, &self.settings),
+                                &self.store.target(id.clone()),
                             )
                             .await?
                         {
@@ -140,10 +155,13 @@ impl Service {
                     )
                     .await?;
                 if result.is_err() {
-                    tracing::warn!(delivery_id=%output.id,"Feishu delivery unavailable; no automatic replay");
+                    tracing::warn!(delivery_id=%output.id,"Chat delivery unavailable; no automatic replay");
                 }
             }
-            tokio::select! {_=stop.changed()=>return Ok(()),_=tokio::time::sleep(Duration::from_secs(1))=>{}}
+            tokio::select! {
+                _ = stop.changed() => return Ok(()),
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {},
+            }
         }
     }
 }
@@ -152,6 +170,7 @@ pub(super) fn capture(
     binding: &Binding,
     history: &session::History,
     namespace: &str,
+    region: Region,
     locale: &str,
 ) -> Result<(String, Vec<session::presentation::Section>)> {
     if !history.all_pages_read {
@@ -169,7 +188,7 @@ pub(super) fn capture(
         session::presentation::latest(history, locale)
     } else {
         let previous: BTreeMap<String, String> = serde_json::from_str(&binding.cursor)?;
-        let own = format!("pp:feishu:{}:", engine::digest(namespace));
+        let own = format!("pp:{}:{}:", region.as_str(), engine::digest(namespace));
         history
             .items
             .iter()

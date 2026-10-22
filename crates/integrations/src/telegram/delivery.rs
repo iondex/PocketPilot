@@ -1,3 +1,5 @@
+//! Deliver frozen Telegram parts with durable progress and no uncertain-write replay.
+
 use super::Service;
 use crate::telegram::ledger::Outbound;
 use engine::now;
@@ -321,7 +323,10 @@ impl Service {
                     }
                 }
             }
-            tokio::select! {_=stop.changed()=>break,_=tokio::time::sleep(Duration::from_millis(100))=>{}}
+            tokio::select! {
+                _ = stop.changed() => break,
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {},
+            }
         }
     }
 }

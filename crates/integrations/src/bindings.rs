@@ -10,6 +10,11 @@ use sqlx::{Row, Sqlite, Transaction};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Scope {
+    Lark {
+        app: String,
+        tenant: String,
+        owner: String,
+    },
     Feishu {
         app: String,
         tenant: String,
@@ -35,6 +40,7 @@ pub enum Scope {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Target {
+    Lark { id: String },
     Feishu { id: String },
     Telegram { topic: i32 },
     Discord { channel: String },
@@ -339,7 +345,8 @@ impl<'a> Manager<'a> {
             .unwrap_or_else(|| i18n::text(locale, "bindings.unavailable"));
         let preference = preference(self.repository.core(), &self.scope, &record.target).await?;
         let cache = sqlx::query(
-            "SELECT payload,checked_at FROM integration_session_cache WHERE instance=? AND thread=?",
+            "SELECT payload,checked_at FROM integration_session_cache WHERE \
+            instance=? AND thread=?",
         )
         .bind(&record.reference.instance)
         .bind(&record.reference.thread)

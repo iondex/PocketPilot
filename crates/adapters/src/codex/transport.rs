@@ -1,3 +1,5 @@
+//! Bound Codex wire messages over host proxy pipes or explicitly configured WebSockets.
+
 use crate::codex::rpc::Error;
 use async_trait::async_trait;
 use connections::{Connection as _, Endpoint};

@@ -1,3 +1,5 @@
+//! Route Discord interactions only after freshness, account and target authorization checks.
+
 use super::{Result, Service, error};
 use crate::discord::Api;
 use crate::discord::Input;

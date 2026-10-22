@@ -1,4 +1,4 @@
-//! Feishu REST/authentication stay behind the SDK and named response DTOs.
+//! Feishu/Lark REST/authentication stay behind the SDK and named response DTOs.
 use super::{
     Error, Result,
     config::{Config, identifier},
@@ -75,13 +75,18 @@ pub struct Api {
 }
 
 impl Api {
-    pub fn new(settings: &Config) -> Result<Self> {
-        Self::configured(settings, "https://open.feishu.cn", false)
+    pub fn new(region: super::config::Region, settings: &Config) -> Result<Self> {
+        Self::configured(settings, region.base_url(), false)
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture(settings: &Config, base: &str) -> Result<Self> {
+        Self::configured(settings, base, true)
     }
 
     fn configured(settings: &Config, base: &str, custom: bool) -> Result<Self> {
         crate::network::initialize_tls();
-        // Feishu (and future Lark) use direct connections only, including token refresh.
+        // Feishu and Lark use direct connections only, including token refresh.
         let http = reqwest_feishu::Client::builder()
             .no_proxy()
             .redirect(reqwest_feishu::redirect::Policy::none())

@@ -1,6 +1,6 @@
 //! Native cards adapt the common navigation and binding state machines.
 use super::*;
-use crate::bindings::{self, Manager, Target};
+use crate::bindings::{self, Manager};
 
 impl Service {
     async fn control(
@@ -324,15 +324,13 @@ impl Service {
                 return Box::pin(self.menu(input, hash, Action::Binding { id: binding.id })).await;
             }
             Action::Bindings { offset } => {
-                let scope = super::super::binding_store::scope(&self.settings);
+                let scope = super::super::binding_store::scope(self.region, &self.settings);
                 let page = Manager::new(&self.store, scope)
                     .page(&snapshot.config, offset, 8, &self.locale())
                     .await?;
                 card.markdown(self.text("feishu.bindings"));
                 for entry in page.items {
-                    let Target::Feishu { id } = entry.record.target else {
-                        continue;
-                    };
+                    let id = self.store.binding_id(&entry.record.target)?.to_owned();
                     self.control(
                         &mut card,
                         &mut nonces,
@@ -385,11 +383,11 @@ impl Service {
                     engine::runtimes::require_workspace(&current.cwd, project)?;
                     crate::bindings::remember(&self.store.core, &current).await?;
                 }
-                let scope = super::super::binding_store::scope(&self.settings);
+                let scope = super::super::binding_store::scope(self.region, &self.settings);
                 let entry = Manager::new(&self.store, scope)
                     .entry(
                         &snapshot.config,
-                        &Target::Feishu { id: id.clone() },
+                        &self.store.target(id.clone()),
                         &self.locale(),
                     )
                     .await?;
@@ -457,8 +455,8 @@ impl Service {
                 change,
                 confirmed,
             } => {
-                let scope = super::super::binding_store::scope(&self.settings);
-                let target = Target::Feishu { id: id.clone() };
+                let scope = super::super::binding_store::scope(self.region, &self.settings);
+                let target = self.store.target(id.clone());
                 let manager = Manager::new(&self.store, scope);
                 let entry = manager
                     .confirmation(&snapshot.config, &target, Some(version), &self.locale())

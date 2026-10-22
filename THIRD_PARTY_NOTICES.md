@@ -9,7 +9,7 @@ PocketPilot source is licensed under [Apache-2.0](LICENSE). Third-party componen
 - License: [Apache-2.0](vendor/openlark-client/LICENSE); upstream authorship remains in its manifest and source.
 - Modifications: bounded fragmented-event reassembly, credential-safe connection logging and inbound liveness updates. See [PATCHES.md](vendor/openlark-client/PATCHES.md) and the [maintenance rationale](docs/dependencies.md).
 
-Other OpenLark crates are registry dependencies, not local source forks. The removed dial URL mapper is no longer part of this patch; Feishu connects directly.
+Other OpenLark crates are registry dependencies, not local source forks. The removed dial URL mapper is no longer part of this patch; Feishu and Lark connect directly.
 
 ## OpenAI Codex protocol
 

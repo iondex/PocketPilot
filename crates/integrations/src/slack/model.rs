@@ -1,3 +1,5 @@
+//! Model Slack requests and persisted action targets independently of SDK event envelopes.
+
 use serde::{Deserialize, Serialize};
 use slack_morphism::prelude::SlackBlock;
 

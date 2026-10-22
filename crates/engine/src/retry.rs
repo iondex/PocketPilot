@@ -257,7 +257,8 @@ impl Monitor {
         })
         .map_err(|_| StoreError::Database)?;
         sqlx::query(
-            "UPDATE operations SET payload=? WHERE id=? AND state IN ('received','prepared')",
+            "UPDATE operations SET payload=? WHERE id=? AND state IN ('received',\
+            'prepared')",
         )
         .bind(payload)
         .bind(&operation)

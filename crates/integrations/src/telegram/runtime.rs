@@ -293,7 +293,10 @@ async fn run_adapter(
         private_topics = identity.topics_enabled,
         "Telegram ready; session lifecycle remains owned by the app-server"
     );
-    let failed = tokio::select! {_=stop.changed()=>false,_=tasks.join_next()=>true};
+    let failed = tokio::select! {
+        _ = stop.changed() => false,
+        _ = tasks.join_next() => true,
+    };
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
     if failed {

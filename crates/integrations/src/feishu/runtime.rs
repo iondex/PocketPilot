@@ -2,7 +2,7 @@
 use super::{
     Error, Result,
     api::{Api, Platform},
-    config::Config,
+    config::{Config, Region},
     model::*,
     render::{Card, CardRenderer},
     storage::Store,
@@ -32,19 +32,25 @@ mod input;
 mod observation;
 
 pub struct Feishu {
+    region: Region,
     settings: Config,
 }
 
 impl Feishu {
     pub fn new(settings: Config) -> Self {
-        Self { settings }
+        Self::for_region(Region::Feishu, settings)
+    }
+
+    /// Construct either platform using the shared protocol and runtime lifecycle.
+    pub fn for_region(region: Region, settings: Config) -> Self {
+        Self { region, settings }
     }
 }
 
 #[async_trait::async_trait]
 impl Integration for Feishu {
     fn platform(&self) -> crate::Platform {
-        crate::Platform::Feishu
+        self.region.platform()
     }
 
     fn capabilities(&self) -> crate::rendering::Capabilities {
@@ -57,26 +63,53 @@ impl Integration for Feishu {
         mut stop: watch::Receiver<bool>,
     ) -> std::result::Result<(), IntegrationError> {
         async {
-            let api=Arc::new(Api::new(&self.settings)?);
-            let identity=api.identity().await?;
-            let store=Store::new(context.store.clone(),&self.settings);
+            let api = Arc::new(Api::new(self.region, &self.settings)?);
+            let identity = api.identity().await?;
+            let store = Store::new(context.store.clone(), self.region, &self.settings);
+            // Recovery classifies old intent before any new platform event can be claimed.
             store.recover().await?;
-            let (shutdown,receiver)=watch::channel(false);
-            let service=Arc::new(Service {settings:self.settings.clone(),context,store,api:api.clone(),bot:identity.open_id,cutoff:AtomicI64::new(engine::now()),stop:receiver});
-            let mut tasks=tokio::task::JoinSet::new();
-            tasks.spawn(super::socket::run(service.clone(),api));
+            let (shutdown, receiver) = watch::channel(false);
+            let service = Arc::new(Service {
+                region: self.region,
+                settings: self.settings.clone(),
+                context,
+                store,
+                api: api.clone(),
+                bot: identity.open_id,
+                cutoff: AtomicI64::new(engine::now()),
+                stop: receiver,
+            });
+            let mut tasks = tokio::task::JoinSet::new();
+            tasks.spawn(super::socket::run(service.clone(), api));
             tasks.spawn(service.clone().work());
             tasks.spawn(service.clone().observe());
             tasks.spawn(service.deliver());
-            let result=tokio::select! {_=stop.changed()=>Ok(()),next=tasks.join_next()=>match next {Some(Ok(r))=>r,_=>Err(Error::Request)}};
-            let _=shutdown.send(true);
-            let _=tokio::time::timeout(Duration::from_secs(5),async {while tasks.join_next().await.is_some() {}}).await;
-            tasks.abort_all();result
-        }.await.map_err(|error:Error|IntegrationError {platform:"feishu",message:error.message()})
+            let result = tokio::select! {
+                _ = stop.changed() => Ok(()),
+                next = tasks.join_next() => match next {
+                    Some(Ok(r)) => r,
+                    _ => Err(Error::Request),
+                },
+            };
+            // Give bridge workers time to exit; native agent tasks have a separate owner.
+            let _ = shutdown.send(true);
+            let _ = tokio::time::timeout(Duration::from_secs(5), async {
+                while tasks.join_next().await.is_some() {}
+            })
+            .await;
+            tasks.abort_all();
+            result
+        }
+        .await
+        .map_err(|error: Error| IntegrationError {
+            platform: self.region.as_str(),
+            message: error.message(),
+        })
     }
 }
 
 pub(super) struct Service {
+    pub region: Region,
     pub settings: Config,
     pub context: Context,
     pub store: Store,
@@ -180,24 +213,49 @@ impl Service {
                 };
                 let service = self.clone();
                 jobs.spawn(async move {
-                    let input:Input=serde_json::from_str(&row.payload)?;
-                    let result=service.process(&input,&row.config_hash).await;
-                    if let Err(error)=&result {
-                        tracing::warn!(input_id=%row.id,"Feishu action failed; no automatic replay");
-                        let current=service.context.config.snapshot();
-                        if current.hash==row.config_hash && service.date_valid(input.date) {
-                            let mut card=Card::new(&service.text("feishu.title"));
-                            card.markdown(super::render::literal(&error.localized(&service.locale())));
-                            let _=service.store.output(&Destination {chat:input.chat.clone(),root:input.root.clone()},&[card],&row.config_hash,None,None,&[]).await;
+                    let input: Input = serde_json::from_str(&row.payload)?;
+                    let result = service.process(&input, &row.config_hash).await;
+                    if let Err(error) = &result {
+                        tracing::warn!(
+                            platform = service.region.as_str(),
+                            input_id = %row.id,
+                            "Chat action failed; no automatic replay"
+                        );
+                        let current = service.context.config.snapshot();
+                        if current.hash == row.config_hash && service.date_valid(input.date) {
+                            let mut card = Card::new(&service.text("feishu.title"));
+                            card.markdown(super::render::literal(
+                                &error.localized(&service.locale()),
+                            ));
+                            let _ = service
+                                .store
+                                .output(
+                                    &Destination {
+                                        chat: input.chat.clone(),
+                                        root: input.root.clone(),
+                                    },
+                                    &[card],
+                                    &row.config_hash,
+                                    None,
+                                    None,
+                                    &[],
+                                )
+                                .await;
                         }
                     }
-                    service.store.done(&row.id,result.is_err()).await
+                    service.store.done(&row.id, result.is_err()).await
                 });
             }
             tokio::select! {
-                _=stop.changed()=>{jobs.abort_all();return Ok(());},
-                result=jobs.join_next(),if !jobs.is_empty()=>match result {Some(Ok(r))=>r?,_=>return Err(Error::Request)},
-                _=tokio::time::sleep(Duration::from_millis(200))=>{},
+                _ = stop.changed() => {
+                    jobs.abort_all();
+                    return Ok(());
+                },
+                result = jobs.join_next(), if !jobs.is_empty() => match result {
+                    Some(Ok(r)) => r?,
+                    _ => return Err(Error::Request),
+                },
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {},
             }
         }
     }

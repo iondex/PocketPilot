@@ -1,3 +1,5 @@
+//! Keep Slack HTTP calls and bounded resource downloads behind typed platform methods.
+
 use crate::slack::{Error, Result, config::Config, model::Content};
 use slack_morphism::{errors::SlackClientError, prelude::*};
 use std::{sync::Arc, time::Duration};
@@ -10,6 +12,7 @@ pub trait Platform: Send + Sync {
     ) -> Result<session::files::Downloaded> {
         Err(Error::Request)
     }
+
     async fn channel(&self, channel: &str) -> Result<()>;
 
     async fn post(&self, channel: &str, root: Option<&str>, content: &Content) -> Result<String>;
@@ -192,6 +195,7 @@ impl Platform for Api {
             bytes,
         })
     }
+
     async fn channel(&self, channel: &str) -> Result<()> {
         if channel != self.direct_channel {
             return Err(Error::Ui("slack.error.scope"));

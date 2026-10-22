@@ -1,3 +1,5 @@
+//! Revalidate Discord authorization and binding revisions before claiming runtime writes.
+
 use super::{Result, Service, Target, error};
 use crate::discord::Api;
 use crate::discord::Input;
@@ -55,6 +57,7 @@ impl Service {
             .transition(&id, State::Received, State::Prepared)
             .await
             .map_err(error)?;
+        // Provider acquisition may await I/O; recheck policy and binding before dispatch.
         self.fresh(api, input, snapshot, true).await?;
         if let Some(b) = binding {
             let current = self.bound(input).await?;

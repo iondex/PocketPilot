@@ -6,13 +6,29 @@ use engine::reload::Snapshot;
 
 impl Store {
     pub async fn management_topic(&self, bot: i64, chat: i64) -> Result<Option<i32>, StoreError> {
-        sqlx::query_scalar("SELECT topic_id FROM management_topics WHERE bot_id=? AND chat_id=? AND state='accepted'")
-            .bind(bot).bind(chat).fetch_optional(&self.pool).await.map_err(|_|StoreError::Database)
+        sqlx::query_scalar(
+            "SELECT topic_id FROM management_topics WHERE bot_id=? AND chat_id=? AND \
+            state='accepted'",
+        )
+        .bind(bot)
+        .bind(chat)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)
     }
 
     async fn begin_management(&self, bot: i64, chat: i64) -> Result<bool, StoreError> {
-        let n=sqlx::query("INSERT INTO management_topics(bot_id,chat_id,state) VALUES(?,?,'dispatching') ON CONFLICT(bot_id,chat_id) DO UPDATE SET state='dispatching' WHERE management_topics.state='rejected'")
-            .bind(bot).bind(chat).execute(&self.pool).await.map_err(|_|StoreError::Database)?.rows_affected();
+        let n = sqlx::query(
+            "INSERT INTO management_topics(bot_id,chat_id,state) VALUES(?,?,\
+            'dispatching') ON CONFLICT(bot_id,chat_id) DO UPDATE SET \
+            state='dispatching' WHERE management_topics.state='rejected'",
+        )
+        .bind(bot)
+        .bind(chat)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)?
+        .rows_affected();
         Ok(n == 1)
     }
 
@@ -23,8 +39,17 @@ impl Store {
         state: &str,
         topic: Option<i32>,
     ) -> Result<(), StoreError> {
-        sqlx::query("UPDATE management_topics SET state=?,topic_id=? WHERE bot_id=? AND chat_id=? AND state='dispatching'")
-            .bind(state).bind(topic).bind(bot).bind(chat).execute(&self.pool).await.map_err(|_|StoreError::Database)?;
+        sqlx::query(
+            "UPDATE management_topics SET state=?,topic_id=? WHERE bot_id=? AND \
+            chat_id=? AND state='dispatching'",
+        )
+        .bind(state)
+        .bind(topic)
+        .bind(bot)
+        .bind(chat)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)?;
         Ok(())
     }
 }

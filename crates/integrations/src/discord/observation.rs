@@ -1,3 +1,5 @@
+//! Observe bound sessions with bounded workers; native execution stays with the runtime.
+
 use super::{Result, Service, error, hashes, item_key};
 use crate::discord::Api;
 use crate::discord::Command;
@@ -192,9 +194,16 @@ impl Service {
                 });
             }
             tokio::select! {
-                _=stop.changed()=>break,
-                result=jobs.join_next(),if !jobs.is_empty()=>{match result {Some(Ok(channel))=>{busy.remove(&channel);},_=>return Err(crate::discord::Error::Backend)}},
-                _=tokio::time::sleep(Duration::from_secs(1))=>{},
+                _ = stop.changed() => break,
+                result = jobs.join_next(), if !jobs.is_empty() => {
+                    match result {
+                        Some(Ok(channel)) => {
+                            busy.remove(&channel);
+                        },
+                        _ => return Err(crate::discord::Error::Backend),
+                    }
+                },
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {},
             }
         }
         jobs.abort_all();

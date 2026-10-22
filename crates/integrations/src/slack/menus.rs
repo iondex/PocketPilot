@@ -1,3 +1,5 @@
+//! Adapt shared project and session navigation to scoped Slack interaction controls.
+
 use super::*;
 use crate::slack::render;
 use slack_morphism::prelude::*;

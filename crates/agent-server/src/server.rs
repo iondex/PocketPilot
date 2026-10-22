@@ -137,7 +137,14 @@ pub async fn proxy(socket: &Path) -> Result<(), Failure> {
     let (mut read, mut write) = stream.into_split();
     let input = async { tokio::io::copy(&mut tokio::io::stdin(), &mut write).await };
     let output = async { tokio::io::copy(&mut read, &mut tokio::io::stdout()).await };
-    tokio::select! {result=input=>{result.map_err(|_|Failure::Internal)?;},result=output=>{result.map_err(|_|Failure::Internal)?;}}
+    tokio::select! {
+        result = input => {
+            result.map_err(|_| Failure::Internal)?;
+        },
+        result = output => {
+            result.map_err(|_| Failure::Internal)?;
+        },
+    }
     Ok(())
 }
 

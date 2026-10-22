@@ -47,7 +47,10 @@ pub async fn run(
         "Discord slash-command prototype ready"
     );
     let manager = client.shard_manager.clone();
-    let result = tokio::select! { result=client.start()=>result.map_err(|_|Error::Request), _=stop.changed()=>Ok(()) };
+    let result = tokio::select! {
+        result = client.start() => result.map_err(|_|Error::Request),
+        _ = stop.changed() => Ok(()),
+    };
     manager.shutdown_all().await;
     result
 }

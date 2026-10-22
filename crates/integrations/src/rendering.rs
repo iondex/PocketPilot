@@ -33,7 +33,7 @@ pub struct Capabilities {
 impl Capabilities {
     pub const fn for_platform(platform: crate::Platform) -> Self {
         match platform {
-            crate::Platform::Feishu => Self {
+            crate::Platform::Feishu | crate::Platform::Lark => Self {
                 format: MessageFormat::FeishuCard,
                 text_budget: 6000,
                 block_budget: 128,

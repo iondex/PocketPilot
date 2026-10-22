@@ -151,9 +151,15 @@ impl ConfigFile {
         loop {
             let snapshot = self.snapshot();
             tokio::select! {
-                _=stop.changed()=>break,
-                _=receiver.recv(), if watcher.is_some()=>{tokio::time::sleep(Duration::from_millis(snapshot.config.config_reload.debounce_ms)).await;},
-                _=tokio::time::sleep(Duration::from_secs(snapshot.config.config_reload.periodic_rescan_seconds))=>{},
+                _ = stop.changed() => break,
+                _ = receiver.recv(), if watcher.is_some() => {
+                    tokio::time::sleep(Duration::from_millis(
+                        snapshot.config.config_reload.debounce_ms,
+                    )).await;
+                },
+                _ = tokio::time::sleep(Duration::from_secs(
+                    snapshot.config.config_reload.periodic_rescan_seconds,
+                )) => {},
             }
             if snapshot.config.config_reload.enabled {
                 match self.reload() {

@@ -1,3 +1,5 @@
+//! Define platform lifecycle and attachment boundaries against a shared engine context.
+
 use engine::{reload::ConfigFile, runtimes::RuntimeRegistry, storage::Store};
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -9,6 +11,7 @@ pub enum Platform {
     Slack,
     Discord,
     Feishu,
+    Lark,
 }
 
 impl Platform {
@@ -18,6 +21,7 @@ impl Platform {
             Self::Slack => "slack",
             Self::Discord => "discord",
             Self::Feishu => "feishu",
+            Self::Lark => "lark",
         }
     }
 }

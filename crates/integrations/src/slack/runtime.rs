@@ -1,3 +1,5 @@
+//! Supervise Slack ingress, input, observation and delivery with shared scoped state.
+
 use crate::slack::{
     Error, Result,
     api::{Api, Platform},
@@ -134,8 +136,13 @@ impl Service {
             .bind(engine::now() + 300)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE slack_inbox SET state='draft' WHERE namespace=? AND state='awaiting_confirmation'")
-            .bind(&self.store.namespace).execute(&mut *tx).await?;
+        sqlx::query(
+            "UPDATE slack_inbox SET state='draft' WHERE namespace=? AND \
+            state='awaiting_confirmation'",
+        )
+        .bind(&self.store.namespace)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         self.cutoff.store(engine::now() + 1, Ordering::SeqCst);
         Ok(())
@@ -267,7 +274,10 @@ impl Service {
         let mut stop = self.stop.clone();
         loop {
             if !self.verified.load(Ordering::SeqCst) {
-                tokio::select! { _=stop.changed()=>return Ok(()), _=tokio::time::sleep(Duration::from_millis(100))=>{} }
+                tokio::select! {
+                    _ = stop.changed() => return Ok(()),
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {},
+                }
                 continue;
             }
             self.notify_drafts().await?;
@@ -292,7 +302,10 @@ impl Service {
                     self.store.state(&row.id, "processing", "done").await?;
                 }
             }
-            tokio::select! { _=stop.changed()=>return Ok(()), _=tokio::time::sleep(Duration::from_millis(250))=>{} }
+            tokio::select! {
+                _ = stop.changed() => return Ok(()),
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {},
+            }
         }
     }
 

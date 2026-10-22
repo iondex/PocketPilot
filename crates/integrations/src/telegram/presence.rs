@@ -62,7 +62,11 @@ impl Service {
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            tokio::select! {_=stop.changed()=>break,_=tick.tick()=>{},_=self.presence.changed.notified()=>{}}
+            tokio::select! {
+                _ = stop.changed() => break,
+                _ = tick.tick() => {},
+                _ = self.presence.changed.notified() => {},
+            }
             let leases = {
                 let mut leases = self.presence.leases.lock().await;
                 leases.retain(|_, l| l.until > Instant::now());
@@ -82,7 +86,15 @@ impl Service {
                     let _ = jobs.join_next().await;
                 }
             }
-            tokio::select! {_=stop.changed()=>{jobs.abort_all();break;},_=async {while jobs.join_next().await.is_some() {}}=>{}}
+            tokio::select! {
+                _ = stop.changed() => {
+                    jobs.abort_all();
+                    break;
+                },
+                _ = async {
+                    while jobs.join_next().await.is_some() {}
+                } => {},
+            }
         }
     }
 

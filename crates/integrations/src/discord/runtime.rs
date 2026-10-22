@@ -152,6 +152,7 @@ impl Backend for Service {
     ) -> Result<crate::discord::ui::Screen> {
         self.menu_screen(api, input, token, value).await
     }
+
     async fn handle(&self, api: &Api, input: Input) -> Result<String> {
         let snapshot = self.config.snapshot();
         let output = self.command(api, &input, &snapshot).await?;

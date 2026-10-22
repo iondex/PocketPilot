@@ -1,3 +1,5 @@
+//! Present shared navigation through Discord menus with snapshot-bound action targets.
+
 use super::{Result, Service, error};
 use crate::discord::{
     Api, Command, Input,

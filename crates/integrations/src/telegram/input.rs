@@ -1,3 +1,5 @@
+//! Turn fresh, explicit Telegram input into revision-checked native runtime operations.
+
 use super::{Action, Error, Service};
 use crate::telegram::api::Input;
 use crate::telegram::ledger::Outbound;

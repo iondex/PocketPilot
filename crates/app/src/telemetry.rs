@@ -1,3 +1,5 @@
+//! Configure log writers with transport-body redaction independent of user filters.
+
 use app::config::Logging;
 use tracing_subscriber::{
     EnvFilter,

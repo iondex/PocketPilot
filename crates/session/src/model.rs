@@ -1,3 +1,5 @@
+//! Define runtime-neutral session identity, history, status and negotiated capabilities.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

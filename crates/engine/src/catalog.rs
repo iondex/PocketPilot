@@ -127,10 +127,39 @@ impl Catalog {
             endpoint: Some(endpoint),
         };
         let payload = serde_json::to_string(&provider).map_err(|_| StoreError::Database)?;
-        sqlx::query("INSERT INTO catalog_providers(id,host_id,payload) VALUES(?,?,?) ON CONFLICT DO NOTHING")
-            .bind(&provider.id).bind(host).bind(payload).execute(&self.pool).await.map_err(|_|StoreError::Database)?;
-        let row=sqlx::query("SELECT payload FROM catalog_providers WHERE host_id=? AND json_extract(payload,'$.endpoint.binary')=? AND json_extract(payload,'$.endpoint.socket')=?")
-            .bind(host).bind(&provider.endpoint.as_ref().ok_or(StoreError::Database)?.binary).bind(&provider.endpoint.as_ref().ok_or(StoreError::Database)?.socket).fetch_one(&self.pool).await.map_err(|_|StoreError::Database)?;
+        sqlx::query(
+            "INSERT INTO catalog_providers(id,host_id,payload) VALUES(?,?,?) ON \
+            CONFLICT DO NOTHING",
+        )
+        .bind(&provider.id)
+        .bind(host)
+        .bind(payload)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)?;
+        let row = sqlx::query(
+            "SELECT payload FROM catalog_providers WHERE host_id=? AND \
+            json_extract(payload,'$.endpoint.binary')=? AND json_extract(payload,\
+            '$.endpoint.socket')=?",
+        )
+        .bind(host)
+        .bind(
+            &provider
+                .endpoint
+                .as_ref()
+                .ok_or(StoreError::Database)?
+                .binary,
+        )
+        .bind(
+            &provider
+                .endpoint
+                .as_ref()
+                .ok_or(StoreError::Database)?
+                .socket,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)?;
         let provider: Provider =
             serde_json::from_str(row.get("payload")).map_err(|_| StoreError::Database)?;
         tracing::info!(host_id=host,provider_id=%provider.id,"discovered provider; control remains read-only");
@@ -139,8 +168,17 @@ impl Catalog {
 
     pub async fn save_provider(&self, provider: &Provider) -> Result<(), StoreError> {
         let payload = serde_json::to_string(provider).map_err(|_| StoreError::Database)?;
-        sqlx::query("INSERT INTO catalog_providers(id,host_id,payload) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload WHERE catalog_providers.host_id=excluded.host_id")
-            .bind(&provider.id).bind(&provider.host_id).bind(payload).execute(&self.pool).await.map_err(|_|StoreError::Database)?;
+        sqlx::query(
+            "INSERT INTO catalog_providers(id,host_id,payload) VALUES(?,?,?) ON \
+            CONFLICT(id) DO UPDATE SET payload=excluded.payload WHERE \
+            catalog_providers.host_id=excluded.host_id",
+        )
+        .bind(&provider.id)
+        .bind(&provider.host_id)
+        .bind(payload)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)?;
         Ok(())
     }
 
@@ -158,8 +196,15 @@ impl Catalog {
 
     pub async fn remove_workspace(&self, id: &str) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;
-        sqlx::query("INSERT INTO workspace_exclusions(provider_id,cwd) SELECT provider_id,json_extract(payload,'$.cwd') FROM catalog_workspaces WHERE id=? ON CONFLICT DO NOTHING")
-            .bind(id).execute(&mut *tx).await.map_err(|_|StoreError::Database)?;
+        sqlx::query(
+            "INSERT INTO workspace_exclusions(provider_id,cwd) SELECT provider_id,\
+            json_extract(payload,'$.cwd') FROM catalog_workspaces WHERE id=? ON \
+            CONFLICT DO NOTHING",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StoreError::Database)?;
         sqlx::query("DELETE FROM catalog_workspaces WHERE id=?")
             .bind(id)
             .execute(&mut *tx)

@@ -15,7 +15,7 @@ pub(super) fn settings() -> config::Config {
 }
 
 #[test]
-fn configuration_is_scoped_to_domestic_feishu_and_redacts_secrets() {
+fn configuration_is_application_scoped_and_redacts_secrets() {
     let mut config = settings();
     assert!(config.valid());
     assert!(!format!("{config:?}").contains("synthetic-secret"));
@@ -65,7 +65,7 @@ async fn callbacks_are_one_shot_and_require_the_exact_chat_message_and_revision(
     let dir = tempfile::tempdir().unwrap();
     let core = engine::storage::Store::open(dir.path()).await.unwrap();
     let config = settings();
-    let store = storage::Store::new(core.clone(), &config);
+    let store = storage::Store::new(core.clone(), config::Region::Feishu, &config);
     let input = model::Input {
         id: "event".into(),
         chat: "oc_private".into(),
@@ -127,7 +127,7 @@ async fn event_redelivery_uses_message_identity_and_other_namespaces_cannot_clai
     let dir = tempfile::tempdir().unwrap();
     let core = engine::storage::Store::open(dir.path()).await.unwrap();
     let config = settings();
-    let store = storage::Store::new(core.clone(), &config);
+    let store = storage::Store::new(core.clone(), config::Region::Feishu, &config);
     let input = model::Input {
         id: "message:om_one".into(),
         chat: "oc_private".into(),
@@ -151,7 +151,7 @@ async fn event_redelivery_uses_message_identity_and_other_namespaces_cannot_clai
         .unwrap();
     let mut other = config;
     other.tenant_key = "other_tenant".into();
-    let other = storage::Store::new(core, &other);
+    let other = storage::Store::new(core, config::Region::Feishu, &other);
     assert!(
         !other
             .callback(&nonce, "om_one", &input, "hash", None)
@@ -187,7 +187,7 @@ async fn uncertain_provisioning_is_not_recreated_until_explicit_detach() {
         .await
         .unwrap();
     let config = settings();
-    let store = storage::Store::new(core.clone(), &config);
+    let store = storage::Store::new(core.clone(), config::Region::Feishu, &config);
     let original = binding("original");
     store.reserve(&original).await.unwrap();
     store
@@ -200,17 +200,20 @@ async fn uncertain_provisioning_is_not_recreated_until_explicit_detach() {
     assert_eq!(recovered.root, "om_root");
     let next = binding("next");
     assert!(store.reserve(&next).await.is_err());
-    crate::bindings::Manager::new(&store, super::binding_store::scope(&config))
-        .change(
-            &crate::bindings::Target::Feishu { id: original.id },
-            crate::bindings::Version {
-                binding: 1,
-                observation: 0,
-            },
-            crate::bindings::Change::Detach,
-        )
-        .await
-        .unwrap();
+    crate::bindings::Manager::new(
+        &store,
+        super::binding_store::scope(config::Region::Feishu, &config),
+    )
+    .change(
+        &crate::bindings::Target::Feishu { id: original.id },
+        crate::bindings::Version {
+            binding: 1,
+            observation: 0,
+        },
+        crate::bindings::Change::Detach,
+    )
+    .await
+    .unwrap();
     store.reserve(&next).await.unwrap();
     assert_eq!(store.binding(&next.id).await.unwrap().state, "provisioning");
     let operations: i64 = sqlx::query_scalar("SELECT count(*) FROM operations")
@@ -226,7 +229,7 @@ async fn unknown_outbound_receipts_remain_terminal_across_restart() {
     let core = engine::storage::Store::open(directory.path())
         .await
         .unwrap();
-    let store = storage::Store::new(core.clone(), &settings());
+    let store = storage::Store::new(core.clone(), config::Region::Feishu, &settings());
     store
         .output(
             &model::Destination {
@@ -281,3 +284,6 @@ fn ordinary_long_replies_do_not_split_when_the_native_payload_still_fits() {
     assert_eq!(rendered.parts.len(), 1);
     assert!(rendered.parts[0].bounded());
 }
+
+#[path = "region_tests.rs"]
+mod regions;

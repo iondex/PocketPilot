@@ -2,7 +2,7 @@
 
 ![PocketPilot — 从你常用的聊天工具，接入不同主机上的 AI 编程会话。](assets/brand/banner.zh-CN.png)
 
-[English](README.md) · [文档导航](docs/README.md) · [参与开发](CONTRIBUTING.md) · [品牌资源](assets/brand/README.zh-CN.md)
+[English](README.md) · [文档导航](docs/README.md) · [参与开发](CONTRIBUTING.md)
 
 PocketPilot 是面向开发者的自托管会话入口。它连接聊天平台与本机或 SSH 主机上的 AI 编程运行时，让你选择执行环境、项目和会话，查看进度、补充任务、上传文件并回答 agent 的结构化问题。执行、上下文和会话生命周期由原生 runtime 管理。
 
@@ -10,19 +10,19 @@ PocketPilot 是面向开发者的自托管会话入口。它连接聊天平台�
 
 | 维度 | 当前支持 | 使用边界 |
 | --- | --- | --- |
-| 消息入口 | Telegram、Slack、Discord、国内飞书 | 四端默认编译，配置决定启用哪些入口 |
+| 消息入口 | Telegram、Slack、Discord、飞书、Lark | 五端默认编译，配置决定启用哪些入口 |
 | 执行环境 | 本机、OpenSSH 远程主机 | 仅访问配置允许的项目根目录 |
 | Codex | 已运行且可共享的 app-server | 新发现实例默认只读，显式验证后允许任务输入 |
 | Claude Code | PocketPilot 独立 runtime server | 仅管理 server 自己创建的会话，尚不支持活跃轮次 steer |
 | 界面语言 | 中文、英文 | 显式 locale，不翻译用户和 agent 正文 |
 
-Telegram 在指定用户私聊中用 topic 区分会话；Slack 使用 owner DM 中的独立 thread；Discord 使用独立 session channel；飞书通过私聊导航，在授权群话题内提交任务。不同平台可以绑定同一个原生 session，共用桥接进程内的连接、会话锁和操作账本。
+Telegram 在指定用户私聊中用 topic 区分会话；Slack 使用 owner DM 中的独立 thread；Discord 使用独立 session channel；飞书和 Lark 通过私聊导航，在授权群话题内提交任务。不同平台可以绑定同一个原生 session，共用桥接进程内的连接、会话锁和操作账本。
 
-飞书目前完成离线协议和隔离测试，仍需真实租户安装验收。国际 Lark、Pi Coding Agent 尚未支持，见[后续规划](docs/support.md)。
+飞书与 Lark 共用一套实现，应用凭据与状态独立；两端已覆盖本地协议和隔离测试，仍需真实租户安装验收。Pi Coding Agent 尚未支持，见[后续规划](docs/support.md)。
 
 ## 快速开始
 
-桥接面向 Linux/macOS，需要仓库指定的 stable Rust（manifest 最低 1.94）、Make、Python 3.10+（文档检查）、C 编译工具链，以及远程连接所需的 OpenSSH。构建需安装与 CI 一致的 **Codex CLI 0.162.1** 来导出协议类型；此过程不会启动模型任务。
+桥接面向 Linux/macOS，需要仓库指定的 stable Rust（manifest 最低 1.94）、Make、Python 3（测试夹具）、C 编译工具链，以及远程连接所需的 OpenSSH。构建需安装与 CI 一致的 **Codex CLI 0.162.1** 来导出协议类型；此过程不会启动模型任务。
 
 ```sh
 git clone --branch public https://github.com/iondex/PocketPilot.git
@@ -32,7 +32,7 @@ cp pocketpilot.example.toml pocketpilot.toml
 chmod 600 pocketpilot.toml
 ```
 
-编辑配置：填写要启用的平台凭据和 owner，修改主机与允许目录，删除未使用的平台段。Telegram 必须配置本人的数字 `owner_user_id`。飞书固定直连，禁止 `proxy` 字段。程序不读取 `.env`。
+编辑配置：填写要启用的平台凭据和 owner，修改主机与允许目录，删除未使用的平台段。Telegram 必须配置本人的数字 `owner_user_id`。飞书和 Lark 固定直连，禁止 `proxy` 字段。程序不读取 `.env`。
 
 ```sh
 make check

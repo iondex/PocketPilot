@@ -1,3 +1,5 @@
+//! Wrap Discord transport, channel authorization and bounded attachment downloads.
+
 use crate::discord::{Error, Input, authorized};
 use serenity::{all::*, http::Http};
 use std::{

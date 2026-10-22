@@ -1,3 +1,5 @@
+//! Validate deployment policy; runtime providers and projects remain persisted catalog state.
+
 use serde::Deserialize;
 use std::{
     collections::HashSet,

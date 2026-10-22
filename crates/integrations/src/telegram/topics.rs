@@ -28,8 +28,17 @@ impl Removal {
 
 impl Store {
     async fn all_topic_ids(&self, bot: i64, chat: i64) -> Result<Vec<i32>, StoreError> {
-        sqlx::query_scalar("SELECT r.topic_id FROM topic_requests r WHERE r.bot_id=? AND r.chat_id=? AND r.state='accepted' AND NOT EXISTS(SELECT 1 FROM management_topics m WHERE m.bot_id=r.bot_id AND m.chat_id=r.chat_id AND m.topic_id=r.topic_id AND m.state='accepted') ORDER BY r.topic_id")
-            .bind(bot).bind(chat).fetch_all(&self.pool).await.map_err(|_|StoreError::Database)
+        sqlx::query_scalar(
+            "SELECT r.topic_id FROM topic_requests r WHERE r.bot_id=? AND \
+            r.chat_id=? AND r.state='accepted' AND NOT EXISTS(SELECT 1 FROM \
+            management_topics m WHERE m.bot_id=r.bot_id AND m.chat_id=r.chat_id AND \
+            m.topic_id=r.topic_id AND m.state='accepted') ORDER BY r.topic_id",
+        )
+        .bind(bot)
+        .bind(chat)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)
     }
 
     async fn known_topics(
@@ -38,8 +47,20 @@ impl Store {
         chat: i64,
         after: i32,
     ) -> Result<Vec<KnownTopic>, StoreError> {
-        sqlx::query_as("SELECT r.topic_id,COALESCE(NULLIF(b.topic_title,''),NULLIF(b.display_name,''),'Topic '||r.topic_id) AS title FROM topic_requests r LEFT JOIN bindings b ON b.bot_id=r.bot_id AND b.chat_id=r.chat_id AND b.topic_id=r.topic_id WHERE r.bot_id=? AND r.chat_id=? AND r.state='accepted' AND r.topic_id>? ORDER BY r.topic_id LIMIT 7")
-            .bind(bot).bind(chat).bind(after).fetch_all(&self.pool).await.map_err(|_|StoreError::Database)
+        sqlx::query_as(
+            "SELECT r.topic_id,COALESCE(NULLIF(b.topic_title,''),\
+            NULLIF(b.display_name,''),'Topic '||r.topic_id) AS title FROM \
+            topic_requests r LEFT JOIN bindings b ON b.bot_id=r.bot_id AND \
+            b.chat_id=r.chat_id AND b.topic_id=r.topic_id WHERE r.bot_id=? AND \
+            r.chat_id=? AND r.state='accepted' AND r.topic_id>? ORDER BY r.topic_id \
+            LIMIT 7",
+        )
+        .bind(bot)
+        .bind(chat)
+        .bind(after)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)
     }
 
     async fn known_topic(
@@ -48,8 +69,19 @@ impl Store {
         chat: i64,
         topic: i32,
     ) -> Result<Option<KnownTopic>, StoreError> {
-        sqlx::query_as("SELECT r.topic_id,COALESCE(NULLIF(b.topic_title,''),NULLIF(b.display_name,''),'Topic '||r.topic_id) AS title FROM topic_requests r LEFT JOIN bindings b ON b.bot_id=r.bot_id AND b.chat_id=r.chat_id AND b.topic_id=r.topic_id WHERE r.bot_id=? AND r.chat_id=? AND r.topic_id=? AND r.state='accepted'")
-            .bind(bot).bind(chat).bind(topic).fetch_optional(&self.pool).await.map_err(|_|StoreError::Database)
+        sqlx::query_as(
+            "SELECT r.topic_id,COALESCE(NULLIF(b.topic_title,''),\
+            NULLIF(b.display_name,''),'Topic '||r.topic_id) AS title FROM \
+            topic_requests r LEFT JOIN bindings b ON b.bot_id=r.bot_id AND \
+            b.chat_id=r.chat_id AND b.topic_id=r.topic_id WHERE r.bot_id=? AND \
+            r.chat_id=? AND r.topic_id=? AND r.state='accepted'",
+        )
+        .bind(bot)
+        .bind(chat)
+        .bind(topic)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)
     }
 
     async fn begin_topic_removal(
@@ -62,24 +94,71 @@ impl Store {
             return Err(StoreError::Unauthorized);
         }
         let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;
-        let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM topic_requests r WHERE r.bot_id=? AND r.chat_id=? AND r.topic_id=? AND r.state='accepted' AND NOT EXISTS(SELECT 1 FROM management_topics m WHERE m.bot_id=r.bot_id AND m.chat_id=r.chat_id AND m.topic_id=r.topic_id AND m.state='accepted'))")
-            .bind(bot).bind(input.chat).bind(topic).fetch_one(&mut *tx).await.map_err(|_|StoreError::Database)?;
+        let allowed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM topic_requests r WHERE r.bot_id=? AND \
+            r.chat_id=? AND r.topic_id=? AND r.state='accepted' AND NOT \
+            EXISTS(SELECT 1 FROM management_topics m WHERE m.bot_id=r.bot_id AND \
+            m.chat_id=r.chat_id AND m.topic_id=r.topic_id AND m.state='accepted'))",
+        )
+        .bind(bot)
+        .bind(input.chat)
+        .bind(topic)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|_| StoreError::Database)?;
         if !allowed {
             return Ok(false);
         }
-        let claimed = sqlx::query("INSERT INTO topic_removals(bot_id,chat_id,topic_id,request_key,state) VALUES(?,?,?,?,'dispatching') ON CONFLICT(bot_id,chat_id,topic_id) DO UPDATE SET request_key=excluded.request_key,state='dispatching' WHERE topic_removals.state IN ('rejected','outcome_unknown') AND topic_removals.request_key<>excluded.request_key")
-            .bind(bot).bind(input.chat).bind(topic).bind(&input.event_key).execute(&mut *tx).await.map_err(|_|StoreError::Database)?.rows_affected();
+        let claimed = sqlx::query(
+            "INSERT INTO topic_removals(bot_id,chat_id,topic_id,request_key,state) \
+            VALUES(?,?,?,?,'dispatching') ON CONFLICT(bot_id,chat_id,topic_id) DO \
+            UPDATE SET request_key=excluded.request_key,state='dispatching' WHERE \
+            topic_removals.state IN ('rejected','outcome_unknown') AND \
+            topic_removals.request_key<>excluded.request_key",
+        )
+        .bind(bot)
+        .bind(input.chat)
+        .bind(topic)
+        .bind(&input.event_key)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StoreError::Database)?
+        .rows_affected();
         if claimed != 1 {
             return Ok(false);
         }
         // Invalidate local send permissions before the remote deletion. Never
         // cancel a turn or let pending input revive a removed topic afterwards.
-        sqlx::query("UPDATE bindings SET active=0,revision=revision+1 WHERE bot_id=? AND chat_id=? AND topic_id=?")
-            .bind(bot).bind(input.chat).bind(topic).execute(&mut *tx).await.map_err(|_|StoreError::Database)?;
-        sqlx::query("UPDATE deliveries SET state='rejected' WHERE bot_id=? AND chat_id=? AND topic_id=? AND state='pending'")
-            .bind(bot).bind(input.chat).bind(topic).execute(&mut *tx).await.map_err(|_|StoreError::Database)?;
-        sqlx::query("UPDATE inbound_updates SET processed=1 WHERE bot_id=? AND chat_id=? AND topic_id=? AND processed=0")
-            .bind(bot).bind(input.chat).bind(topic).execute(&mut *tx).await.map_err(|_|StoreError::Database)?;
+        sqlx::query(
+            "UPDATE bindings SET active=0,revision=revision+1 WHERE bot_id=? AND \
+            chat_id=? AND topic_id=?",
+        )
+        .bind(bot)
+        .bind(input.chat)
+        .bind(topic)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StoreError::Database)?;
+        sqlx::query(
+            "UPDATE deliveries SET state='rejected' WHERE bot_id=? AND chat_id=? AND \
+            topic_id=? AND state='pending'",
+        )
+        .bind(bot)
+        .bind(input.chat)
+        .bind(topic)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StoreError::Database)?;
+        sqlx::query(
+            "UPDATE inbound_updates SET processed=1 WHERE bot_id=? AND chat_id=? AND \
+            topic_id=? AND processed=0",
+        )
+        .bind(bot)
+        .bind(input.chat)
+        .bind(topic)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StoreError::Database)?;
         sqlx::query("UPDATE callbacks SET consumed=1 WHERE bot_id=? AND chat_id=? AND topic_id=?")
             .bind(bot)
             .bind(input.chat)
@@ -98,8 +177,18 @@ impl Store {
         topic: i32,
         state: &str,
     ) -> Result<(), StoreError> {
-        sqlx::query("UPDATE topic_removals SET state=? WHERE bot_id=? AND chat_id=? AND topic_id=? AND request_key=? AND state='dispatching'")
-            .bind(state).bind(bot).bind(input.chat).bind(topic).bind(&input.event_key).execute(&self.pool).await.map_err(|_|StoreError::Database)?;
+        sqlx::query(
+            "UPDATE topic_removals SET state=? WHERE bot_id=? AND chat_id=? AND \
+            topic_id=? AND request_key=? AND state='dispatching'",
+        )
+        .bind(state)
+        .bind(bot)
+        .bind(input.chat)
+        .bind(topic)
+        .bind(&input.event_key)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| StoreError::Database)?;
         Ok(())
     }
 }

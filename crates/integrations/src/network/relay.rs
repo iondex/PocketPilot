@@ -30,11 +30,15 @@ impl Relay {
                 tokio::select! {
                     accepted = listener.accept() => {
                         let Ok((stream, _)) = accepted else { break };
-                        if tasks.len() >= 4 { continue; }
+                        if tasks.len() >= 4 {
+                            continue;
+                        }
                         let proxy = proxy.clone();
                         let upstream = upstream.clone();
-                        let access=access.clone();
-                        tasks.spawn(async move { let _ = forward(stream, proxy, upstream,access).await; });
+                        let access = access.clone();
+                        tasks.spawn(async move {
+                            let _ = forward(stream, proxy, upstream, access).await;
+                        });
                     }
                     _ = tasks.join_next(), if !tasks.is_empty() => {}
                 }
@@ -76,11 +80,17 @@ async fn forward(
         tokio::select! {
             message = local.next() => {
                 let Some(Ok(message)) = message else { break };
-                tokio::time::timeout(Duration::from_secs(30), remote.send(message)).await.map_err(|_| failed())?.map_err(|_| failed())?;
+                tokio::time::timeout(Duration::from_secs(30), remote.send(message))
+                    .await
+                    .map_err(|_| failed())?
+                    .map_err(|_| failed())?;
             }
             message = remote.next() => {
                 let Some(Ok(message)) = message else { break };
-                tokio::time::timeout(Duration::from_secs(30), local.send(message)).await.map_err(|_| failed())?.map_err(|_| failed())?;
+                tokio::time::timeout(Duration::from_secs(30), local.send(message))
+                    .await
+                    .map_err(|_| failed())?
+                    .map_err(|_| failed())?;
             }
         }
     }

@@ -1,3 +1,5 @@
+//! Authenticate Slack Socket Mode envelopes and acknowledge durable ingress promptly.
+
 use crate::slack::api::Client;
 use crate::slack::socket_model::{Ack, Event};
 use crate::slack::{Error, Result, api::Api, model::*, runtime::Service};
@@ -325,8 +327,12 @@ pub async fn run(
                 let frame = tokio::select! {
                     _ = stop.changed() => return Ok(()),
                     _ = heartbeat.tick(), if hello => {
-                        if tokio::time::timeout(Duration::from_secs(5), socket.send(tokio_tungstenite::tungstenite::Message::Ping(Vec::new().into())))
-                            .await.map_or(true, |r| r.is_err()) { break; }
+                        if tokio::time::timeout(
+                            Duration::from_secs(5),
+                            socket.send(tokio_tungstenite::tungstenite::Message::Ping(Vec::new().into())),
+                        ).await.map_or(true, |r| r.is_err()) {
+                            break;
+                        }
                         continue;
                     }
                     result = tokio::time::timeout_at(deadline, socket.next()) => result,
@@ -339,7 +345,10 @@ pub async fn run(
                     tokio_tungstenite::tungstenite::Message::Text(text) => {
                         let result = tokio::select! {
                             _ = stop.changed() => return Ok(()),
-                            result = tokio::time::timeout(Duration::from_millis(if hello { 2500 } else { 45000 }), dispatch(&service, &api, states.clone(), &text)) => result,
+                            result = tokio::time::timeout(
+                                Duration::from_millis(if hello { 2500 } else { 45000 }),
+                                dispatch(&service, &api, states.clone(), &text),
+                            ) => result,
                         };
                         match result {
                             Ok(Ok(SocketReply::Hello)) => {

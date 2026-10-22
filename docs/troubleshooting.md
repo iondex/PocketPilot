@@ -9,7 +9,7 @@
 | 构建无法生成 Codex schema | 运行 `codex --version`，确认 CI 固定版本 0.162.1；检查 PATH 或显式 `CODEX_SCHEMA_BIN`。不能改用旧 schema 快照绕过失败 |
 | TOML 解析失败 | 从公开示例逐项比较表名和字段；不支持 include、`.env`、旧 provider/workspace 数组。错误不回显原文，以免泄露凭据 |
 | 升级后 Telegram 配置失败 | 添加正整数 `[telegram].owner_user_id`；不再依赖源码固定账号。修改后重启 |
-| 飞书出现未知 proxy 字段 | 删除 `[feishu].proxy`，包括空字符串。飞书和未来 Lark 固定直连 |
+| 飞书或 Lark 出现未知 proxy 字段 | 删除 `[feishu].proxy` 或 `[lark].proxy`，包括空字符串。两端均固定直连 |
 | 服务提示状态目录已加锁 | 确认同一 data_dir 的其他 `serve` 已正常退出；不要删除锁文件或结束原生 agent。`providers verify` 也需独占服务状态 |
 | 主机可 SSH，但看不到 runtime | 使用 `doctor --connect`，核对目标账号的已运行共享入口。历史目录存在不等于具有共享 app-server |
 | 菜单可浏览但输入被拒绝 | 查看 `providers list` 的控制资格，核对允许 cwd。Codex 按专用项目验证；Claude 按独立验收登记 |

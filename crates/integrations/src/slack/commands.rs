@@ -1,3 +1,5 @@
+//! Translate explicit Slack actions while retaining owner, message and binding scope.
+
 use super::*;
 use crate::slack::render;
 use session::provider::Mutation;

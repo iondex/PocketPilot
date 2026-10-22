@@ -19,21 +19,57 @@ impl Store {
             body.text = ::i18n::text(&locale, &id);
         }
         let payload = serde_json::to_string(&body).map_err(|_| Error::Database)?;
-        sqlx::query("INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,topic_id,source_key) DO NOTHING")
-            .bind(uuid::Uuid::now_v7().to_string()).bind(bot).bind(chat).bind(topic).bind(source).bind(payload)
-            .execute(&self.pool).await.map_err(|_| Error::Database)?;
+        sqlx::query(
+            "INSERT INTO deliveries(id,bot_id,chat_id,topic_id,source_key,payload,\
+            state) VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(bot_id,chat_id,\
+            topic_id,source_key) DO NOTHING",
+        )
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(bot)
+        .bind(chat)
+        .bind(topic)
+        .bind(source)
+        .bind(payload)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
     pub async fn pending_deliveries(&self, bot: i64, now: i64) -> Result<Vec<Delivery>, Error> {
-        sqlx::query_as("SELECT id,chat_id,topic_id,payload,source_key,next_part,rendered_parts FROM deliveries d WHERE bot_id=? AND state='pending' AND not_before<=? AND NOT EXISTS(SELECT 1 FROM deliveries earlier WHERE earlier.bot_id=d.bot_id AND earlier.chat_id=d.chat_id AND earlier.state IN ('pending','dispatching') AND earlier.rowid<d.rowid AND NOT (earlier.state='pending' AND earlier.not_before>? AND json_extract(earlier.payload,'$.appearance') IS NOT NULL AND json_extract(earlier.payload,'$.icon_lookup_deferred')=1)) ORDER BY rowid LIMIT 100")
-            .bind(bot).bind(now).bind(now).fetch_all(&self.pool).await.map_err(|_| Error::Database)
+        sqlx::query_as(
+            "SELECT id,chat_id,topic_id,payload,source_key,next_part,rendered_parts \
+            FROM deliveries d WHERE bot_id=? AND state='pending' AND not_before<=? \
+            AND NOT EXISTS(SELECT 1 FROM deliveries earlier WHERE \
+            earlier.bot_id=d.bot_id AND earlier.chat_id=d.chat_id AND earlier.state \
+            IN ('pending','dispatching') AND earlier.rowid<d.rowid AND NOT \
+            (earlier.state='pending' AND earlier.not_before>? AND \
+            json_extract(earlier.payload,'$.appearance') IS NOT NULL AND \
+            json_extract(earlier.payload,'$.icon_lookup_deferred')=1)) ORDER BY \
+            rowid LIMIT 100",
+        )
+        .bind(bot)
+        .bind(now)
+        .bind(now)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| Error::Database)
     }
 
     pub async fn prepare_parts(&self, row: &Delivery, parts: &[Outbound]) -> Result<bool, Error> {
-        Ok(sqlx::query("UPDATE deliveries SET rendered_parts=?,batch_opened_ms=NULL WHERE id=? AND state='pending' AND next_part=0 AND rendered_parts IS NULL AND payload=?")
-            .bind(serde_json::to_string(parts).map_err(|_| Error::Database)?).bind(&row.id).bind(&row.payload)
-            .execute(&self.pool).await.map_err(|_| Error::Database)?.rows_affected() == 1)
+        Ok(sqlx::query(
+            "UPDATE deliveries SET rendered_parts=?,batch_opened_ms=NULL WHERE id=? \
+            AND state='pending' AND next_part=0 AND rendered_parts IS NULL AND \
+            payload=?",
+        )
+        .bind(serde_json::to_string(parts).map_err(|_| Error::Database)?)
+        .bind(&row.id)
+        .bind(&row.payload)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?
+        .rows_affected()
+            == 1)
     }
 
     pub async fn acknowledge_part(
@@ -42,9 +78,20 @@ impl Store {
         message: Option<i32>,
         more: bool,
     ) -> Result<(), Error> {
-        let changed = sqlx::query("UPDATE deliveries SET next_part=next_part+1,state=?,message_id=?,rendered_parts=CASE WHEN ? THEN rendered_parts ELSE NULL END WHERE id=? AND state='dispatching' AND next_part=?")
-            .bind(if more { "pending" } else { "delivered" }).bind(message).bind(more).bind(&row.id).bind(row.next_part)
-            .execute(&self.pool).await.map_err(|_| Error::Database)?.rows_affected();
+        let changed = sqlx::query(
+            "UPDATE deliveries SET next_part=next_part+1,state=?,message_id=?,\
+            rendered_parts=CASE WHEN ? THEN rendered_parts ELSE NULL END WHERE id=? \
+            AND state='dispatching' AND next_part=?",
+        )
+        .bind(if more { "pending" } else { "delivered" })
+        .bind(message)
+        .bind(more)
+        .bind(&row.id)
+        .bind(row.next_part)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?
+        .rows_affected();
         if changed != 1 {
             return Err(Error::Transition);
         }
@@ -96,8 +143,17 @@ impl Store {
         let mut deferred = body.clone();
         deferred.icon_lookup_deferred = true;
         let payload = serde_json::to_string(&deferred).map_err(|_| Error::Database)?;
-        let updated = sqlx::query("UPDATE deliveries SET state='pending',payload=?,not_before=? WHERE id=? AND state='dispatching'")
-            .bind(payload).bind(not_before).bind(id).execute(&self.pool).await.map_err(|_| Error::Database)?.rows_affected();
+        let updated = sqlx::query(
+            "UPDATE deliveries SET state='pending',payload=?,not_before=? WHERE id=? \
+            AND state='dispatching'",
+        )
+        .bind(payload)
+        .bind(not_before)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?
+        .rows_affected();
         if updated != 1 {
             return Err(Error::Transition);
         }

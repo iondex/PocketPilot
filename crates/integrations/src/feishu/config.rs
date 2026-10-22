@@ -1,5 +1,32 @@
-//! Domestic Feishu application scope; credentials never enter Debug output.
+//! Shared Feishu/Lark application settings; credentials never enter Debug output.
 use serde::Deserialize;
+
+/// Select fixed official endpoints while keeping credentials and state independent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Region {
+    Feishu,
+    Lark,
+}
+
+impl Region {
+    pub const fn platform(self) -> crate::Platform {
+        match self {
+            Self::Feishu => crate::Platform::Feishu,
+            Self::Lark => crate::Platform::Lark,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        self.platform().as_str()
+    }
+
+    pub const fn base_url(self) -> &'static str {
+        match self {
+            Self::Feishu => "https://open.feishu.cn",
+            Self::Lark => "https://open.larksuite.com",
+        }
+    }
+}
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,10 +76,14 @@ impl Config {
         self.groups.iter().any(|g| g.chat_id == chat)
     }
 
-    pub fn namespace(&self) -> String {
+    /// Include the platform even for identical external IDs; retain existing Feishu keys.
+    pub fn namespace(&self, region: Region) -> String {
         format!(
-            "feishu:{}:{}:{}",
-            self.app_id, self.tenant_key, self.owner_open_id
+            "{}:{}:{}:{}",
+            region.as_str(),
+            self.app_id,
+            self.tenant_key,
+            self.owner_open_id
         )
     }
 }
@@ -67,7 +98,7 @@ pub fn identifier(value: &str) -> bool {
 
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Feishu")
+        f.debug_struct("FeishuLark")
             .field("app_id", &self.app_id)
             .field("credentials", &"[REDACTED]")
             .finish()

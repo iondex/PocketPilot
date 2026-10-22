@@ -23,6 +23,9 @@ pub(super) struct Options {
     /// Read Feishu bot identity without sending messages or creating sessions.
     #[arg(long)]
     pub(super) feishu: bool,
+    /// Read Lark bot identity without sending messages or creating sessions.
+    #[arg(long)]
+    pub(super) lark: bool,
 }
 
 #[derive(Serialize)]
@@ -34,6 +37,7 @@ struct ConfigurationSummary {
     discord_configured: bool,
     slack_configured: bool,
     feishu_configured: bool,
+    lark_configured: bool,
     credentials_checked: bool,
     control_enabled: bool,
 }
@@ -60,6 +64,7 @@ fn configuration_summary(config: &Config, check: bool) -> Result<ConfigurationSu
         discord_configured: config.discord.is_some(),
         slack_configured: config.slack.is_some(),
         feishu_configured: config.feishu.is_some(),
+        lark_configured: config.lark.is_some(),
         credentials_checked: check,
         control_enabled: config.providers.iter().any(|p| p.control_verified),
     })
@@ -84,6 +89,7 @@ pub(super) struct Report {
     telegram: Option<integrations::telegram::Identity>,
     discord: Option<integrations::discord::Identity>,
     feishu: Option<integrations::feishu::Identity>,
+    lark: Option<integrations::feishu::Identity>,
     control_enabled: bool,
     note: String,
 }
@@ -193,12 +199,24 @@ pub(super) async fn inspect(config: &Config, options: &Options) -> Result<Report
     } else {
         None
     };
+    let lark = if options.lark {
+        Some(
+            integrations::feishu::inspect_region(
+                integrations::feishu::config::Region::Lark,
+                config.lark.as_ref().ok_or(Error::Selection)?,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     Ok(Report {
         configuration,
         hosts,
         telegram,
         discord,
         feishu,
+        lark,
         control_enabled: config.providers.iter().any(|p| p.control_verified),
         note: i18n::text(&config.language, "cli.doctor_note"),
     })

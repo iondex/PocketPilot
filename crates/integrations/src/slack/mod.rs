@@ -1,3 +1,5 @@
+//! Expose Slack integration entry points; transport, UI and durable state stay local.
+
 #[path = "config.rs"]
 pub mod config;
 

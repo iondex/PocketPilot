@@ -1,3 +1,5 @@
+//! Select user-visible interactions and coalesce output under bounded delivery windows.
+
 use crate::{History, Role, TextItem};
 use std::time::{Duration, Instant};
 use unicode_segmentation::UnicodeSegmentation;

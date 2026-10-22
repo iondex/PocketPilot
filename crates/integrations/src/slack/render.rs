@@ -1,3 +1,5 @@
+//! Render bounded Slack messages while keeping agent prose separate from control widgets.
+
 use crate::rendering::{Capabilities, RenderBatch, RenderRequest, Renderer};
 use crate::slack::model::Content;
 

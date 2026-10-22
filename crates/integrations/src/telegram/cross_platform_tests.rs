@@ -288,6 +288,7 @@ async fn slack_threads_share_native_sessions_and_never_replay_unknown_input() {
         api::Platform,
         model::{Command as SCommand, Content, Request as SRequest},
     };
+
     struct SlackFixture;
     #[async_trait::async_trait]
     impl Platform for SlackFixture {

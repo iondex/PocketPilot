@@ -14,15 +14,37 @@ impl Store {
         for (id, input) in updates {
             if let Some(input) = input {
                 let payload = serde_json::to_string(input).map_err(|_| Error::Database)?;
-                sqlx::query("INSERT INTO inbound_updates(bot_id,polling_epoch,update_id,event_key,payload,received_at,chat_id,topic_id) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING")
-                    .bind(bot).bind(epoch).bind(i64::from(*id)).bind(&input.event_key).bind(payload).bind(now).bind(input.chat).bind(input.topic)
-                    .execute(&mut *tx).await.map_err(|_| Error::Database)?;
+                sqlx::query(
+                    "INSERT INTO inbound_updates(bot_id,polling_epoch,update_id,event_key,\
+            payload,received_at,chat_id,topic_id) VALUES(?,?,?,?,?,?,?,?) ON \
+            CONFLICT DO NOTHING",
+                )
+                .bind(bot)
+                .bind(epoch)
+                .bind(i64::from(*id))
+                .bind(&input.event_key)
+                .bind(payload)
+                .bind(now)
+                .bind(input.chat)
+                .bind(input.topic)
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| Error::Database)?;
             }
         }
         if let Some((id, _)) = updates.last() {
             let next = i64::from(*id) + 1;
-            sqlx::query("UPDATE polling_cursors SET next_offset=?,last_poll_at=? WHERE bot_id=? AND polling_epoch=?")
-                .bind(next).bind(now).bind(bot).bind(epoch).execute(&mut *tx).await.map_err(|_| Error::Database)?;
+            sqlx::query(
+                "UPDATE polling_cursors SET next_offset=?,last_poll_at=? WHERE bot_id=? \
+            AND polling_epoch=?",
+            )
+            .bind(next)
+            .bind(now)
+            .bind(bot)
+            .bind(epoch)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| Error::Database)?;
         } else {
             sqlx::query(
                 "UPDATE polling_cursors SET last_poll_at=? WHERE bot_id=? AND polling_epoch=?",
@@ -38,12 +60,26 @@ impl Store {
     }
 
     pub async fn cursor(&self, bot: i64, now: i64) -> Result<(i64, Option<i32>), Error> {
-        sqlx::query("INSERT INTO polling_cursors(bot_id,polling_epoch,generation_lower_bound,last_poll_at) VALUES(?,1,?,?) ON CONFLICT DO NOTHING")
-            .bind(bot).bind(now).bind(now).execute(&self.pool).await.map_err(|_| Error::Database)?;
+        sqlx::query(
+            "INSERT INTO polling_cursors(bot_id,polling_epoch,generation_lower_bound,\
+            last_poll_at) VALUES(?,1,?,?) ON CONFLICT DO NOTHING",
+        )
+        .bind(bot)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         // Telegram may randomize update IDs after a week without updates. Reset only after
         // a complete week with no received event; event_key still deduplicates old messages.
-        let row = sqlx::query("SELECT polling_epoch,next_offset,generation_lower_bound FROM polling_cursors WHERE bot_id=?")
-            .bind(bot).fetch_one(&self.pool).await.map_err(|_| Error::Database)?;
+        let row = sqlx::query(
+            "SELECT polling_epoch,next_offset,generation_lower_bound FROM \
+            polling_cursors WHERE bot_id=?",
+        )
+        .bind(bot)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         let mut epoch: i64 = row.get("polling_epoch");
         let last: Option<i64> =
             sqlx::query_scalar("SELECT MAX(received_at) FROM inbound_updates WHERE bot_id=?")
@@ -55,8 +91,16 @@ impl Store {
         let offset: Option<i64> = row.get("next_offset");
         if now.saturating_sub(since) > 7 * 24 * 3600 && offset.is_some() {
             epoch += 1;
-            sqlx::query("UPDATE polling_cursors SET polling_epoch=?,next_offset=NULL,generation_lower_bound=? WHERE bot_id=?")
-                .bind(epoch).bind(now).bind(bot).execute(&self.pool).await.map_err(|_| Error::Database)?;
+            sqlx::query(
+                "UPDATE polling_cursors SET polling_epoch=?,next_offset=NULL,\
+            generation_lower_bound=? WHERE bot_id=?",
+            )
+            .bind(epoch)
+            .bind(now)
+            .bind(bot)
+            .execute(&self.pool)
+            .await
+            .map_err(|_| Error::Database)?;
             return Ok((epoch, None));
         }
         let offset = offset
@@ -106,21 +150,42 @@ impl Store {
     }
 
     pub async fn finish_input(&self, bot: i64, epoch: i64, id: i64) -> Result<(), Error> {
-        sqlx::query("UPDATE inbound_updates SET processed=1 WHERE bot_id=? AND polling_epoch=? AND update_id=?")
-            .bind(bot).bind(epoch).bind(id).execute(&self.pool).await.map_err(|_| Error::Database)?;
+        sqlx::query(
+            "UPDATE inbound_updates SET processed=1 WHERE bot_id=? AND \
+            polling_epoch=? AND update_id=?",
+        )
+        .bind(bot)
+        .bind(epoch)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         Ok(())
     }
 
     pub async fn recover_inbox(&self, bot: i64) -> Result<(), Error> {
-        sqlx::query("UPDATE topic_removals SET state='outcome_unknown' WHERE bot_id=? AND state='dispatching'")
-            .bind(bot).execute(&self.pool).await.map_err(|_|Error::Database)?;
-        sqlx::query("UPDATE management_topics SET state='outcome_unknown' WHERE bot_id=? AND state='dispatching'")
-            .bind(bot).execute(&self.pool).await.map_err(|_|Error::Database)?;
+        sqlx::query(
+            "UPDATE topic_removals SET state='outcome_unknown' WHERE bot_id=? AND \
+            state='dispatching'",
+        )
+        .bind(bot)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
+        sqlx::query(
+            "UPDATE management_topics SET state='outcome_unknown' WHERE bot_id=? AND \
+            state='dispatching'",
+        )
+        .bind(bot)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         // Old queued status updates may still contain the previous name/status
         // coupling. Do not replay those renames after an upgrade. Old keyboard
         // nonces are invalidated below, so their unsent menus must be refreshed.
         let queued = sqlx::query(
-            "SELECT id,source_key,payload FROM deliveries WHERE bot_id=? AND state='pending'",
+            "SELECT id,source_key,payload FROM deliveries WHERE bot_id=? AND \
+            state='pending'",
         )
         .bind(bot)
         .fetch_all(&self.pool)
@@ -151,16 +216,29 @@ impl Store {
         }
         // A process restart does not authorize still-pending agent input. Keep
         // its original timestamp/text and require a new interaction to send it.
-        let pending=sqlx::query("SELECT polling_epoch,update_id,payload FROM inbound_updates WHERE bot_id=? AND processed=0")
-            .bind(bot).fetch_all(&self.pool).await.map_err(|_|Error::Database)?;
+        let pending = sqlx::query(
+            "SELECT polling_epoch,update_id,payload FROM inbound_updates WHERE \
+            bot_id=? AND processed=0",
+        )
+        .bind(bot)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         for row in pending {
             let mut input: Input =
                 serde_json::from_str(row.get("payload")).map_err(|_| Error::Database)?;
             input.requires_confirmation = true;
-            sqlx::query("UPDATE inbound_updates SET payload=? WHERE bot_id=? AND polling_epoch=? AND update_id=? AND processed=0")
-                .bind(serde_json::to_string(&input).map_err(|_|Error::Database)?).bind(bot)
-                .bind(row.get::<i64,_>("polling_epoch")).bind(row.get::<i64,_>("update_id"))
-                .execute(&self.pool).await.map_err(|_|Error::Database)?;
+            sqlx::query(
+                "UPDATE inbound_updates SET payload=? WHERE bot_id=? AND polling_epoch=? \
+            AND update_id=? AND processed=0",
+            )
+            .bind(serde_json::to_string(&input).map_err(|_| Error::Database)?)
+            .bind(bot)
+            .bind(row.get::<i64, _>("polling_epoch"))
+            .bind(row.get::<i64, _>("update_id"))
+            .execute(&self.pool)
+            .await
+            .map_err(|_| Error::Database)?;
         }
         // Callback queries have no click timestamp. Invalidating the previous
         // process's nonces prevents queued old clicks from authorizing writes.
@@ -169,8 +247,14 @@ impl Store {
             .execute(&self.pool)
             .await
             .map_err(|_| Error::Database)?;
-        let rows = sqlx::query("SELECT polling_epoch,update_id,payload FROM inbound_updates WHERE bot_id=? AND processed=2")
-            .bind(bot).fetch_all(&self.pool).await.map_err(|_| Error::Database)?;
+        let rows = sqlx::query(
+            "SELECT polling_epoch,update_id,payload FROM inbound_updates WHERE \
+            bot_id=? AND processed=2",
+        )
+        .bind(bot)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| Error::Database)?;
         for row in rows {
             let input: Input =
                 serde_json::from_str(row.get("payload")).map_err(|_| Error::Database)?;

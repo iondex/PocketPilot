@@ -114,15 +114,41 @@ fn telegram_requires_a_valid_owner_and_owner_changes_require_restart() {
 }
 
 #[test]
-fn feishu_is_direct_only_and_rejects_even_an_empty_proxy_setting() {
+fn feishu_and_lark_are_direct_only_and_reject_even_an_empty_proxy_setting() {
     let path = Path::new("/tmp/pocketpilot.toml");
     let text = "[feishu]\napp_id='cli_fixture'\napp_secret='fixture'\ntenant_key='tenant'\nowner_open_id='ou_owner'\n[[feishu.groups]]\nchat_id='oc_group'\nname='Fixture'\n";
-    assert!(parse(path, text).is_ok());
-    for proxy in ["", "http://192.0.2.10:7890"] {
-        let configured = text.replace("[feishu]\n", &format!("[feishu]\nproxy='{proxy}'\n"));
-        assert!(parse(path, &configured).is_err());
+    for platform in ["feishu", "lark"] {
+        let text = text.replace("feishu", platform);
+        assert!(parse(path, &text).is_ok());
+        for field in [
+            "proxy=''",
+            "proxy='http://192.0.2.10:7890'",
+            "base_url='https://example.invalid'",
+            "region='lark'",
+        ] {
+            let configured = text.replace(
+                &format!("[{platform}]\n"),
+                &format!("[{platform}]\n{field}\n"),
+            );
+            assert!(parse(path, &configured).is_err(), "{platform}: {field}");
+        }
+        let before = runtime_parser(path, &text).unwrap();
+        for (from, to) in [
+            ("fixture'", "rotated'"),
+            ("ou_owner", "ou_other"),
+            ("oc_group", "oc_other"),
+        ] {
+            let after = runtime_parser(path, &text.replace(from, to)).unwrap();
+            assert_ne!(before.restart_key, after.restart_key);
+        }
+        let other = if platform == "feishu" {
+            "lark"
+        } else {
+            "feishu"
+        };
+        let other = runtime_parser(path, &text.replace(platform, other)).unwrap();
+        assert_ne!(before.restart_key, other.restart_key);
     }
-    assert!(parse(path, "[lark]\nproxy=''").is_err());
 }
 
 #[test]

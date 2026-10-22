@@ -1,3 +1,5 @@
+//! Build OpenSSH commands from resolved host policy while preserving argument boundaries.
+
 use crate::ssh::Error;
 use std::{path::PathBuf, time::Duration};
 use tokio::process::Command;

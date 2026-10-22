@@ -1,3 +1,5 @@
+//! Deliver persisted Discord output without replaying messages whose outcomes are unknown.
+
 use super::Service;
 use crate::discord::Api;
 use crate::discord::Command;
@@ -141,7 +143,10 @@ impl Service {
                         .map_err(|_| crate::discord::Error::Backend)?,
                 }
             }
-            tokio::select! {_=stop.changed()=>break,_=tokio::time::sleep(Duration::from_secs(4))=>{}}
+            tokio::select! {
+                _ = stop.changed() => break,
+                _ = tokio::time::sleep(Duration::from_secs(4)) => {},
+            }
         }
         Ok(())
     }

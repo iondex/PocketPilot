@@ -45,7 +45,8 @@ fn initial_binding_previews_only_the_latest_interaction_then_sends_deltas() {
         all_pages_read: true,
     };
     let mut binding = binding();
-    let (cursor, sections) = capture(&binding, &history, "namespace", "en").unwrap();
+    let (cursor, sections) =
+        capture(&binding, &history, "namespace", Region::Feishu, "en").unwrap();
     let text = sections
         .into_iter()
         .map(|s| s.body)
@@ -56,14 +57,69 @@ fn initial_binding_previews_only_the_latest_interaction_then_sends_deltas() {
     binding.ready = true;
     binding.cursor = cursor;
     assert!(
-        capture(&binding, &history, "namespace", "en")
+        capture(&binding, &history, "namespace", Region::Feishu, "en")
             .unwrap()
             .1
             .is_empty()
     );
     let mut changed = history;
     changed.items.last_mut().unwrap().text = "changed answer".into();
-    let (_, sections) = capture(&binding, &changed, "namespace", "en").unwrap();
+    let (_, sections) = capture(&binding, &changed, "namespace", Region::Feishu, "en").unwrap();
     assert_eq!(sections.len(), 1);
     assert_eq!(sections[0].body, "changed answer");
+}
+
+#[test]
+fn observation_suppresses_only_the_current_application_input_echo() {
+    for (region, other) in [
+        (Region::Feishu, Region::Lark),
+        (Region::Lark, Region::Feishu),
+    ] {
+        let settings = super::super::super::tests::settings();
+        let namespace = settings.namespace(region);
+        let mut binding = binding();
+        binding.ready = true;
+        let mut own = item("own", session::Role::User, "own input");
+        own.client_id = Some(format!(
+            "pp:{}:{}:input",
+            region.as_str(),
+            engine::digest(&namespace)
+        ));
+        let mut cross_platform = item(
+            "other-platform",
+            session::Role::User,
+            "other platform input",
+        );
+        cross_platform.client_id = Some(format!(
+            "pp:{}:{}:input",
+            other.as_str(),
+            engine::digest(&settings.namespace(other))
+        ));
+        let mut cross_application =
+            item("other-app", session::Role::User, "other application input");
+        cross_application.client_id = Some(format!(
+            "pp:{}:{}:input",
+            region.as_str(),
+            engine::digest("other-application")
+        ));
+        let mut answer = item("own", session::Role::Agent, "agent answer");
+        answer.client_id = own.client_id.clone();
+        let history = session::History {
+            items: vec![own, cross_platform, cross_application, answer],
+            all_pages_read: true,
+        };
+        let (_, sections) = capture(&binding, &history, &namespace, region, "en").unwrap();
+        let bodies: Vec<_> = sections
+            .iter()
+            .map(|section| section.body.as_str())
+            .collect();
+        assert_eq!(
+            bodies,
+            [
+                "other platform input",
+                "other application input",
+                "agent answer"
+            ]
+        );
+    }
 }

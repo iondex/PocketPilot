@@ -123,6 +123,7 @@ async fn slack_bound_question_answer_does_not_steer_and_rejects_another_user() {
         api::Platform,
         model::{Command, Content, Request},
     };
+
     struct Offline;
     #[async_trait::async_trait]
     impl Platform for Offline {

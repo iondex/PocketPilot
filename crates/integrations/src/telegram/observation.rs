@@ -1,3 +1,5 @@
+//! Observe authorized topic bindings and queue session deltas without runtime mutations.
+
 use super::{Error, Service, item_hashes, item_key, topic_title};
 use crate::telegram::ledger::Binding;
 use crate::telegram::ledger::Outbound;
@@ -44,11 +46,16 @@ impl Service {
                     continue;
                 }
                 let service = self.clone();
-                let handle=jobs.spawn(async move {
+                let handle = jobs.spawn(async move {
                     loop {
-                        if service.store.binding(service.bot,key.0,key.1).await.ok().flatten().is_none() {break;}
-                        if let Err(error)=service.refresh_binding(&binding).await {tracing::debug!(%error,"session observation unavailable; no mutation requested");let _=service.offline_status(&binding,&error).await;}
-                        let delay=service.config.snapshot().config.delivery.burst_window_ms;
+                        if service.store.binding(service.bot, key.0, key.1).await.ok().flatten().is_none() {
+                            break;
+                        }
+                        if let Err(error) = service.refresh_binding(&binding).await {
+                            tracing::debug!(%error, "session observation unavailable; no mutation requested");
+                            let _ = service.offline_status(&binding, &error).await;
+                        }
+                        let delay = service.config.snapshot().config.delivery.burst_window_ms;
                         tokio::time::sleep(Duration::from_millis(delay)).await;
                     }
                     key
@@ -56,15 +63,21 @@ impl Service {
                 workers.insert(key, handle);
             }
             tokio::select! {
-                _=stop.changed()=>break,
-                result=jobs.join_next_with_id(), if !jobs.is_empty()=>{
+                _ = stop.changed() => break,
+                result = jobs.join_next_with_id(), if !jobs.is_empty() => {
                     match result {
-                        Some(Ok((id,key)))=>{if workers.get(&key).is_some_and(|handle|handle.id()==id) {workers.remove(&key);}},
-                        Some(Err(error))=>{workers.retain(|_,handle|handle.id()!=error.id());},
-                        None=>{},
+                        Some(Ok((id, key))) => {
+                            if workers.get(&key).is_some_and(|handle| handle.id() == id) {
+                                workers.remove(&key);
+                            }
+                        },
+                        Some(Err(error)) => {
+                            workers.retain(|_, handle| handle.id() != error.id());
+                        },
+                        None => {},
                     }
                 },
-                _=tokio::time::sleep(Duration::from_secs(2))=>{},
+                _ = tokio::time::sleep(Duration::from_secs(2)) => {},
             }
         }
         jobs.abort_all();

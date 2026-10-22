@@ -1,3 +1,5 @@
+//! Claim explicitly authorized Slack input and preserve uncertain runtime outcomes.
+
 use super::*;
 use session::{
     RuntimeStatus,
@@ -51,6 +53,7 @@ impl Service {
             .transition(&id, State::Received, State::Prepared)
             .await?;
         self.api.channel(&r.channel).await?;
+        // Channel validation awaits the network; the original snapshot may now be stale.
         self.fresh(r, hash)?;
         if r.binding.is_some() {
             self.bound(r).await?;

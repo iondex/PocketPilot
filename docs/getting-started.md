@@ -7,7 +7,7 @@
 | 依赖 | 用途 |
 | --- | --- |
 | stable Rust，带 rustfmt / Clippy | 工具链由根 rust-toolchain.toml 声明；manifest 最低 1.94 |
-| Make、Python 3.10+、C 编译器和系统开发工具 | 构建 Rust 原生依赖；SQLite 从依赖构建，不要求预装数据库服务 |
+| Make、Python 3、C 编译器和系统开发工具 | 构建 Rust 原生依赖；SQLite 从依赖构建，不要求预装数据库服务 |
 | Node.js / npm 和 Codex CLI 0.162.1 | CI 固定版本；构建从 CLI 导出 typed DTO，即使只使用 Claude 也需要 |
 | 系统 OpenSSH | SSH 主机配置、密钥、known_hosts、跳板和认证 |
 | 一个可用的消息平台应用 | 各平台使用自己的 owner 和安装身份 |
@@ -50,7 +50,7 @@ transport = "local_proxy"
 allowed_workspace_roots = ["/srv/code"]
 ```
 
-Telegram 必须按[安装步骤](integrations.md#telegram)开启私聊 Topics。使用 Slack、Discord 或飞书时，替换平台段并完成对应安装流程；所有平台无需同时配置。飞书固定直连，不允许 `proxy`，也不使用环境代理；国际 Lark 尚未开放。
+Telegram 必须按[安装步骤](integrations.md#telegram)开启私聊 Topics。使用 Slack、Discord、飞书或 Lark 时，替换平台段并完成对应安装流程；所有平台无需同时配置。飞书和 Lark 固定直连，不允许 `proxy`，也不使用环境代理；Lark 使用 `[lark]` 配置段，详见[接入方案](integrations.md#lark-企业自建应用)。
 
 远程主机把 transport 改为 `ssh_proxy` 并配置 `ssh_alias`。先独立确认 `ssh pilot-dev` 能在自己的账号上完成认证并执行命令，保留主机密钥校验。项目路径属于执行主机，不能填写桥接主机上不对应的路径。
 

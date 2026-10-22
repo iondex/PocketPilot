@@ -1,3 +1,5 @@
+//! Persist polled Telegram updates before advancing offsets and scheduling scoped workers.
+
 use super::Service;
 use crate::telegram::ledger::Outbound;
 use engine::now;
@@ -17,7 +19,10 @@ impl Service {
                     break;
                 }
             };
-            let result = tokio::select! { _=stop.changed()=>break, result=self.api.updates(cursor.1)=>result };
+            let result = tokio::select! {
+                _ = stop.changed() => break,
+                result = self.api.updates(cursor.1) => result,
+            };
             match result {
                 Ok(updates) => {
                     let updates = updates
@@ -52,7 +57,10 @@ impl Service {
                         _ => 2_u64.pow(failures.min(6)),
                     };
                     tracing::warn!(%error,"Telegram poll failed; retrying reads only");
-                    tokio::select! { _=stop.changed()=>break,_=tokio::time::sleep(Duration::from_secs(delay))=>{} }
+                    tokio::select! {
+                        _ = stop.changed() => break,
+                        _ = tokio::time::sleep(Duration::from_secs(delay)) => {},
+                    }
                 }
             }
         }
@@ -134,15 +142,20 @@ impl Service {
                 }
             }
             tokio::select! {
-                _=stop.changed()=>break,
-                result=jobs.join_next(), if !jobs.is_empty()=>{
+                _ = stop.changed() => break,
+                result = jobs.join_next(), if !jobs.is_empty() => {
                     match result {
-                        Some(Ok(key))=>{busy.remove(&key);},
-                        Some(Err(_))=>{tracing::error!("input worker failed; pending request will be marked uncertain on restart");break;},
-                        None=>{},
+                        Some(Ok(key)) => {
+                            busy.remove(&key);
+                        },
+                        Some(Err(_)) => {
+                            tracing::error!("input worker failed; pending request will be marked uncertain on restart");
+                            break;
+                        },
+                        None => {},
                     }
                 },
-                _=tokio::time::sleep(Duration::from_millis(200))=>{},
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {},
             }
         }
         jobs.abort_all();

@@ -1,3 +1,5 @@
+//! Export the pinned Codex CLI schema into OUT_DIR without starting a model task.
+
 use schemars::schema::{InstanceType, Metadata, RootSchema, Schema, SchemaObject, SingleOrVec};
 use serde::Deserialize;
 use std::{

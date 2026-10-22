@@ -1,3 +1,5 @@
+//! Model SSH authentication settings while keeping challenge secrets out of Debug output.
+
 use serde::Deserialize;
 
 #[derive(Clone, Deserialize)]

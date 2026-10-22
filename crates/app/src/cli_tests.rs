@@ -19,6 +19,7 @@ fn doctor_combines_offline_checks_with_explicit_network_flags() {
             telegram: true,
             discord: true,
             feishu: false,
+            lark: false,
         })
     ));
     let args = Arguments::try_parse_from(["pocketpilot", "doctor"]).unwrap();
@@ -30,6 +31,7 @@ fn doctor_combines_offline_checks_with_explicit_network_flags() {
             telegram: false,
             discord: false,
             feishu: false,
+            lark: false,
         })
     ));
     assert!(Arguments::try_parse_from(["pocketpilot", "config-check"]).is_err());
@@ -65,4 +67,18 @@ fn retry_is_explicit_and_can_run_without_chat_integrations() {
         Command::Serve
     ));
     assert!(Arguments::try_parse_from(["pocketpilot", "serve", "--retry"]).is_err());
+}
+
+#[test]
+fn lark_probe_is_explicit_and_can_be_combined_with_feishu() {
+    let args = Arguments::try_parse_from(["pocketpilot", "doctor", "--lark", "--feishu"]).unwrap();
+    assert!(matches!(
+        args.command,
+        Command::Doctor(crate::doctor::Options {
+            feishu: true,
+            lark: true,
+            connect: false,
+            ..
+        })
+    ));
 }

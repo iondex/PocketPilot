@@ -13,15 +13,42 @@ impl Store {
         let mut tx = self.pool.begin().await.map_err(|_| StoreError::Database)?;
         for item in history.items.iter().filter(|i| i.is_error()) {
             let payload = serde_json::to_string(item).map_err(|_| StoreError::Database)?;
-            sqlx::query("INSERT INTO session_errors(instance_id,thread_id,turn_id,item_id,payload) VALUES(?,?,?,?,?) ON CONFLICT(instance_id,thread_id,turn_id,item_id) DO UPDATE SET payload=excluded.payload WHERE session_errors.payload<>excluded.payload")
-                .bind(instance).bind(thread).bind(&item.turn_id).bind(&item.item_id).bind(payload)
-                .execute(&mut *tx).await.map_err(|_| StoreError::Database)?;
+            sqlx::query(
+                "INSERT INTO session_errors(instance_id,thread_id,turn_id,item_id,\
+            payload) VALUES(?,?,?,?,?) ON CONFLICT(instance_id,thread_id,turn_id,\
+            item_id) DO UPDATE SET payload=excluded.payload WHERE \
+            session_errors.payload<>excluded.payload",
+            )
+            .bind(instance)
+            .bind(thread)
+            .bind(&item.turn_id)
+            .bind(&item.item_id)
+            .bind(payload)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| StoreError::Database)?;
         }
-        sqlx::query("DELETE FROM session_errors WHERE instance_id=? AND thread_id=? AND rowid NOT IN (SELECT rowid FROM session_errors WHERE instance_id=? AND thread_id=? ORDER BY observed_at DESC,rowid DESC LIMIT 256)")
-            .bind(instance).bind(thread).bind(instance).bind(thread)
-            .execute(&mut *tx).await.map_err(|_| StoreError::Database)?;
-        let saved: Vec<String> = sqlx::query_scalar("SELECT payload FROM session_errors WHERE instance_id=? AND thread_id=? ORDER BY observed_at,rowid")
-            .bind(instance).bind(thread).fetch_all(&mut *tx).await.map_err(|_| StoreError::Database)?;
+        sqlx::query(
+            "DELETE FROM session_errors WHERE instance_id=? AND thread_id=? AND \
+            rowid NOT IN (SELECT rowid FROM session_errors WHERE instance_id=? AND \
+            thread_id=? ORDER BY observed_at DESC,rowid DESC LIMIT 256)",
+        )
+        .bind(instance)
+        .bind(thread)
+        .bind(instance)
+        .bind(thread)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StoreError::Database)?;
+        let saved: Vec<String> = sqlx::query_scalar(
+            "SELECT payload FROM session_errors WHERE instance_id=? AND thread_id=? \
+            ORDER BY observed_at,rowid",
+        )
+        .bind(instance)
+        .bind(thread)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|_| StoreError::Database)?;
         tx.commit().await.map_err(|_| StoreError::Database)?;
         let mut orphaned = Vec::new();
         for payload in saved {

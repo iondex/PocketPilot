@@ -10,7 +10,7 @@ Detailed guides are currently written in Simplified Chinese. Start with the [Eng
 | --- | --- |
 | [首次安装](getting-started.md) | 系统依赖、构建、最小配置、只读启动、控制资格 |
 | [配置说明](configuration.md) | 单一 TOML、owner、主机、网络、状态和热更新边界 |
-| [接入方案](integrations.md) | Telegram / Slack / Discord / 飞书的安装、日常命令、附件、结构化问答 |
+| [接入方案](integrations.md) | Telegram / Slack / Discord / 飞书 / Lark 的安装、日常命令、附件、结构化问答 |
 | [故障排查](troubleshooting.md) | 根据现象执行只读诊断，处理未知写结果和升级问题 |
 | [安全策略](../SECURITY.md) | 信任边界、敏感问题报告、公开材料脱敏 |
 
@@ -22,9 +22,8 @@ Detailed guides are currently written in Simplified Chinese. Start with the [Eng
 | [Rust 风格与注释](rust-style.md) | Rust 官方、Google、Microsoft 指南及本仓库的模块、错误和异步注释约定 |
 | [架构说明](architecture.md) | crate 分工、状态机、写入账本、协议和进程生命周期 |
 | [开发指南](development.md) | 从入口追踪调用，扩展消息平台或 runtime，测试与 i18n |
-| [飞书与 Lark](feishu-lark.md) | 官方协议的共同点、区域与身份隔离、共享实现方案和待验收边界 |
+| [飞书与 Lark](feishu-lark.md) | 官方协议的共同点、平台与身份隔离、共享实现和测试边界 |
 | [依赖维护](dependencies.md) | OpenLark 补丁依据、缩减范围和退出条件、协议版本 |
-| [品牌资源](../assets/brand/README.zh-CN.md) | 共享标志、图标/头像、双语 banner、配色、许可与导出方法 |
 | [发布流程](releasing.md) | 验证、打包、许可证、发布材料及升级说明 |
 | [后续规划](support.md) | 未完成或尚待真实环境验证的能力 |
 | [变更记录](../CHANGELOG.md) | 面向使用者的未发布变化与配置兼容性 |

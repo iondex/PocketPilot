@@ -47,7 +47,13 @@ impl Store {
             .await
             .map_err(|_| Failure::Internal)?;
         // A server restart is not evidence that a previous native task finished.
-        sqlx::query("UPDATE runtime_sessions SET payload=json_set(payload,'$.status',json('{\"type\":\"notLoaded\"}'),'$.active_turn',NULL)").execute(&pool).await.map_err(|_|Failure::Internal)?;
+        sqlx::query(
+            "UPDATE runtime_sessions SET payload=json_set(payload,'$.status',\
+            json('{\"type\":\"notLoaded\"}'),'$.active_turn',NULL)",
+        )
+        .execute(&pool)
+        .await
+        .map_err(|_| Failure::Internal)?;
         Ok(Self { pool })
     }
 
@@ -67,14 +73,31 @@ impl Store {
         status: RuntimeStatus,
         turn: Option<&str>,
     ) -> Result<(), Failure> {
-        sqlx::query("UPDATE runtime_sessions SET payload=json_set(payload,'$.status',json(?),'$.active_turn',?,'$.updated_at',unixepoch()) WHERE id=?")
-            .bind(serde_json::to_string(&status).map_err(|_|Failure::Internal)?).bind(turn).bind(id).execute(&self.pool).await.map_err(|_|Failure::Internal)?;
+        sqlx::query(
+            "UPDATE runtime_sessions SET payload=json_set(payload,'$.status',json(?),\
+            '$.active_turn',?,'$.updated_at',unixepoch()) WHERE id=?",
+        )
+        .bind(serde_json::to_string(&status).map_err(|_| Failure::Internal)?)
+        .bind(turn)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Failure::Internal)?;
         Ok(())
     }
 
     pub async fn title(&self, id: &str, title: &str) -> Result<(), Failure> {
-        sqlx::query("UPDATE runtime_sessions SET payload=json_set(payload,'$.title',?,'$.native_title',?) WHERE id=? AND json_extract(payload,'$.native_title') IS NULL")
-            .bind(title).bind(title).bind(id).execute(&self.pool).await.map_err(|_|Failure::Internal)?;
+        sqlx::query(
+            "UPDATE runtime_sessions SET payload=json_set(payload,'$.title',?,\
+            '$.native_title',?) WHERE id=? AND json_extract(payload,\
+            '$.native_title') IS NULL",
+        )
+        .bind(title)
+        .bind(title)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Failure::Internal)?;
         Ok(())
     }
 
@@ -120,8 +143,17 @@ impl Store {
             .parse()
             .map_err(|_| Failure::Invalid)?;
         let limit = query.limit.clamp(1, 100);
-        let rows=sqlx::query("SELECT payload FROM runtime_sessions WHERE (? IS NULL OR json_extract(payload,'$.cwd')=?) ORDER BY rowid DESC LIMIT ? OFFSET ?")
-            .bind(&query.cwd).bind(&query.cwd).bind(limit+1).bind(offset).fetch_all(&self.pool).await.map_err(|_|Failure::Internal)?;
+        let rows = sqlx::query(
+            "SELECT payload FROM runtime_sessions WHERE (? IS NULL OR \
+            json_extract(payload,'$.cwd')=?) ORDER BY rowid DESC LIMIT ? OFFSET ?",
+        )
+        .bind(&query.cwd)
+        .bind(&query.cwd)
+        .bind(limit + 1)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| Failure::Internal)?;
         let next_cursor =
             (rows.len() > limit as usize).then(|| offset.saturating_add(limit).to_string());
         let data = rows
@@ -133,23 +165,50 @@ impl Store {
     }
 
     pub async fn item(&self, id: &str, item: TextItem) -> Result<(), Failure> {
-        sqlx::query("INSERT INTO runtime_items(session,key,payload,ordinal) VALUES(?,?,?,(SELECT COALESCE(MAX(ordinal),0)+1 FROM runtime_items WHERE session=?)) ON CONFLICT(session,key) DO UPDATE SET payload=excluded.payload")
-            .bind(id).bind(format!("{}:{}",item.turn_id,item.item_id)).bind(serde_json::to_string(&item).map_err(|_|Failure::Internal)?).bind(id)
-            .execute(&self.pool).await.map_err(|_|Failure::Internal)?;
+        sqlx::query(
+            "INSERT INTO runtime_items(session,key,payload,ordinal) VALUES(?,?,?,\
+            (SELECT COALESCE(MAX(ordinal),0)+1 FROM runtime_items WHERE session=?)) \
+            ON CONFLICT(session,key) DO UPDATE SET payload=excluded.payload",
+        )
+        .bind(id)
+        .bind(format!("{}:{}", item.turn_id, item.item_id))
+        .bind(serde_json::to_string(&item).map_err(|_| Failure::Internal)?)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Failure::Internal)?;
         Ok(())
     }
 
     /// Promote the last main assistant message only when the native result ends the turn.
     pub async fn finish(&self, id: &str, turn: &str, phase: &str) -> Result<(), Failure> {
-        sqlx::query("UPDATE runtime_items SET payload=json_set(payload,'$.phase',?) WHERE session=? AND key=(SELECT key FROM runtime_items WHERE session=? AND json_extract(payload,'$.turn_id')=? AND json_extract(payload,'$.role')='agent' ORDER BY ordinal DESC LIMIT 1)")
-            .bind(phase).bind(id).bind(id).bind(turn).execute(&self.pool).await.map_err(|_|Failure::Internal)?;
+        sqlx::query(
+            "UPDATE runtime_items SET payload=json_set(payload,'$.phase',?) WHERE \
+            session=? AND key=(SELECT key FROM runtime_items WHERE session=? AND \
+            json_extract(payload,'$.turn_id')=? AND json_extract(payload,\
+            '$.role')='agent' ORDER BY ordinal DESC LIMIT 1)",
+        )
+        .bind(phase)
+        .bind(id)
+        .bind(id)
+        .bind(turn)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Failure::Internal)?;
         Ok(())
     }
 
     pub async fn history(&self, id: &str) -> Result<History, Failure> {
         self.read(id).await?;
         let mut tx = self.pool.begin().await.map_err(|_| Failure::Internal)?;
-        let bounds=sqlx::query("SELECT count(*) AS items,COALESCE(sum(length(CAST(payload AS BLOB))),0) AS bytes FROM runtime_items WHERE session=?").bind(id).fetch_one(&mut *tx).await.map_err(|_|Failure::Internal)?;
+        let bounds = sqlx::query(
+            "SELECT count(*) AS items,COALESCE(sum(length(CAST(payload AS BLOB))),0) \
+            AS bytes FROM runtime_items WHERE session=?",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|_| Failure::Internal)?;
         if bounds.get::<i64, _>("items") > 10000 || bounds.get::<i64, _>("bytes") > 32 * 1024 * 1024
         {
             return Err(Failure::Unsupported);
@@ -184,7 +243,16 @@ impl Store {
     }
 
     pub async fn claim(&self, id: &str, digest: &str) -> Result<Option<Receipt>, Failure> {
-        let changed=sqlx::query("INSERT INTO runtime_operations(id,digest,state) VALUES(?,?,'dispatching') ON CONFLICT DO NOTHING").bind(id).bind(digest).execute(&self.pool).await.map_err(|_|Failure::Internal)?.rows_affected();
+        let changed = sqlx::query(
+            "INSERT INTO runtime_operations(id,digest,state) VALUES(?,?,\
+            'dispatching') ON CONFLICT DO NOTHING",
+        )
+        .bind(id)
+        .bind(digest)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Failure::Internal)?
+        .rows_affected();
         if changed == 1 {
             return Ok(None);
         }
@@ -206,8 +274,15 @@ impl Store {
     }
 
     pub async fn accept(&self, id: &str, receipt: &Receipt) -> Result<(), Failure> {
-        sqlx::query("UPDATE runtime_operations SET state='accepted',receipt=? WHERE id=? AND state='dispatching'")
-            .bind(serde_json::to_string(receipt).map_err(|_|Failure::Internal)?).bind(id).execute(&self.pool).await.map_err(|_|Failure::Internal)?;
+        sqlx::query(
+            "UPDATE runtime_operations SET state='accepted',receipt=? WHERE id=? AND \
+            state='dispatching'",
+        )
+        .bind(serde_json::to_string(receipt).map_err(|_| Failure::Internal)?)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| Failure::Internal)?;
         Ok(())
     }
 

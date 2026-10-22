@@ -1,3 +1,5 @@
+//! Supervise configured integrations and read-only discovery under one shutdown signal.
+
 use engine::{reload::ConfigFile, runtimes::RuntimeRegistry, storage::Store};
 use integrations::{Context, Integration, IntegrationError};
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -11,7 +13,7 @@ pub enum Error {
     Store(#[from] engine::storage::StoreError),
     #[error(transparent)]
     Integration(#[from] IntegrationError),
-    #[error("configure a Telegram, Discord, Slack or Feishu integration")]
+    #[error("configure a Telegram, Discord, Slack, Feishu or Lark integration")]
     Missing,
     #[error("a runtime task stopped unexpectedly")]
     WorkerStopped,
@@ -48,19 +50,7 @@ pub async fn run(path: PathBuf) -> Result<(), Error> {
         store,
         runtimes,
     };
-    let mut integrations: Vec<Arc<dyn Integration>> = Vec::new();
-    if let Some(settings) = root.telegram {
-        integrations.push(Arc::new(integrations::telegram::Telegram::new(settings)));
-    }
-    if let Some(settings) = root.discord {
-        integrations.push(Arc::new(integrations::discord::Discord::new(settings)));
-    }
-    if let Some(settings) = root.slack {
-        integrations.push(Arc::new(integrations::slack::Slack::new(settings)));
-    }
-    if let Some(settings) = root.feishu {
-        integrations.push(Arc::new(integrations::feishu::Feishu::new(settings)));
-    }
+    let integrations = configured_integrations(root);
     if integrations.is_empty() {
         return Err(Error::Missing);
     }
@@ -98,15 +88,46 @@ pub async fn run(path: PathBuf) -> Result<(), Error> {
     result
 }
 
+fn configured_integrations(root: crate::config::Config) -> Vec<Arc<dyn Integration>> {
+    let mut integrations: Vec<Arc<dyn Integration>> = Vec::new();
+    if let Some(settings) = root.telegram {
+        integrations.push(Arc::new(integrations::telegram::Telegram::new(settings)));
+    }
+    if let Some(settings) = root.discord {
+        integrations.push(Arc::new(integrations::discord::Discord::new(settings)));
+    }
+    if let Some(settings) = root.slack {
+        integrations.push(Arc::new(integrations::slack::Slack::new(settings)));
+    }
+    for (region, settings) in [
+        (integrations::feishu::config::Region::Feishu, root.feishu),
+        (integrations::feishu::config::Region::Lark, root.lark),
+    ] {
+        if let Some(settings) = settings {
+            integrations.push(Arc::new(integrations::feishu::Feishu::for_region(
+                region, settings,
+            )));
+        }
+    }
+    integrations
+}
+
 pub(crate) async fn shutdown_signal() {
     #[cfg(unix)]
     {
         if let Ok(mut signal) =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         {
-            tokio::select! {_=tokio::signal::ctrl_c()=>{},_=signal.recv()=>{}};
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = signal.recv() => {},
+            };
             return;
         }
     }
     let _ = tokio::signal::ctrl_c().await;
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

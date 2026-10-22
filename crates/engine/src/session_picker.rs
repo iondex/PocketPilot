@@ -21,9 +21,18 @@ pub(super) async fn list(
         .map_err(|_| ProviderError::Incompatible)?;
     if let Some(encoded) = cursor.as_deref().and_then(|s| s.strip_prefix("sp2:")) {
         let cursor: Cursor = serde_json::from_str(encoded).map_err(|_| ProviderError::Conflict)?;
-        let row=sqlx::query("SELECT payload FROM session_list_snapshots WHERE id=? AND workspace_id=? AND instance_id=? AND paths=? AND expires_at>?")
-            .bind(&cursor.id).bind(&workspace.id).bind(&workspace.provider_id).bind(&paths).bind(crate::now())
-            .fetch_optional(store.pool()).await.map_err(|_|ProviderError::Disconnected)?;
+        let row = sqlx::query(
+            "SELECT payload FROM session_list_snapshots WHERE id=? AND \
+            workspace_id=? AND instance_id=? AND paths=? AND expires_at>?",
+        )
+        .bind(&cursor.id)
+        .bind(&workspace.id)
+        .bind(&workspace.provider_id)
+        .bind(&paths)
+        .bind(crate::now())
+        .fetch_optional(store.pool())
+        .await
+        .map_err(|_| ProviderError::Disconnected)?;
         if let Some(row) = row {
             let data: Vec<Session> = serde_json::from_str(row.get("payload"))
                 .map_err(|_| ProviderError::Incompatible)?;
@@ -81,11 +90,27 @@ pub(super) async fn list(
     let id = uuid::Uuid::new_v4().to_string();
     if data.len() > size {
         let payload = serde_json::to_string(&data).map_err(|_| ProviderError::Incompatible)?;
-        sqlx::query("INSERT INTO session_list_snapshots(id,workspace_id,instance_id,paths,payload,expires_at) VALUES(?,?,?,?,?,?)")
-            .bind(&id).bind(&workspace.id).bind(&workspace.provider_id).bind(paths).bind(payload).bind(crate::now()+3600)
-            .execute(store.pool()).await.map_err(|_|ProviderError::Disconnected)?;
-        sqlx::query("DELETE FROM session_list_snapshots WHERE expires_at<=? OR id IN (SELECT id FROM session_list_snapshots ORDER BY rowid DESC LIMIT -1 OFFSET 64)")
-            .bind(crate::now()).execute(store.pool()).await.map_err(|_|ProviderError::Disconnected)?;
+        sqlx::query(
+            "INSERT INTO session_list_snapshots(id,workspace_id,instance_id,paths,\
+            payload,expires_at) VALUES(?,?,?,?,?,?)",
+        )
+        .bind(&id)
+        .bind(&workspace.id)
+        .bind(&workspace.provider_id)
+        .bind(paths)
+        .bind(payload)
+        .bind(crate::now() + 3600)
+        .execute(store.pool())
+        .await
+        .map_err(|_| ProviderError::Disconnected)?;
+        sqlx::query(
+            "DELETE FROM session_list_snapshots WHERE expires_at<=? OR id IN (SELECT \
+            id FROM session_list_snapshots ORDER BY rowid DESC LIMIT -1 OFFSET 64)",
+        )
+        .bind(crate::now())
+        .execute(store.pool())
+        .await
+        .map_err(|_| ProviderError::Disconnected)?;
     }
     page(data, id, 0, size)
 }

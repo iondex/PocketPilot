@@ -206,7 +206,8 @@ impl Service {
             engine::runtimes::require_workspace(&session.cwd, project)?;
         }
         let client_id = format!(
-            "pp:feishu:{}:{}",
+            "pp:{}:{}:{}",
+            self.region.as_str(),
             engine::digest(&self.store.namespace),
             engine::digest(&input.id)
         );
