@@ -9,6 +9,7 @@ check:
 	python3 scripts/check-docs.py
 	cargo fmt --all -- --check
 	cargo clippy --release --workspace --all-targets --locked -- -D warnings
+	RUSTDOCFLAGS="$(RUSTDOCFLAGS) -D rustdoc::broken_intra_doc_links" cargo doc --release --workspace --no-deps --locked
 	cargo test --release --workspace --locked
 
 package: build

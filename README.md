@@ -1,8 +1,8 @@
 # PocketPilot
 
-**Your coding sessions, from the chat tools you already use.**
+![PocketPilot — Your coding sessions, from the chat tools you already use.](assets/brand/banner.en.png)
 
-[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Contributing](CONTRIBUTING.md)
+[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Contributing](CONTRIBUTING.md) · [Brand assets](assets/brand/README.md)
 
 PocketPilot is a self-hosted bridge between messaging platforms and AI coding runtimes on your local or SSH-connected hosts. Choose a host, project and session; read progress, send tasks, upload files and answer structured agent questions. The native runtime owns execution and session history.
 

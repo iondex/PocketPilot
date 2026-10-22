@@ -1,10 +1,16 @@
-//! PocketPilot-owned state only; never opens a Codex database.
-use session::operation::OperationState;
+//! PocketPilot-owned SQLite state and process-level directory ownership.
+//!
+//! Cloned stores share the file lock and connection pool; the state directory
+//! stays exclusively owned until the last store is dropped. This module never
+//! opens a native runtime database or performs provider I/O.
 use sqlx::{
-    Row, SqlitePool,
+    SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
 };
 use std::{path::Path, sync::Arc, time::Duration};
+
+#[path = "operation_store.rs"]
+mod operation_store;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -43,6 +49,7 @@ impl ::i18n::LocalizedError for StoreError {
     }
 }
 
+/// Shared access to bridge state while retaining exclusive directory ownership.
 #[derive(Clone)]
 pub struct Store {
     pub(crate) pool: SqlitePool,
@@ -50,6 +57,15 @@ pub struct Store {
 }
 
 impl Store {
+    /// Open or initialize the state directory and recover uncertain dispatches.
+    ///
+    /// Existing records are retained. Recovery only marks interrupted writes as
+    /// uncertain; it does not contact a provider or replay an operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Locked`] if another process owns the directory, or
+    /// [`StoreError::Database`] for filesystem, schema or SQLite failures.
     pub async fn open(directory: &Path) -> Result<Self, StoreError> {
         let exists = directory.exists();
         std::fs::create_dir_all(directory).map_err(|_| StoreError::Database)?;
@@ -120,6 +136,15 @@ impl Store {
         Ok(store)
     }
 
+    /// Check an endpoint fingerprint, optionally registering a previously unseen ID.
+    ///
+    /// A saved ID cannot be rebound to another endpoint: persisted session and
+    /// operation references would otherwise refer to a different runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::InstanceConflict`] on an identity mismatch and
+    /// [`StoreError::Database`] if the ledger cannot be read or written.
     pub async fn check_instance(
         &self,
         id: &str,
@@ -148,136 +173,8 @@ impl Store {
         Ok(())
     }
 
-    pub async fn accept_receipt(
-        &self,
-        id: &str,
-        receipt: &session::provider::Receipt,
-    ) -> Result<(), StoreError> {
-        let receipt = serde_json::to_string(receipt).map_err(|_| StoreError::Database)?;
-        let changed=sqlx::query("UPDATE operations SET receipt=?,state='accepted',updated_at=unixepoch() WHERE id=? AND state='dispatching'")
-            .bind(receipt)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(|_| StoreError::Database)?.rows_affected();
-        if changed != 1 {
-            return Err(StoreError::Transition);
-        }
-        Ok(())
-    }
-
-    pub async fn receipt(
-        &self,
-        id: &str,
-    ) -> Result<Option<session::provider::Receipt>, StoreError> {
-        let text: Option<String> = sqlx::query_scalar("SELECT receipt FROM operations WHERE id=?")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|_| StoreError::Database)?;
-        text.map(|text| serde_json::from_str(&text).map_err(|_| StoreError::Database))
-            .transpose()
-    }
-
-    pub async fn probe_threads(
-        &self,
-        instance: &str,
-    ) -> Result<std::collections::HashSet<String>, StoreError> {
-        let receipts=sqlx::query("SELECT receipt FROM operations WHERE instance_id=? AND source_key LIKE 'probe:%:create' AND state='accepted'")
-            .bind(instance).fetch_all(&self.pool).await.map_err(|_|StoreError::Database)?;
-        let mut threads = std::collections::HashSet::new();
-        for row in receipts {
-            let Some(raw) = row.get::<Option<String>, _>("receipt") else {
-                continue;
-            };
-            let receipt: session::provider::Receipt =
-                serde_json::from_str(&raw).map_err(|_| StoreError::Database)?;
-            threads.insert(receipt.thread);
-        }
-        Ok(threads)
-    }
-
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
-    }
-
-    pub async fn reserve_operation(
-        &self,
-        source_key: &str,
-        instance: &str,
-        thread: &str,
-    ) -> Result<String, StoreError> {
-        let id = uuid::Uuid::now_v7().to_string();
-        sqlx::query("INSERT INTO operations(id,source_key,instance_id,thread_id,state) VALUES(?,?,?,?,'received') ON CONFLICT(source_key) DO NOTHING")
-            .bind(&id).bind(source_key).bind(instance).bind(thread).execute(&self.pool).await.map_err(|_| StoreError::Database)?;
-        let row = sqlx::query("SELECT id,instance_id,thread_id FROM operations WHERE source_key=?")
-            .bind(source_key)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|_| StoreError::Database)?;
-        if row.get::<String, _>("instance_id") != instance
-            || row.get::<String, _>("thread_id") != thread
-        {
-            return Err(StoreError::SourceConflict);
-        }
-        Ok(row.get("id"))
-    }
-
-    pub async fn transition(
-        &self,
-        id: &str,
-        from: OperationState,
-        to: OperationState,
-    ) -> Result<(), StoreError> {
-        if !from.can_transition(to) {
-            return Err(StoreError::Transition);
-        }
-        let count = sqlx::query(
-            "UPDATE operations SET state=?,updated_at=unixepoch() WHERE id=? AND state=?",
-        )
-        .bind(state_name(to))
-        .bind(id)
-        .bind(state_name(from))
-        .execute(&self.pool)
-        .await
-        .map_err(|_| StoreError::Database)?
-        .rows_affected();
-        if count != 1 {
-            return Err(StoreError::Transition);
-        }
-        Ok(())
-    }
-
-    pub async fn operation_state(&self, id: &str) -> Result<OperationState, StoreError> {
-        let name: String = sqlx::query_scalar("SELECT state FROM operations WHERE id=?")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|_| StoreError::Database)?;
-        parse_state(&name)
-    }
-}
-
-fn state_name(state: OperationState) -> &'static str {
-    match state {
-        OperationState::Received => "received",
-        OperationState::Prepared => "prepared",
-        OperationState::Dispatching => "dispatching",
-        OperationState::Accepted => "accepted",
-        OperationState::Rejected => "rejected",
-        OperationState::OutcomeUnknown => "outcome_unknown",
-    }
-}
-
-fn parse_state(value: &str) -> Result<OperationState, StoreError> {
-    match value {
-        "received" => Ok(OperationState::Received),
-        "prepared" => Ok(OperationState::Prepared),
-        "dispatching" => Ok(OperationState::Dispatching),
-        "accepted" => Ok(OperationState::Accepted),
-        "rejected" => Ok(OperationState::Rejected),
-        "outcome_unknown" => Ok(OperationState::OutcomeUnknown),
-        _ => Err(StoreError::Database),
     }
 }
 

@@ -1,3 +1,8 @@
+//! Platform-neutral observations and explicitly authorized runtime mutations.
+//!
+//! Providers translate native protocols into these models. They do not decide
+//! platform authorization or operation deduplication; callers own those checks
+//! and the durable dispatch claim before invoking [`AgentProvider::execute`].
 use crate::{Capabilities, History, Page, Session, SessionQuery};
 use serde::{Deserialize, Serialize};
 
@@ -5,21 +10,25 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Mutation {
+    /// Answer a live structured question using its current submission token.
     Answer {
         thread: String,
         submission: crate::questions::Submission,
     },
+    /// Stage bytes in the runtime; this is a remote write even without a turn.
     Upload {
         thread: String,
         path: String,
         bytes: Vec<u8>,
     },
+    /// Start a turn with files that have already been uploaded.
     StartWithFiles {
         thread: String,
         text: String,
         client_id: String,
         files: Vec<crate::files::Uploaded>,
     },
+    /// Add uploaded files and input only if the expected turn is still active.
     SteerWithFiles {
         thread: String,
         expected_turn: String,
@@ -27,21 +36,19 @@ pub enum Mutation {
         client_id: String,
         files: Vec<crate::files::Uploaded>,
     },
-    Create {
-        cwd: String,
-    },
-    Resume {
-        thread: String,
-    },
-    SetTitleIfMissing {
-        thread: String,
-        title: String,
-    },
+    /// Create a native session in the explicitly selected project directory.
+    Create { cwd: String },
+    /// Load a session for control; listing and history must not call this implicitly.
+    Resume { thread: String },
+    /// Fill an empty native title during an explicit, authorized user action.
+    SetTitleIfMissing { thread: String, title: String },
+    /// Start a turn with a caller-assigned correlation ID, not a replay guarantee.
     Start {
         thread: String,
         text: String,
         client_id: String,
     },
+    /// Add input only if the expected turn is still active.
     Steer {
         thread: String,
         expected_turn: String,
@@ -50,12 +57,20 @@ pub enum Mutation {
     },
 }
 
+/// Native acceptance of a mutation, not proof that an agent turn completed.
+///
+/// The caller must persist this receipt before reporting success. A missing
+/// receipt after a timeout/disconnect does not imply that the mutation failed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Receipt {
     pub thread: String,
     pub turn: Option<String>,
 }
 
+/// Typed failures whose certainty determines whether dispatch stays unresolved.
+///
+/// Disconnect, timeout and incompatible responses cannot prove that a write was
+/// rejected. Callers must preserve an unknown outcome rather than replay it.
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     #[error("provider disconnected")]
@@ -92,6 +107,10 @@ impl ::i18n::LocalizedError for ProviderError {
     }
 }
 
+/// Read native state without acquiring control; mutate only on explicit authority.
+///
+/// Implementations keep observations read-only and preserve native ownership of
+/// sessions. A read must not start, resume or title a session as a side effect.
 #[async_trait::async_trait]
 pub trait AgentProvider: Send + Sync {
     fn capabilities(&self) -> Capabilities;
@@ -128,7 +147,21 @@ pub trait AgentProvider: Send + Sync {
         Err(ProviderError::Unsupported)
     }
 
-    /// Called only for a durably recorded user action or an explicitly enabled retry policy.
+    /// Execute one durably recorded user action or an explicitly enabled retry policy.
+    ///
+    /// Callers own authorization, freshness checks and provider/session
+    /// serialization. Implementations must not retry a write with an uncertain
+    /// outcome; `client_id` correlates input but does not promise idempotency.
+    ///
+    /// # Errors
+    ///
+    /// Definite rejection is reported as `Rejected`, `Conflict`, `Unsupported`
+    /// or `InvalidAnswer`. Other errors leave the write outcome unknown.
+    ///
+    /// # Cancellation
+    ///
+    /// Dropping this future cannot undo bytes already sent. The caller must
+    /// retain its dispatch claim and recover it as an uncertain outcome.
     async fn execute(&self, _mutation: Mutation) -> Result<Receipt, ProviderError> {
         Err(ProviderError::Unsupported)
     }

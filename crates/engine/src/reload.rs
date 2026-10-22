@@ -1,3 +1,8 @@
+//! Atomic configuration snapshots combining file policy and persisted catalog state.
+//!
+//! Readers retain one immutable snapshot through validation and use. File reloads
+//! and catalog refreshes publish with compare-and-swap so a stale read cannot
+//! overwrite a newer authorization decision.
 use crate::{
     config::{Config, ConfigError},
     digest,
@@ -21,6 +26,7 @@ pub struct ParsedConfig {
 
 pub type Parser = fn(&std::path::Path, &str) -> Result<ParsedConfig, ConfigError>;
 
+/// A coherent policy/catalog view with a hash used to invalidate stale controls.
 pub struct Snapshot {
     restart_key: String,
     file_hash: String,
@@ -58,6 +64,7 @@ impl ConfigFile {
         })
     }
 
+    /// Retain one coherent view; taking another snapshot may observe a newer policy.
     pub fn snapshot(&self) -> Arc<Snapshot> {
         self.current.load_full()
     }
@@ -83,6 +90,8 @@ impl ConfigFile {
             next.config.validate()?;
             next.hash = catalog_hash(&next.config, &next.file_hash)?;
         }
+        // A concurrent publisher wins rather than being overwritten by a snapshot
+        // validated against an older policy. A later refresh may retry from disk.
         let previous = self.current.compare_and_swap(&old, Arc::new(next));
         Ok(Arc::ptr_eq(&old, &previous))
     }
@@ -115,6 +124,11 @@ impl ConfigFile {
         Ok(Arc::ptr_eq(&old, &previous))
     }
 
+    /// Watch the containing directory and periodically rescan as a fallback.
+    ///
+    /// Events coalesce into one wakeup because reload always reads the complete
+    /// file. Invalid edits retain the last valid snapshot; shutdown drops only
+    /// the watcher and does not stop native runtime sessions.
     pub async fn watch(self: Arc<Self>, mut stop: watch::Receiver<bool>) {
         let (sender, mut receiver) = mpsc::channel(1);
         let mut watcher: Option<RecommendedWatcher> =
@@ -157,6 +171,8 @@ impl ConfigFile {
 
 fn catalog_hash(config: &Config, file_hash: &str) -> Result<String, ConfigError> {
     let mut scopes = config.workspaces.clone();
+    // Observation timestamps do not change authorization. Including them would
+    // expire controls after every otherwise identical catalog refresh.
     for workspace in &mut scopes {
         workspace.updated_at = None;
     }

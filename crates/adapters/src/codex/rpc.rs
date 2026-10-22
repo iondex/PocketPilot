@@ -1,3 +1,9 @@
+//! Typed RPC frontend and the single owner of a Codex transport connection.
+//!
+//! The actor owns request IDs, pending replies and live question tokens. Clients
+//! exchange bounded commands; event broadcasts are lossy observation hints, not
+//! the source of truth for questions or write acceptance. Dropping a response
+//! future does not retract a command already queued or sent to the runtime.
 use crate::codex::{
     protocol as p,
     transport::{self, Wire},
@@ -27,6 +33,7 @@ pub(crate) trait WriteRequest: Serialize + sealed::Sealed {
 
     const METHOD: &'static str;
 }
+
 macro_rules! request {
     ($params:ident, $response:ident, $method:literal) => {
         impl sealed::Sealed for p::$params {}
@@ -38,6 +45,7 @@ macro_rules! request {
         }
     };
 }
+
 request!(InitializeParams, InitializeResponse, "initialize");
 request!(ThreadListParams, ThreadListResponse, "thread/list");
 request!(ThreadReadParams, ThreadReadResponse, "thread/read");
@@ -56,6 +64,7 @@ request!(
     ThreadItemsListResponse,
     "thread/items/list"
 );
+
 macro_rules! write_request {
     ($params:ident, $response:ident, $method:literal) => {
         impl sealed::Sealed for p::$params {}
@@ -67,6 +76,7 @@ macro_rules! write_request {
         }
     };
 }
+
 write_request!(ThreadStartParams, ThreadStartResponse, "thread/start");
 write_request!(ThreadResumeParams, ThreadResumeResponse, "thread/resume");
 write_request!(TurnStartParams, TurnStartResponse, "turn/start");
@@ -185,6 +195,7 @@ enum Command {
     },
 }
 
+/// Cloneable handle to one transport actor, shared by observations and control.
 #[derive(Clone)]
 pub struct Client {
     commands: mpsc::Sender<Command>,
@@ -247,6 +258,8 @@ impl Client {
     }
 
     pub(crate) fn spawn(wire: Box<dyn Wire>, timeout: Duration) -> Self {
+        // Bound queued work separately from in-flight calls. Event subscribers
+        // may lag without blocking replies or losing the actor's question state.
         let (commands, receiver) = mpsc::channel(128);
         let (events, _) = broadcast::channel(256);
         tokio::spawn(run(wire, receiver, events.clone()));
@@ -313,6 +326,12 @@ impl Client {
         self
     }
 
+    /// Perform a sealed read request, retrying only transient history materialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns connection, protocol, rejection or deadline errors. The original
+    /// request deadline bounds all history retries.
     pub async fn call<R: ReadRequest>(&self, params: &R) -> Result<R::Response, Error> {
         let deadline = Instant::now() + self.timeout;
         let warming_deadline = Instant::now() + self.timeout.min(Duration::from_secs(5));
@@ -334,6 +353,7 @@ impl Client {
         }
     }
 
+    /// Send one mutation without retries; a timeout may follow remote acceptance.
     pub(crate) async fn write<R: WriteRequest>(&self, params: &R) -> Result<R::Response, Error> {
         self.request(R::METHOD, params, self.write_timeout).await
     }
@@ -363,31 +383,89 @@ impl Client {
             .await
             .map_err(|_| Error::Timeout)?
             .map_err(|_| Error::Disconnected)??;
-        let mut decoder = serde_json::Deserializer::from_str(body.get());
-        serde_path_to_error::deserialize(&mut decoder).map_err(|error| {
-            // Only schema field names/array indexes, never the response or error
-            // text (which can include message content), reach diagnostics.
-            let path=error.path().iter().take(12).map(|segment| match segment {
-                serde_path_to_error::Segment::Seq{..}=>"[]",
-                serde_path_to_error::Segment::Map{key} if matches!(key.as_str(),"data"|"thread"|"turns"|"items"|"content"|"status"|"phase"|"type"|"result"|"output"|"arguments"|"tool"|"name"|"text"|"error"|"itemsView")=>key.as_str(),
-                _=>"?",
-            }).collect::<Vec<_>>().join(".");
-            let message=error.inner().to_string();
-            let category=if message.contains("unknown variant") {"unknown_variant"}else if message.contains("missing field") {"missing_field"}else if message.contains("did not match any variant") {"union_mismatch"}else{"invalid_shape"};
-            tracing::warn!(rpc_method=method,schema_path=%path,category,"typed response could not be decoded");
-            Error::Protocol
-        })
+        decode_reply(method, &body)
     }
 }
 
-type Pending = HashMap<i64, (Instant, oneshot::Sender<Reply>, &'static str)>;
+// Keep protocol diagnostics at the boundary and log only fixed labels. Native
+// error strings and decoder paths can contain user content or extension keys.
+fn decode_reply<R: DeserializeOwned>(method: &str, body: &RawValue) -> Result<R, Error> {
+    let mut decoder = serde_json::Deserializer::from_str(body.get());
+    serde_path_to_error::deserialize(&mut decoder).map_err(|error| {
+        let path = error.path().iter().take(12).map(|segment| match segment {
+            serde_path_to_error::Segment::Seq { .. } => "[]",
+            serde_path_to_error::Segment::Map { key }
+                if matches!(key.as_str(), "data" | "thread" | "turns" | "items" | "content"
+                    | "status" | "phase" | "type" | "result" | "output" | "arguments"
+                    | "tool" | "name" | "text" | "error" | "itemsView") => key.as_str(),
+            _ => "?",
+        }).collect::<Vec<_>>().join(".");
+        let message = error.inner().to_string();
+        let category = if message.contains("unknown variant") {
+            "unknown_variant"
+        } else if message.contains("missing field") {
+            "missing_field"
+        } else if message.contains("did not match any variant") {
+            "union_mismatch"
+        } else {
+            "invalid_shape"
+        };
+        tracing::warn!(rpc_method = method, schema_path = %path, category, "typed response could not be decoded");
+        Error::Protocol
+    })
+}
+
+fn reject(method: &str, error: Failure) -> Error {
+    let lower = error.message.to_lowercase();
+    let terms = [
+        "legacy",
+        "paginated",
+        "materialized",
+        "not found",
+        "active",
+        "summary",
+        "experimental",
+        "history",
+        "persisted",
+        "rollout",
+        "empty",
+        "unavailable",
+        "database",
+        "turn",
+        "read",
+        "before",
+        "partial",
+    ]
+    .into_iter()
+    .filter(|term| lower.contains(term))
+    .collect::<Vec<_>>();
+    tracing::warn!(
+        rpc_method = method,
+        code = error.code,
+        ?terms,
+        "app-server rejected typed request"
+    );
+    if history_pending(method, &error) {
+        Error::HistoryPending
+    } else if turn_changed(method, &error) {
+        Error::TurnChanged
+    } else {
+        Error::Rejected(error.code)
+    }
+}
+
+struct PendingRequest {
+    deadline: Instant,
+    reply: oneshot::Sender<Reply>,
+    method: &'static str,
+}
 
 async fn run(
     mut wire: Box<dyn Wire>,
     mut commands: mpsc::Receiver<Command>,
     events: broadcast::Sender<Event>,
 ) {
-    let mut pending = Pending::new();
+    let mut pending = HashMap::<i64, PendingRequest>::new();
     let mut questions = super::questions::Questions::default();
     let mut next_id = 1_i64;
     let mut cleanup = tokio::time::interval(Duration::from_millis(100));
@@ -439,7 +517,9 @@ async fn run(
                             Ok(value) => value,
                             Err(_) => { let _ = reply.send(Err(Error::Protocol)); continue; }
                         };
-                        pending.insert(id, (deadline, reply, method));
+                        // Register before sending: a partial/failed send may have
+                        // reached the runtime, so disconnect must notify this caller too.
+                        pending.insert(id, PendingRequest { deadline, reply, method });
                         if !matches!(tokio::time::timeout_at(deadline, wire.send(message)).await, Ok(Ok(()))) { break; }
                         tracing::debug!(rpc_id=id, method, "typed request sent");
                     }
@@ -461,22 +541,16 @@ async fn run(
                         };
                         if tracked.is_err() { break; }
                     }
+                    // Track questions above before this lossy broadcast. Missing
+                    // a UI wakeup must not make a live native question unanswerable.
                     let _ = events.send(Event { method, request_id:value.id, params:value.params });
                     // Question responses require a separate explicit command; approvals remain untouched.
                     continue;
                 }
                 let Some(p::RequestId::Int64(id)) = value.id else { continue; };
-                if let Some((_, reply, method)) = pending.remove(&id) {
+                if let Some(PendingRequest { reply, method, .. }) = pending.remove(&id) {
                     let result = match value.error {
-                        Some(error) => {
-                            // Only fixed diagnostic labels are logged, never the server's text.
-                            let lower=error.message.to_lowercase();
-                            let terms=["legacy","paginated","materialized","not found","active","summary","experimental","history","persisted","rollout","empty","unavailable","database","turn","read","before","partial"].into_iter().filter(|term|lower.contains(term)).collect::<Vec<_>>();
-                            tracing::warn!(rpc_method=method,code=error.code,?terms,"app-server rejected typed request");
-                            if history_pending(method, &error) { Err(Error::HistoryPending) }
-                            else if turn_changed(method,&error) {Err(Error::TurnChanged)}
-                            else { Err(Error::Rejected(error.code)) }
-                        },
+                        Some(error) => Err(reject(method, error)),
                         None => value.result.ok_or(Error::Protocol),
                     };
                     let _ = reply.send(result);
@@ -484,15 +558,20 @@ async fn run(
             }
             _ = cleanup.tick() => {
                 let now = Instant::now();
-                let expired: Vec<_> = pending.iter().filter(|(_, (deadline, reply, _))| *deadline <= now || reply.is_closed()).map(|(id, _)| *id).collect();
+                let expired: Vec<_> = pending.iter()
+                    .filter(|(_, request)| request.deadline <= now || request.reply.is_closed())
+                    .map(|(id, _)| *id)
+                    .collect();
                 for id in expired {
-                    if let Some((_, reply, _)) = pending.remove(&id) { let _ = reply.send(Err(Error::Timeout)); }
+                    if let Some(request) = pending.remove(&id) {
+                        let _ = request.reply.send(Err(Error::Timeout));
+                    }
                 }
             }
         }
     }
-    for (_, (_, reply, _)) in pending {
-        let _ = reply.send(Err(Error::Disconnected));
+    for (_, request) in pending {
+        let _ = request.reply.send(Err(Error::Disconnected));
     }
 }
 

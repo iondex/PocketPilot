@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="640" viewBox="0 0 1600 640" fill="none" role="img" aria-labelledby="title desc" xml:lang="en">
+  <title id="title">PocketPilot — your coding sessions, from the chat tools you already use.</title>
+  <desc id="desc">An ivory and vermilion banner with the PocketPilot name, its self-hosted chat-to-code purpose, and a large pocket and terminal symbol.</desc>
+  <path fill="#F5F2EB" d="M0 0H1600V640H0z"/>
+  <path fill="#E65A38" d="M1088 0H1600V640H1088z"/>
+  <path stroke="#E65A38" stroke-width="3" d="M88 87H124"/>
+  <text x="140" y="93" fill="#625F58" font-family="DejaVu Sans Mono, monospace" font-size="15" letter-spacing="2">SELF-HOSTED / CHAT TO CODE</text>
+  <text x="80" y="259" fill="#252923" font-family="Lato, Arial, sans-serif" font-size="110" font-weight="900" letter-spacing="-4">PocketPilot</text>
+  <text x="88" y="346" fill="#44483F" font-family="Lato, Arial, sans-serif" font-size="37" font-weight="400">
+    <tspan x="88" dy="0">Your coding sessions,</tspan>
+    <tspan x="88" dy="52">from the chat tools you already use.</tspan>
+  </text>
+  <path stroke="#D6D3CA" d="M88 502H1000"/>
+  <text x="88" y="547" fill="#625F58" font-family="DejaVu Sans Mono, monospace" font-size="16">LOCAL + SSH</text>
+  <circle cx="258" cy="541" r="2" fill="#A7A79C"/>
+  <text x="282" y="547" fill="#625F58" font-family="DejaVu Sans Mono, monospace" font-size="16">YOUR HOSTS. YOUR SESSIONS.</text>
+  <g transform="translate(1088 46)" stroke="#F5F2EB" stroke-width="36" stroke-linejoin="round">
+    <path d="M128 136V282C128 310 139 327 164 342L232 382C247 391 265 391 280 382L348 342C373 327 384 310 384 282V136"/>
+    <path d="M216 164L264 212L216 260"/>
+  </g>
+  <text x="1344" y="547" fill="#F5F2EB" text-anchor="middle" font-family="DejaVu Sans Mono, monospace" font-size="14" letter-spacing="3">WITHIN REACH</text>
+</svg>

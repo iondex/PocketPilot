@@ -8,6 +8,13 @@ pub mod discovery;
 #[cfg(test)]
 mod live_tests;
 
+// Upstream-generated docs contain unavailable type links and literal [UNSTABLE]
+// markers. Scope the exception to generated DTOs; handwritten API links stay checked.
+#[allow(
+    rustdoc::broken_intra_doc_links,
+    rustdoc::bare_urls,
+    reason = "Codex schema documentation is generated unchanged from the pinned CLI"
+)]
 pub mod protocol;
 
 pub mod provider;

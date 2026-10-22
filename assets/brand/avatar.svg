@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">PocketPilot avatar</title>
+  <desc id="desc">A vermilion pocket and terminal chevron on warm ivory.</desc>
+  <path fill="#F5F2EB" d="M0 0H512V512H0z"/>
+  <g stroke="#E65A38" stroke-width="36" stroke-linejoin="round">
+    <path d="M128 136V282C128 310 139 327 164 342L232 382C247 391 265 391 280 382L348 342C373 327 384 310 384 282V136"/>
+    <path d="M216 164L264 212L216 260"/>
+  </g>
+</svg>

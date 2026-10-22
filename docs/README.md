@@ -19,9 +19,12 @@ Detailed guides are currently written in Simplified Chinese. Start with the [Eng
 | 文档 | 解决的问题 |
 | --- | --- |
 | [参与开发](../CONTRIBUTING.md) | Rust 风格、开发流程、必要检查和产物清理 |
+| [Rust 风格与注释](rust-style.md) | Rust 官方、Google、Microsoft 指南及本仓库的模块、错误和异步注释约定 |
 | [架构说明](architecture.md) | crate 分工、状态机、写入账本、协议和进程生命周期 |
 | [开发指南](development.md) | 从入口追踪调用，扩展消息平台或 runtime，测试与 i18n |
+| [飞书与 Lark](feishu-lark.md) | 官方协议的共同点、区域与身份隔离、共享实现方案和待验收边界 |
 | [依赖维护](dependencies.md) | OpenLark 补丁依据、缩减范围和退出条件、协议版本 |
+| [品牌资源](../assets/brand/README.zh-CN.md) | 共享标志、图标/头像、双语 banner、配色、许可与导出方法 |
 | [发布流程](releasing.md) | 验证、打包、许可证、发布材料及升级说明 |
 | [后续规划](support.md) | 未完成或尚待真实环境验证的能力 |
 | [变更记录](../CHANGELOG.md) | 面向使用者的未发布变化与配置兼容性 |

@@ -8,15 +8,16 @@
 
 # Rust 开发约定
 
-遵循 Rust Style Guide 和 Rust API Guidelines，使用仓库工具链与 Rust 2024 edition。rustfmt 是格式的最终依据；提交前运行：
+遵循 Rust Style Guide 和 Rust API Guidelines，使用仓库工具链与 Rust 2024 edition。具体来源、模块拆分和注释写法见 [Rust 风格与注释指南](docs/rust-style.md)。rustfmt 是格式的最终依据；提交前运行：
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --release --workspace --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" cargo doc --release --workspace --no-deps --locked
 cargo test --release --workspace --locked
 ```
 
-构建、检查、测试与 Clippy 统一使用 release profile；可运行 `make check` 完成上述验证及本地文档链接检查（需要 Python 3.10+，无第三方 Python 依赖）。需要保留的可执行文件先通过 `make package` 放入 Git 忽略的 `dist/`，每轮验证/打包完成后运行 `cargo clean` 清理 `target/`；`make release` 顺序执行检查、当前系统/架构打包和清理。构建期间不并行清理。
+构建、检查、测试与 Clippy 统一使用 release profile；可运行 `make check` 完成上述验证、rustdoc 生成与内部链接检查及本地 Markdown 链接检查（需要 Python 3.10+，无第三方 Python 依赖）。需要保留的可执行文件先通过 `make package` 放入 Git 忽略的 `dist/`，每轮验证/打包完成后运行 `cargo clean` 清理 `target/`；`make release` 顺序执行检查、当前系统/架构打包和清理。构建期间不并行清理。
 
 - crate 使用简短职责名，binary 名为 pocketpilot。session、engine、app 与 i18n 的源码保持 src/ 下平铺；session 的 Markdown 实现按 syntax、segmentation、formatting、html 命名，通过 markdown 模块组合，不建立子目录。integrations 按 src/telegram、src/discord、src/slack、src/network 分职责组织；connections/src/ssh 与 adapters/src/codex 分别容纳原生连接和运行时实现，公共接口位于各 crate 根部。测试拆入相邻的 *_tests.rs 或 tests.rs，通过 cfg(test) 模块加载。
 - 每个类型、函数、方法、impl、trait、常量和模块定义之间留一个空行，文档注释和属性紧贴所属定义。rustfmt 不会主动补齐全部空行，编辑时须保留。

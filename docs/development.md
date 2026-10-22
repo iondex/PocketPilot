@@ -1,6 +1,6 @@
 # 开发指南
 
-开发前先读 [CONTRIBUTING.md](../CONTRIBUTING.md)。架构文档解释[运行时边界与状态](architecture.md)，这里提供从代码入口到扩展和验证的路线。
+开发前先读 [CONTRIBUTING.md](../CONTRIBUTING.md)。具体代码风格和注释依据见 [Rust 风格指南](rust-style.md)。架构文档解释[运行时边界与状态](architecture.md)，这里提供从代码入口到扩展和验证的路线。
 
 ## 开发循环
 
@@ -15,6 +15,8 @@ cargo clean
 
 先安装 CI 固定的 Codex CLI 0.162.1，供 `adapters/build.rs` 导出 schema。所有 Cargo build/check/test/clippy 必须使用 `--release`；不要另建 debug artifact 树。`make package` 只打包当前系统/架构，独立 Linux runtime server 使用 `make package-agent-server`。
 
+`make check` 也生成所有 workspace crate 的 rustdoc，并将失效的 Rust 内部文档链接视为错误。检查只对 Codex CLI 原样生成的协议文档局部豁免其上游失效链接和裸 URL，手写接口仍严格检查。生成结果位于 `target/doc/`，随 target 清理；公开 Markdown 的相对链接由独立脚本验证。
+
 失败后修复并完成同一轮验证；清理与编译必须串行。需要保留的 binary 放到忽略的 `dist/`，完成验证批次后清理 target。测试默认使用临时目录和本地协议 fixture，不读取开发者真实凭据。
 
 ## 从哪里开始读
@@ -23,12 +25,14 @@ cargo clean
 | --- | --- |
 | CLI、doctor、进程启动与退出 | `crates/app/src/main.rs`、`cli.rs`、`doctor.rs`、`runtime.rs` |
 | TOML 组合、热更新与主机权限 | `app/src/config.rs`、`engine/src/config.rs`、`reload.rs` |
-| 项目发现、provider 连接与控制资格 | `engine/src/catalog.rs`、`runtimes.rs`、`control.rs` |
+| 项目发现、provider 连接与控制资格 | `engine/src/catalog.rs`、`runtimes.rs`、`runtime_connection.rs`、`control.rs` |
+| 项目范围、工作树与分页 | `engine/src/workspace_sessions.rs`、`session_picker.rs` |
+| 持久化状态与操作 claim | `engine/src/storage.rs`、`operation_store.rs` |
 | 明确授权的任务与文件输入 | `engine/src/operations.rs`、`uploads.rs`、`session/src/operation.rs` |
 | 平台导航与绑定管理 | `integrations/src/navigation.rs`、`bindings.rs`、各平台目录 |
 | 原生协议映射与回执 | `adapters/src/codex/`、`adapters/src/claude.rs` |
 | SSH 配置、认证与命令边界 | `connections/src/ssh/` |
-| Claude 进程所有权与持久化 | `agent-server/src/server.rs`、`claude.rs`、`storage.rs` |
+| Claude 进程所有权与持久化 | `agent-server/src/server.rs`、`claude.rs`、`claude_reader.rs`、`claude_protocol.rs`、`storage.rs` |
 | Markdown、安全链接与分段 | `session/src/markdown.rs`、`syntax.rs`、`segmentation.rs`、`formatting.rs`、`html.rs` |
 | 中英文文案 | `i18n/src/lib.rs` 和 `i18n/locales/` |
 

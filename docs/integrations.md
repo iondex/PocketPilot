@@ -220,7 +220,7 @@ agent_binary = "/home/operator/.local/bin/claude"
 
 ## 飞书企业自建应用
 
-本接入使用**国内飞书**开发平台 [open.feishu.cn/app](https://open.feishu.cn/app)，REST 固定为 `https://open.feishu.cn`，配置段为 `[feishu]`。不使用国际 Lark 应用、群自定义 Webhook 机器人或公网回调服务器。认证、token 缓存和 WebSocket/卡片 ACK 复用 OpenLark 0.21.0；没有第二个 Python/Node 消息 sidecar。
+本接入使用**国内飞书**开发平台 [open.feishu.cn/app](https://open.feishu.cn/app)，REST 固定为 `https://open.feishu.cn`，配置段为 `[feishu]`。不使用国际 Lark 应用、群自定义 Webhook 机器人或公网回调服务器。认证、token 缓存和 WebSocket/卡片 ACK 复用 OpenLark 0.21.0；没有第二个 Python/Node 消息 sidecar。国内飞书与国际 Lark 的协议共性、身份隔离和后续共享实现方案见[飞书与 Lark](feishu-lark.md)；当前没有国际区域配置。
 
 当前代码提供私聊目录、执行环境 → 项目 → session、命名空会话创建、已授权群中的独立 session 话题、文字/图片/文件输入、状态和最近历史、增量观察及公共绑定管理。已覆盖离线协议与隔离测试；真实应用的授权、客户端显示和事件投递仍需安装后验收。
 

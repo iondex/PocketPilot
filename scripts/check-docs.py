@@ -44,6 +44,7 @@ def anchors(path: Path) -> set[str]:
 def main() -> int:
     sources = sorted(
         list(ROOT.glob("*.md"))
+        + list((ROOT / "assets").rglob("*.md"))
         + list((ROOT / "docs").rglob("*.md"))
         + list((ROOT / ".github").rglob("*.md"))
     )

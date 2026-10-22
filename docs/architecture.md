@@ -48,6 +48,18 @@ flowchart LR
 
 `session`、`engine`、`app`、`i18n` 的源码保持平铺；平台实现位于 `integrations/src/telegram`、`slack`、`discord`、`feishu`，OpenSSH 与 Codex 原生代码分别位于 `connections/src/ssh` 和 `adapters/src/codex`。测试放在独立源码文件。
 
+内部模块沿状态和副作用边界组织，保留现有公共调用路径：
+
+| 边界 | 实现位置与所有权 |
+| --- | --- |
+| 共享连接与执行顺序 | `engine/src/runtimes.rs` 管理缓存、建连退避、会话锁和历史读取预算；全局 map 锁不覆盖网络等待 |
+| 连接配置与身份 | `engine/src/runtime_connection.rs` 解析 endpoint、SSH 参数和指纹；注册表负责与持久化身份比对 |
+| 项目分页与选择器 | `engine/src/workspace_sessions.rs` 校验精确 cwd/工作树和游标；`session_picker.rs` 管理展示快照 |
+| 本地状态与操作账本 | `engine/src/storage.rs` 持有目录锁和连接池；`operation_store.rs` 通过 SQL 条件更新争取操作 claim、保存回执 |
+| Claude 原生进程 | `agent-server/src/claude.rs` 管理启动、stdin 和待确认输入；`claude_reader.rs` 拥有 stdout 读取任务、子进程回收和输出落库；`claude_protocol.rs` 只处理具名协议与有界附件编码 |
+
+这些实现文件通过私有模块组合，不增加面向平台的接口层。模块与接口注释说明前置条件、锁、取消和错误后果；写法与来源见 [Rust 风格指南](rust-style.md)。
+
 ## 公共接口与平台实现
 
 `Integration` 提供平台身份、消息能力、运行和退出入口，由 `app` 注入包含配置、Store 和 RuntimeRegistry 的 `Context`。
@@ -118,7 +130,7 @@ Telegram 通过必填配置 `owner_user_id` 构造部署级 `Owner`，供入口�
 
 ## 构建与维护
 
-Rust 工具链由仓库配置约束，所有 Cargo 构建、检查、测试和 Clippy 使用 `--release`。`make check` 执行格式、Clippy 和测试，`make package` 保存 binary、构建信息和校验值到忽略的 `dist/`，之后运行 `cargo clean`；`make release` 串行完成当前系统/架构的检查、打包和清理。长期运行引用 `dist/pocketpilot`。
+Rust 工具链由仓库配置约束，所有 Cargo 构建、检查、测试和 Clippy 使用 `--release`。`make check` 执行 Markdown 链接检查、格式、Clippy、rustdoc 生成与内部链接检查和测试，`make package` 保存 binary、构建信息和校验值到忽略的 `dist/`，之后运行 `cargo clean`；`make release` 串行完成当前系统/架构的检查、打包和清理。长期运行引用 `dist/pocketpilot`。
 
 Codex CLI 的默认构建来源是 PATH，`CODEX_SCHEMA_BIN` 仅用于指定构建时导出 schema 的可执行文件，不覆盖运行时连接配置。缺少 CLI 或生成失败会使构建失败，不回退到旧协议快照。协议类型可生成不代表共享执行能力已经验证。
 

@@ -26,8 +26,23 @@ impl ::i18n::LocalizedError for Error {
     }
 }
 
-/// Executes once, with no retry or cancellation. Platforms retain responsibility
-/// for freshness, authorization, binding checks and the atomic dispatch claim.
+/// Execute one claimed mutation and persist its receipt before reporting success.
+///
+/// The platform must first validate freshness, authority and the session binding,
+/// then atomically claim `Dispatching` while holding the session actor. Checking
+/// the saved state here does not itself acquire that claim.
+///
+/// # Errors
+///
+/// Definite rejections finish as `Rejected`. Transport/protocol failures finish
+/// as `OutcomeUnknown`; storage failure may leave the dispatch claim unresolved.
+/// None of these errors authorizes resending the mutation.
+///
+/// # Cancellation
+///
+/// This function adds no retry or timeout wrapper. If its caller drops the future
+/// after dispatch, recovery must treat the durable claim as uncertain. A native
+/// write can outlive its awaiting caller.
 pub async fn execute_dispatched(
     store: &Store,
     id: &str,
@@ -40,11 +55,15 @@ pub async fn execute_dispatched(
     tracing::info!(operation_id = id, "dispatching authorized agent operation");
     match provider.execute(mutation).await {
         Ok(receipt) => {
+            // Acceptance and its native identifiers must survive a process crash
+            // before the platform is allowed to acknowledge success to the user.
             store.accept_receipt(id, &receipt).await?;
             tracing::info!(operation_id=id,thread_id=%receipt.thread,turn_id=?receipt.turn,"agent operation accepted");
             Ok(receipt)
         }
         Err(error) => {
+            // Only definite failures close the claim as rejected. A failed read
+            // of a response is not evidence that the provider skipped the write.
             let rejected = matches!(
                 error,
                 ProviderError::Rejected(_)

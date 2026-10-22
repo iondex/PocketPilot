@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="640" viewBox="0 0 1600 640" fill="none" role="img" aria-labelledby="title desc" xml:lang="zh-CN">
+  <title id="title">PocketPilot — 从你常用的聊天工具，接入不同主机上的 AI 编程会话。</title>
+  <desc id="desc">暖白与朱橙配色的横幅，包含 PocketPilot 名称、自托管会话入口介绍，以及口袋和终端提示符标志。</desc>
+  <path fill="#F5F2EB" d="M0 0H1600V640H0z"/>
+  <path fill="#E65A38" d="M1088 0H1600V640H1088z"/>
+  <path stroke="#E65A38" stroke-width="3" d="M88 87H124"/>
+  <text x="140" y="93" fill="#625F58" font-family="Noto Sans CJK SC, PingFang SC, Microsoft YaHei, sans-serif" font-size="17" letter-spacing="2">自托管 / 聊天连接编程</text>
+  <text x="80" y="259" fill="#252923" font-family="Lato, Arial, sans-serif" font-size="110" font-weight="900" letter-spacing="-4">PocketPilot</text>
+  <text x="88" y="346" fill="#44483F" font-family="Noto Sans CJK SC, PingFang SC, Microsoft YaHei, sans-serif" font-size="36" font-weight="400">
+    <tspan x="88" dy="0">从你常用的聊天工具，</tspan>
+    <tspan x="88" dy="52">接入不同主机上的 AI 编程会话。</tspan>
+  </text>
+  <path stroke="#D6D3CA" d="M88 502H1000"/>
+  <text x="88" y="547" fill="#625F58" font-family="Noto Sans CJK SC, PingFang SC, Microsoft YaHei, sans-serif" font-size="17">本机 + SSH</text>
+  <circle cx="258" cy="541" r="2" fill="#A7A79C"/>
+  <text x="282" y="547" fill="#625F58" font-family="Noto Sans CJK SC, PingFang SC, Microsoft YaHei, sans-serif" font-size="17">你的主机 · 你的会话</text>
+  <g transform="translate(1088 46)" stroke="#F5F2EB" stroke-width="36" stroke-linejoin="round">
+    <path d="M128 136V282C128 310 139 327 164 342L232 382C247 391 265 391 280 382L348 342C373 327 384 310 384 282V136"/>
+    <path d="M216 164L264 212L216 260"/>
+  </g>
+  <text x="1344" y="547" fill="#F5F2EB" text-anchor="middle" font-family="Noto Sans CJK SC, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" letter-spacing="2">编程，触手可及</text>
+</svg>

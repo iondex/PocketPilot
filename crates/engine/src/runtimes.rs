@@ -1,13 +1,24 @@
 //! Shared runtime clients, observation budgets and per-session execution serialization.
-use crate::config::{Config, Host, Provider, TransportKind, Workspace};
-use adapters::{Adapter, AdapterFactory};
-use connections::{Endpoint, Timeouts};
+use crate::config::{Config, Workspace};
+use adapters::Adapter;
 use session::AgentProvider;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     sync::{Mutex, Semaphore},
     time::Instant,
 };
+
+#[path = "runtime_connection.rs"]
+mod connection;
+
+#[path = "workspace_sessions.rs"]
+mod workspace_sessions;
+
+#[path = "session_picker.rs"]
+mod session_picker;
+
+pub use connection::{connect, connect_adapter, discover, fingerprint, ssh_options};
+pub use workspace_sessions::{PickerPage, list_picker, list_workspace, require_workspace};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -49,6 +60,11 @@ struct Entry {
 
 type SessionActors = HashMap<(String, String), Arc<Mutex<()>>>;
 
+/// Shared runtime connections and execution ordering for one bridge process.
+///
+/// Global maps protect metadata only. Connecting may await while holding an
+/// individual provider entry; executing may await while holding a session actor.
+/// Neither lock is a claim about other clients connected to the native runtime.
 pub struct RuntimeRegistry {
     store: crate::storage::Store,
     entries: Mutex<HashMap<String, Arc<Mutex<Entry>>>>,
@@ -58,6 +74,7 @@ pub struct RuntimeRegistry {
 }
 
 impl RuntimeRegistry {
+    /// Create an empty registry sharing the service's durable identity ledger.
     pub fn new(store: crate::storage::Store) -> Self {
         Self {
             store,
@@ -68,6 +85,10 @@ impl RuntimeRegistry {
         }
     }
 
+    /// Return the shared execution mutex for this exact provider/session pair.
+    ///
+    /// Hold its guard across revalidation and dispatch, including network awaits.
+    /// Dropping the guard releases serialization; it cannot undo a remote write.
     pub async fn actor(&self, instance: &str, thread: &str) -> Arc<Mutex<()>> {
         self.actors
             .lock()
@@ -77,6 +98,8 @@ impl RuntimeRegistry {
             .clone()
     }
 
+    /// Return the per-provider permit used to serialize expensive history reads.
+    /// Navigation metadata reads do not consume this permit.
     pub async fn history_limit(&self, instance: &str) -> Arc<Semaphore> {
         self.history_limits
             .lock()
@@ -86,6 +109,7 @@ impl RuntimeRegistry {
             .clone()
     }
 
+    /// Connect to the selected project's provider without starting a session.
     pub async fn get(
         &self,
         config: &Config,
@@ -95,6 +119,17 @@ impl RuntimeRegistry {
         self.get_provider(config, &workspace.provider_id).await
     }
 
+    /// Reuse or connect one configured provider, checking its persisted identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns selection/identity errors for changed configuration, [`Error::Backoff`]
+    /// during a reconnect delay, or the original connection/storage error.
+    ///
+    /// # Cancellation
+    ///
+    /// Cancelling releases the provider lock; it does not terminate the native
+    /// runtime or make a previously dispatched operation safe to resend.
     pub async fn get_provider(
         &self,
         config: &Config,
@@ -133,12 +168,16 @@ impl RuntimeRegistry {
                 }))
             })
             .clone();
+        // The map guard above has been dropped. Only this provider is blocked
+        // during SSH resolution/handshake; unrelated instances remain usable.
         let mut entry = entry.lock().await;
         if let Some(client) = &entry.client {
             if client.is_connected() {
                 if client.capabilities().control_verified == provider.control_verified {
                     return Ok(client.clone());
                 }
+                // Swap the immutable capability view while retaining the shared
+                // transport. A grant change is not a reason to start another client.
                 let client = client.with_control(provider.control_verified);
                 entry.client = Some(client.clone());
                 return Ok(client.clone());
@@ -148,31 +187,12 @@ impl RuntimeRegistry {
         if entry.retry_at > Instant::now() {
             return Err(Error::Backoff);
         }
-        let mut effective = identity.clone();
-        if matches!(host.transport, TransportKind::SSHProxy) {
-            let resolved = connections::ssh::resolve(
-                host.ssh_alias.as_deref().ok_or(Error::Selection)?,
-                host.ssh_config.as_ref(),
-                Duration::from_secs(host.timeouts.connect_seconds),
-            )
-            .await
-            .map_err(|_| adapters::codex::Error::Endpoint)?;
-            effective = crate::digest(&format!(
-                "{identity}\0{}\0{}\0{}",
-                resolved.hostname, resolved.user, resolved.port
-            ));
-        }
+        let effective = connection::effective_identity(host, &identity).await?;
         self.store
             .check_instance(&provider.id, &effective, false)
             .await?;
-        let factory = factory(&provider.kind)?;
-        let options = adapters::ConnectOptions {
-            instance: provider.id.clone(),
-            endpoint: endpoint(host, provider, config)?,
-            timeouts: timeouts(host),
-            control_verified: provider.control_verified,
-        };
-        match factory.connect(options).await {
+        let connection = connection::prepare(host, provider, config)?;
+        match connection.connect().await {
             Ok(client) => {
                 tracing::info!(host_id=%host.id,provider_id=%provider.id,"connected to shared app-server");
                 self.store
@@ -209,290 +229,6 @@ impl RuntimeRegistry {
             }
         }
     }
-}
-
-pub fn fingerprint(host: &Host, provider: &Provider) -> String {
-    let identity = format!(
-        "{}\0{:?}\0{:?}\0{:?}\0{:?}\0{}",
-        // Keep persisted identities compatible with the original enum Debug spelling.
-        match host.transport {
-            TransportKind::LocalProxy => "LocalProxy",
-            TransportKind::SSHProxy => "SshProxy",
-            TransportKind::Websocket => "Websocket",
-        },
-        host.ssh_alias,
-        host.ssh_config,
-        provider.endpoint.as_ref().map(|e| &e.socket),
-        host.endpoint,
-        provider
-            .endpoint
-            .as_ref()
-            .map_or("codex", |e| e.binary.as_str())
-    );
-    crate::digest(&if provider.kind == "codex" {
-        identity
-    } else {
-        format!("{identity}\0{}", provider.kind)
-    })
-}
-
-fn factory(kind: &str) -> Result<&'static dyn AdapterFactory, session::ProviderError> {
-    match kind {
-        "codex" => Ok(&adapters::codex::Factory),
-        "claude_code" => Ok(&adapters::claude::Factory),
-        _ => Err(session::ProviderError::Unsupported),
-    }
-}
-
-/// One read-only diagnostic connection; it never installs or starts a runtime server.
-pub async fn connect_adapter(
-    host: &Host,
-    provider: &Provider,
-    config: &Config,
-) -> Result<Arc<dyn Adapter>, Error> {
-    Ok(factory(&provider.kind)?
-        .connect(adapters::ConnectOptions {
-            instance: provider.id.clone(),
-            endpoint: endpoint(host, provider, config)?,
-            timeouts: timeouts(host),
-            control_verified: provider.control_verified,
-        })
-        .await?)
-}
-
-/// Native RPC access for deployment diagnostics and explicitly authorized control probes.
-pub async fn connect(
-    host: &Host,
-    provider: &Provider,
-    config: &Config,
-) -> Result<adapters::codex::Client, adapters::codex::Error> {
-    if provider.kind != "codex" {
-        return Err(adapters::codex::Error::Unsupported);
-    }
-    adapters::codex::connect(endpoint(host, provider, config)?, timeouts(host)).await
-}
-
-/// Resolve configuration into an existing transport; never discover or create a daemon here.
-fn endpoint(
-    host: &Host,
-    provider: &Provider,
-    config: &Config,
-) -> Result<Endpoint, adapters::codex::Error> {
-    Ok(match host.transport {
-        TransportKind::Websocket if provider.kind != "codex" => {
-            return Err(adapters::codex::Error::Unsupported);
-        }
-        TransportKind::Websocket => Endpoint::Websocket {
-            endpoint: host
-                .endpoint
-                .clone()
-                .ok_or(adapters::codex::Error::Endpoint)?,
-        },
-        TransportKind::LocalProxy | TransportKind::SSHProxy => {
-            let endpoint = provider
-                .endpoint
-                .as_ref()
-                .ok_or(adapters::codex::Error::Endpoint)?;
-            let transport = match host.transport {
-                TransportKind::SSHProxy => connections::Host::SSH(ssh_options(host, config)?),
-                _ => connections::Host::Local,
-            };
-            match provider.kind.as_str() {
-                "codex" => adapters::codex::proxy_endpoint(
-                    transport,
-                    endpoint.binary.clone(),
-                    endpoint.socket.clone(),
-                )?,
-                "claude_code" => Endpoint::Proxy {
-                    host: transport,
-                    program: connections::Program {
-                        binary: endpoint.binary.clone(),
-                        arguments: vec!["proxy".into(), "--socket".into(), endpoint.socket.clone()],
-                    },
-                },
-                _ => return Err(adapters::codex::Error::Unsupported),
-            }
-        }
-    })
-}
-
-fn timeouts(host: &Host) -> Timeouts {
-    Timeouts {
-        connect: Duration::from_secs(
-            host.timeouts
-                .connect_seconds
-                .saturating_add(host.timeouts.authenticate_seconds)
-                .saturating_add(host.timeouts.proxy_ready_seconds),
-        ),
-        read: Duration::from_secs(host.timeouts.rpc_read_seconds),
-        write_receipt: Duration::from_secs(host.timeouts.rpc_write_receipt_seconds),
-    }
-}
-
-pub fn require_workspace(cwd: &str, workspace: &Workspace) -> Result<(), Error> {
-    if cwd == workspace.cwd || workspace.additional_cwds.iter().any(|p| p == cwd) {
-        Ok(())
-    } else {
-        Err(Error::Selection)
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct WorkspaceCursor {
-    workspace: String,
-    paths: Vec<String>,
-    index: usize,
-    backend: Option<String>,
-}
-
-/// Page through the explicitly configured cwd and worktrees without broadening
-/// the provider query to unrelated projects.
-pub async fn list_workspace(
-    provider: &dyn AgentProvider,
-    workspace: &Workspace,
-    cursor: Option<String>,
-    limit: u32,
-) -> Result<session::Page<session::Session>, session::ProviderError> {
-    use session::ProviderError;
-    let mut paths = vec![workspace.cwd.clone()];
-    for cwd in &workspace.additional_cwds {
-        if !paths.contains(cwd) {
-            paths.push(cwd.clone());
-        }
-    }
-    let mut cursor = match cursor {
-        Some(value) => serde_json::from_str::<WorkspaceCursor>(
-            value
-                .strip_prefix("ws1:")
-                .ok_or(ProviderError::Incompatible)?,
-        )
-        .map_err(|_| ProviderError::Incompatible)?,
-        None => WorkspaceCursor {
-            workspace: workspace.id.clone(),
-            paths: paths.clone(),
-            index: 0,
-            backend: None,
-        },
-    };
-    if cursor.workspace != workspace.id || cursor.paths != paths || cursor.index >= paths.len() {
-        return Err(ProviderError::Incompatible);
-    }
-    let limit = limit.clamp(1, 100) as usize;
-    let mut data = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    while data.len() < limit && cursor.index < paths.len() {
-        if !seen.insert((cursor.index, cursor.backend.clone())) {
-            return Err(ProviderError::Incompatible);
-        }
-        let page = provider
-            .list(session::SessionQuery {
-                cwd: Some(paths[cursor.index].clone()),
-                cursor: cursor.backend.clone(),
-                limit: (limit - data.len()) as u32,
-                archived: false,
-            })
-            .await?;
-        data.extend(page.data);
-        cursor.backend = page.next_cursor;
-        if cursor.backend.is_none() {
-            cursor.index += 1;
-        }
-    }
-    let next_cursor = if cursor.index < paths.len() {
-        Some(format!(
-            "ws1:{}",
-            serde_json::to_string(&cursor).map_err(|_| ProviderError::Incompatible)?
-        ))
-    } else {
-        None
-    };
-    Ok(session::Page { data, next_cursor })
-}
-
-/// Native menus need the resolved page, including snapshot expiry/reset behavior.
-pub struct PickerPage {
-    pub data: Vec<session::Session>,
-    pub next_cursor: Option<String>,
-    pub offset: usize,
-    pub total: usize,
-}
-
-/// Hide only dedicated probes proven by this bridge's durable create receipts.
-/// Never infer a test session from its title or mutate/archive it remotely.
-pub async fn list_picker(
-    store: &crate::storage::Store,
-    provider: &dyn AgentProvider,
-    workspace: &Workspace,
-    cursor: Option<String>,
-    limit: u32,
-) -> Result<PickerPage, session::ProviderError> {
-    session_picker::list(store, provider, workspace, cursor, limit).await
-}
-
-#[path = "session_picker.rs"]
-mod session_picker;
-
-pub fn ssh_options(
-    host: &Host,
-    config: &Config,
-) -> Result<connections::ssh::Options, adapters::codex::Error> {
-    Ok(connections::ssh::Options {
-        alias: host
-            .ssh_alias
-            .clone()
-            .ok_or(adapters::codex::Error::Endpoint)?,
-        config: host.ssh_config.clone(),
-        connect_timeout: Duration::from_secs(host.timeouts.connect_seconds),
-        keepalive_seconds: host.timeouts.keepalive_seconds,
-        keepalive_missed: host.timeouts.keepalive_missed,
-        askpass: connections::ssh::auth::helper(
-            &host.authentication,
-            &host.id,
-            &connections::ssh::auth::AuthContext {
-                data_dir: config.service.data_dir.clone(),
-                source: config.source().to_owned(),
-                source_hash: config.source_hash().into(),
-            },
-        )
-        .map_err(|_| adapters::codex::Error::Unsupported)?,
-        max_auth_attempts: host.authentication.max_attempts,
-        authentication_methods: host.authentication.methods.clone(),
-    })
-}
-
-pub async fn discover(
-    host: &Host,
-    config: &Config,
-) -> Result<Vec<adapters::ServerEndpoint>, adapters::codex::Error> {
-    let options = match host.transport {
-        TransportKind::SSHProxy => Some(ssh_options(host, config)?),
-        TransportKind::LocalProxy => None,
-        TransportKind::Websocket => return Ok(vec![]),
-    };
-    let mut endpoints = adapters::codex::discovery::discover(
-        options,
-        Duration::from_secs(
-            host.timeouts
-                .connect_seconds
-                .saturating_add(host.timeouts.authenticate_seconds)
-                .saturating_add(host.timeouts.proxy_ready_seconds),
-        ),
-    )
-    .await?;
-    for endpoint in &mut endpoints {
-        if let Some(existing) = config
-            .providers
-            .iter()
-            .filter(|p| p.host_id == host.id)
-            .filter_map(|p| p.endpoint.as_ref())
-            .find(|e| e.socket == endpoint.socket)
-        {
-            // Keep a verified instance on its recorded proxy binary. Installing
-            // another CLI version does not silently replace its control profile.
-            endpoint.binary = existing.binary.clone();
-        }
-    }
-    Ok(endpoints)
 }
 
 #[cfg(test)]

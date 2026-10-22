@@ -1,8 +1,8 @@
 # PocketPilot
 
-**从你常用的聊天工具，接入不同主机上的 AI 编程会话。**
+![PocketPilot — 从你常用的聊天工具，接入不同主机上的 AI 编程会话。](assets/brand/banner.zh-CN.png)
 
-[English](README.md) · [文档导航](docs/README.md) · [参与开发](CONTRIBUTING.md)
+[English](README.md) · [文档导航](docs/README.md) · [参与开发](CONTRIBUTING.md) · [品牌资源](assets/brand/README.zh-CN.md)
 
 PocketPilot 是面向开发者的自托管会话入口。它连接聊天平台与本机或 SSH 主机上的 AI 编程运行时，让你选择执行环境、项目和会话，查看进度、补充任务、上传文件并回答 agent 的结构化问题。执行、上下文和会话生命周期由原生 runtime 管理。
 
